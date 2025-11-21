@@ -1,0 +1,21 @@
+{
+  "name": "jojeco-dashboard-server",
+  "version": "1.0.0",
+  "description": "Backend API for JojeCo Dashboard",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": ["dashboard", "monitoring", "api"],
+  "author": "jojeco",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "sql.js": "^1.10.3",
+    "jsonwebtoken": "^9.0.2",
+    "bcrypt": "^5.1.1"
+  }
+}
