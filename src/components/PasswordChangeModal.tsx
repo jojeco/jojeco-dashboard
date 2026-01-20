@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Lock, AlertCircle, CheckCircle } from 'lucide-react';
-import { apiService } from '../services/apiService';
+import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { useAuth } from '../contexts/AuthContext';
 
 interface PasswordChangeModalProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ export function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProp
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { currentUser } = useAuth();
 
   if (!isOpen) return null;
 
@@ -38,10 +40,21 @@ export function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProp
       return;
     }
 
+    if (!currentUser || !currentUser.email) {
+      setError('No authenticated user found');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await apiService.changePassword(currentPassword, newPassword);
+      // Re-authenticate user before changing password
+      const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+      await reauthenticateWithCredential(currentUser, credential);
+
+      // Update password
+      await updatePassword(currentUser, newPassword);
+
       setSuccess(true);
       setCurrentPassword('');
       setNewPassword('');
@@ -52,8 +65,9 @@ export function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProp
         onClose();
         setSuccess(false);
       }, 2000);
-    } catch (err: any) {
-      setError(err.message || 'Failed to change password');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to change password';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

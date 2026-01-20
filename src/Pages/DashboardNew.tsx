@@ -1,124 +1,24 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Cloud, Server, Film, Cog, Github, Search, Settings, Moon, Sun,
+  Search, Settings, Moon, Sun,
   ExternalLink, CheckCircle2, XCircle, HelpCircle, X, LogOut,
-  User as UserIcon, Plus, Download, Activity, BarChart3, Monitor, Lock
+  User as UserIcon, Plus, Download, Monitor, Lock, Server, Activity
 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContextAPI';
+import { useAuth } from '../contexts/AuthContext';
 import { Service, ServiceMetrics } from '../types/service';
-import { apiService } from '../services/apiService';
+import { serviceService } from '../services/serviceService';
 import { ServiceModal } from '../components/ServiceModal';
 import { ImportExportModal } from '../components/ImportExportModal';
 import { ServiceGraph } from '../components/ServiceGraph';
 import { SystemMonitor } from '../components/SystemMonitor';
 import { PasswordChangeModal } from '../components/PasswordChangeModal';
+import { useDarkMode } from '../hooks/useDarkMode';
+import { useServiceHealth, type HealthStatus } from '../hooks/useServiceHealth';
+import { ICON_MAP } from '../utils/constants';
 
 // ============================================================================
 // TYPES & CONFIG
 // ============================================================================
-
-const ICON_MAP: Record<string, any> = {
-  Cloud, Server, Film, Cog, Github, Activity, BarChart3,
-};
-
-// ============================================================================
-// HOOKS
-// ============================================================================
-
-function useDarkMode() {
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem('darkMode');
-    if (saved !== null) return saved === 'true';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
-  });
-
-  useEffect(() => {
-    localStorage.setItem('darkMode', String(isDark));
-    document.documentElement.classList.toggle('dark', isDark);
-  }, [isDark]);
-
-  return [isDark, setIsDark] as const;
-}
-
-type HealthStatus = {
-  status: 'online' | 'offline' | 'unknown';
-  checkedAt: Date;
-  responseTime?: number;
-};
-
-const healthCache = new Map<string, { result: HealthStatus; expires: number }>();
-
-function useServiceHealth(service: Service): HealthStatus {
-  const [health, setHealth] = useState<HealthStatus>({
-    status: 'unknown',
-    checkedAt: new Date(),
-  });
-
-  useEffect(() => {
-    const checkUrl = service.healthCheckUrl || service.url;
-    if (!checkUrl) {
-      setHealth({ status: 'unknown', checkedAt: new Date() });
-      return;
-    }
-
-    const cacheKey = checkUrl;
-    const cached = healthCache.get(cacheKey);
-    const interval = (service.healthCheckInterval || 60) * 1000;
-
-    if (cached && cached.expires > Date.now()) {
-      setHealth(cached.result);
-      return;
-    }
-
-    const controller = new AbortController();
-    const startTime = Date.now();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    fetch(checkUrl, {
-      method: 'HEAD',
-      signal: controller.signal,
-      mode: 'no-cors',
-    })
-      .then((res) => {
-        clearTimeout(timeoutId);
-        const responseTime = Date.now() - startTime;
-        const result: HealthStatus = {
-          status: res.ok || res.status === 0 ? 'online' : 'offline',
-          checkedAt: new Date(),
-          responseTime,
-        };
-        healthCache.set(cacheKey, { result, expires: Date.now() + interval });
-        setHealth(result);
-
-        // Save metrics
-        if (result.status === 'online' && result.responseTime) {
-          apiService.saveMetrics({
-            serviceId: service.id,
-            timestamp: Date.now(),
-            responseTime: result.responseTime,
-            statusCode: 200,
-            isOnline: true,
-          }).catch(console.error);
-        }
-      })
-      .catch((_err) => {
-        clearTimeout(timeoutId);
-        const result: HealthStatus = {
-          status: 'unknown',
-          checkedAt: new Date(),
-        };
-        healthCache.set(cacheKey, { result, expires: Date.now() + interval });
-        setHealth(result);
-      });
-
-    return () => {
-      clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [service.healthCheckUrl, service.url, service.healthCheckInterval, service.id]);
-
-  return health;
-}
 
 // ============================================================================
 // COMPONENTS
@@ -253,8 +153,8 @@ function Header({
   const handleLogout = async () => {
     try {
       await logout();
-    } catch (error) {
-      console.error('Failed to log out:', error);
+    } catch {
+      // Logout failed, but user will see authentication state change
     }
   };
 
@@ -458,7 +358,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (!currentUser) return;
 
-    const unsubscribe = apiService.subscribeToUserServices(
+    const unsubscribe = serviceService.subscribeToUserServices(
       currentUser.uid,
       (updatedServices) => {
         setServices(updatedServices);
@@ -483,7 +383,7 @@ export default function Dashboard() {
 
     Promise.all(
       services.map(service =>
-        apiService.getServiceMetrics(service.id, startTime, now)
+        serviceService.getServiceMetrics(service.id, startTime, now)
           .then(metrics => ({ serviceId: service.id, metrics }))
       )
     ).then(results => {
@@ -544,24 +444,24 @@ export default function Dashboard() {
     if (!currentUser) return;
 
     if (selectedService) {
-      await apiService.updateService(selectedService.id, serviceData);
+      await serviceService.updateService(selectedService.id, serviceData);
     } else {
-      await apiService.createService(currentUser.uid, serviceData);
+      await serviceService.createService(currentUser.uid, serviceData);
     }
   };
 
   const handleDeleteService = async (serviceId: string) => {
-    await apiService.deleteService(serviceId);
+    await serviceService.deleteService(serviceId);
   };
 
   const handleExport = async () => {
     if (!currentUser) return '';
-    return await apiService.exportServices(currentUser.uid);
+    return await serviceService.exportServices(currentUser.uid);
   };
 
   const handleImport = async (data: string) => {
     if (!currentUser) return 0;
-    return await apiService.importServices(currentUser.uid, data);
+    return await serviceService.importServices(currentUser.uid, data);
   };
 
   return (

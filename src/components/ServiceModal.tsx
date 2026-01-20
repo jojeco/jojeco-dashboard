@@ -104,6 +104,24 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
       return;
     }
 
+    // Validate URL format
+    try {
+      new URL(formData.url);
+    } catch {
+      setError('Invalid URL format. Please enter a valid URL (e.g., https://example.com)');
+      return;
+    }
+
+    // Validate health check URL if provided
+    if (formData.healthCheckUrl && formData.healthCheckUrl.trim()) {
+      try {
+        new URL(formData.healthCheckUrl);
+      } catch {
+        setError('Invalid health check URL format');
+        return;
+      }
+    }
+
     setIsLoading(true);
     try {
       await onSave(formData);

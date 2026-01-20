@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContextAPI';
+import { useAuth } from '../contexts/AuthContext';
 import { LogIn } from 'lucide-react';
 
 export function Login() {
@@ -21,7 +21,6 @@ export function Login() {
       navigate('/');
     } catch (err) {
       setError('Failed to sign in with Google');
-      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -46,9 +45,9 @@ export function Login() {
       }
       
       navigate('/');
-    } catch (err: any) {
-      setError(err.message || 'Failed to authenticate');
-      console.error(err);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to authenticate';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
