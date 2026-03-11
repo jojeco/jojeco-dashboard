@@ -1,135 +1,65 @@
-import {
-  collection,
-  doc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { api } from './api';
 import { Service, ServiceHealthCheck, ServiceMetrics } from '../types/service';
 
-const SERVICES_COLLECTION = 'services';
-const HEALTH_CHECKS_COLLECTION = 'healthChecks';
-const METRICS_COLLECTION = 'serviceMetrics';
-
 export const serviceService = {
-  // Create a new service
-  async createService(userId: string, serviceData: Omit<Service, 'id' | 'createdAt' | 'updatedAt' | 'userId'>): Promise<string> {
-    const now = Date.now();
-    const docRef = await addDoc(collection(db, SERVICES_COLLECTION), {
-      ...serviceData,
-      userId,
-      createdAt: now,
-      updatedAt: now,
-    });
-    return docRef.id;
+  async createService(
+    serviceData: Omit<Service, 'id' | 'createdAt' | 'updatedAt' | 'userId'>
+  ): Promise<string> {
+    const { id } = await api.post<{ id: string }>('/services', serviceData);
+    return id;
   },
 
-  // Update an existing service
   async updateService(serviceId: string, updates: Partial<Service>): Promise<void> {
-    const serviceRef = doc(db, SERVICES_COLLECTION, serviceId);
-    await updateDoc(serviceRef, {
-      ...updates,
-      updatedAt: Date.now(),
-    });
+    await api.put(`/services/${serviceId}`, updates);
   },
 
-  // Delete a service
   async deleteService(serviceId: string): Promise<void> {
-    const serviceRef = doc(db, SERVICES_COLLECTION, serviceId);
-    await deleteDoc(serviceRef);
+    await api.delete(`/services/${serviceId}`);
   },
 
-  // Get all services for a user
-  async getUserServices(userId: string): Promise<Service[]> {
-    const q = query(
-      collection(db, SERVICES_COLLECTION),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'desc')
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    } as Service));
+  async getUserServices(): Promise<Service[]> {
+    return api.get<Service[]>('/services');
   },
 
-  // Subscribe to user services (real-time updates)
-  subscribeToUserServices(userId: string, callback: (services: Service[]) => void): () => void {
-    const q = query(
-      collection(db, SERVICES_COLLECTION),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'desc')
-    );
-
-    return onSnapshot(q, (snapshot) => {
-      const services = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      } as Service));
-      callback(services);
-    });
+  // Polls every 30s — returns cleanup function matching Firestore onSnapshot signature
+  subscribeToUserServices(callback: (services: Service[]) => void): () => void {
+    this.getUserServices().then(callback).catch(console.error);
+    const interval = setInterval(() => {
+      this.getUserServices().then(callback).catch(console.error);
+    }, 30_000);
+    return () => clearInterval(interval);
   },
 
-  // Save health check result
   async saveHealthCheck(healthCheck: ServiceHealthCheck): Promise<void> {
-    await addDoc(collection(db, HEALTH_CHECKS_COLLECTION), healthCheck);
+    await api.post('/health-checks', healthCheck);
   },
 
-  // Get recent health checks for a service
-  async getServiceHealthHistory(serviceId: string, limit: number = 100): Promise<ServiceHealthCheck[]> {
-    const q = query(
-      collection(db, HEALTH_CHECKS_COLLECTION),
-      where('serviceId', '==', serviceId),
-      orderBy('timestamp', 'desc')
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.slice(0, limit).map(doc => doc.data() as ServiceHealthCheck);
+  async getServiceHealthHistory(serviceId: string, limit = 100): Promise<ServiceHealthCheck[]> {
+    return api.get<ServiceHealthCheck[]>(`/health-checks/${serviceId}?limit=${limit}`);
   },
 
-  // Save service metrics
   async saveMetrics(metrics: ServiceMetrics): Promise<void> {
-    await addDoc(collection(db, METRICS_COLLECTION), metrics);
+    await api.post('/metrics', metrics);
   },
 
-  // Get metrics for a service in a time range
   async getServiceMetrics(
     serviceId: string,
     startTime: number,
     endTime: number
   ): Promise<ServiceMetrics[]> {
-    const q = query(
-      collection(db, METRICS_COLLECTION),
-      where('serviceId', '==', serviceId),
-      where('timestamp', '>=', startTime),
-      where('timestamp', '<=', endTime),
-      orderBy('timestamp', 'asc')
+    return api.get<ServiceMetrics[]>(
+      `/metrics/${serviceId}?startTime=${startTime}&endTime=${endTime}`
     );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => doc.data() as ServiceMetrics);
   },
 
-  // Export all user services
-  async exportServices(userId: string): Promise<string> {
-    const services = await this.getUserServices(userId);
+  async exportServices(): Promise<string> {
+    const services = await api.get<object[]>('/services/export');
     return JSON.stringify(services, null, 2);
   },
 
-  // Import services (replaces existing)
-  async importServices(userId: string, servicesJson: string): Promise<number> {
-    const services = JSON.parse(servicesJson) as Omit<Service, 'id' | 'userId' | 'createdAt' | 'updatedAt'>[];
-
-    let imported = 0;
-    for (const service of services) {
-      await this.createService(userId, service);
-      imported++;
-    }
-
+  async importServices(servicesJson: string): Promise<number> {
+    const services = JSON.parse(servicesJson);
+    const { imported } = await api.post<{ imported: number }>('/services/import', { services });
     return imported;
   },
 };

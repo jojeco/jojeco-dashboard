@@ -7,7 +7,7 @@ echo.
 REM Check if .env file exists
 if not exist .env (
     echo ERROR: .env file not found!
-    echo Please create a .env file with your Firebase credentials.
+    echo Please create a .env file with your JWT_SECRET and API configuration (see .env.example).
     pause
     exit /b 1
 )

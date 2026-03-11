@@ -33,14 +33,26 @@ export interface ServiceMetrics {
 }
 
 export interface SystemMetrics {
+  cpu: number;
+  memory: {
+    used: number;   // MB
+    total: number;  // MB
+    percent: number;
+  };
+  disk: {
+    used: number;   // GB
+    total: number;  // GB
+    percent: number;
+  };
+  network: {
+    upload: number;   // kbits/s
+    download: number; // kbits/s
+  };
+}
+
+export interface SystemHistoryPoint {
   timestamp: number;
   cpu: number;
-  memory: number;
-  disk: number;
-  network: {
-    upload: number;
-    download: number;
-  };
 }
 
 export type ServiceStatus = 'online' | 'offline' | 'unknown';

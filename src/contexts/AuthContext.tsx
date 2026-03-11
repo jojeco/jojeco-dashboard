@@ -1,19 +1,15 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import {
-  User,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-  GoogleAuthProvider,
-} from 'firebase/auth';
-import { auth } from '../config/firebase';
+import { api, setToken, clearToken, getToken } from '../services/api';
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  displayName?: string | null;
+}
 
 interface AuthContextType {
-  currentUser: User | null;
+  currentUser: AuthUser | null;
   loading: boolean;
-  signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -23,53 +19,56 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
   return context;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const signInWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
-  };
+  // On mount, validate any stored token and restore the session
+  useEffect(() => {
+    if (!getToken()) {
+      setLoading(false);
+      return;
+    }
+
+    api.get<{ id: string; email: string; display_name?: string }>('/auth/me')
+      .then(user => {
+        setCurrentUser({ id: user.id, email: user.email, displayName: user.display_name });
+      })
+      .catch(() => {
+        clearToken(); // Token invalid or expired — force re-login
+      })
+      .finally(() => setLoading(false));
+  }, []);
 
   const signInWithEmail = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    const { user, token } = await api.post<{
+      user: { id: string; email: string; displayName?: string };
+      token: string;
+    }>('/auth/login', { email, password });
+    setToken(token);
+    setCurrentUser({ id: user.id, email: user.email, displayName: user.displayName });
   };
 
   const signUpWithEmail = async (email: string, password: string) => {
-    await createUserWithEmailAndPassword(auth, email, password);
+    const { user, token } = await api.post<{
+      user: { id: string; email: string; displayName?: string };
+      token: string;
+    }>('/auth/register', { email, password });
+    setToken(token);
+    setCurrentUser({ id: user.id, email: user.email, displayName: user.displayName });
   };
 
   const logout = async () => {
-    await signOut(auth);
-  };
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setLoading(false);
-    });
-
-    return unsubscribe;
-  }, []);
-
-  const value: AuthContextType = {
-    currentUser,
-    loading,
-    signInWithGoogle,
-    signInWithEmail,
-    signUpWithEmail,
-    logout,
+    clearToken();
+    setCurrentUser(null);
   };
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={{ currentUser, loading, signInWithEmail, signUpWithEmail, logout }}>
       {!loading && children}
     </AuthContext.Provider>
   );

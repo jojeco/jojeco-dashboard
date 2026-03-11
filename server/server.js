@@ -455,6 +455,105 @@ app.post('/api/services/import', authMiddleware, (req, res) => {
 });
 
 // ============================================================================
+// SYSTEM METRICS ROUTES (Netdata proxy)
+// Node 18+ built-in fetch is used here — no extra dependency needed.
+// ============================================================================
+
+const NETDATA_URL = process.env.NETDATA_URL || 'http://netdata:19999';
+
+async function fetchNetdata(path) {
+  const res = await fetch(`${NETDATA_URL}${path}`);
+  if (!res.ok) throw new Error(`Netdata responded with ${res.status}`);
+  return res.json();
+}
+
+// Return the numeric value for a named dimension from a Netdata data row.
+// labels: ["time", "dim1", "dim2", ...], data: [timestamp, val1, val2, ...]
+function netdataValue(labels, data, name) {
+  const idx = labels.indexOf(name);
+  return idx > 0 && data ? Math.abs(Number(data[idx])) : 0;
+}
+
+app.get('/api/system/metrics', authMiddleware, async (req, res) => {
+  try {
+    const [cpuData, ramData, diskData, netData] = await Promise.all([
+      fetchNetdata('/api/v1/data?chart=system.cpu&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=system.ram&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=disk_space._&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=system.net&after=-2&points=1&format=json'),
+    ]);
+
+    // CPU: system.cpu shows only non-idle time; sum all dimensions = total usage
+    const cpuRow = cpuData.data?.[0];
+    const cpu = cpuRow
+      ? Math.min(100, cpuRow.slice(1).reduce((sum, v) => sum + Math.abs(Number(v)), 0))
+      : 0;
+
+    // RAM (MB)
+    const ramRow = ramData.data?.[0];
+    const ramUsed     = netdataValue(ramData.labels, ramRow, 'used');
+    const ramFree     = netdataValue(ramData.labels, ramRow, 'free');
+    const ramCached   = netdataValue(ramData.labels, ramRow, 'cached');
+    const ramBuffers  = netdataValue(ramData.labels, ramRow, 'buffers');
+    const ramTotal    = ramUsed + ramFree + ramCached + ramBuffers;
+
+    // Disk (GiB) — root partition
+    const diskRow      = diskData.data?.[0];
+    const diskUsed     = netdataValue(diskData.labels, diskRow, 'used');
+    const diskAvail    = netdataValue(diskData.labels, diskRow, 'avail');
+    const diskReserved = netdataValue(diskData.labels, diskRow, 'reserved_for_root');
+    const diskTotal    = diskUsed + diskAvail + diskReserved;
+
+    // Network (kbits/s) — Netdata uses negative for sent
+    const netRow      = netData.data?.[0];
+    const netDownload = netdataValue(netData.labels, netRow, 'received');
+    const netUpload   = netdataValue(netData.labels, netRow, 'sent');
+
+    res.json({
+      cpu: Math.round(cpu * 10) / 10,
+      memory: {
+        used:    Math.round(ramUsed),
+        total:   Math.round(ramTotal),
+        percent: ramTotal > 0 ? Math.round((ramUsed / ramTotal) * 1000) / 10 : 0,
+      },
+      disk: {
+        used:    Math.round(diskUsed * 10) / 10,
+        total:   Math.round(diskTotal * 10) / 10,
+        percent: diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 1000) / 10 : 0,
+      },
+      network: {
+        download: Math.round(netDownload * 10) / 10,
+        upload:   Math.round(netUpload * 10) / 10,
+      },
+    });
+  } catch (error) {
+    console.error('Netdata metrics error:', error.message);
+    res.status(503).json({ error: 'System metrics unavailable. Is Netdata running?' });
+  }
+});
+
+app.get('/api/system/history', authMiddleware, async (req, res) => {
+  try {
+    const points = Math.min(parseInt(req.query.points) || 60, 300);
+    const data = await fetchNetdata(
+      `/api/v1/data?chart=system.cpu&after=-${points}&points=${points}&format=json`
+    );
+
+    const history = (data.data || []).map(row => ({
+      timestamp: row[0] * 1000, // Netdata timestamps are seconds; convert to ms
+      cpu: Math.round(
+        Math.min(100, row.slice(1).reduce((sum, v) => sum + Math.abs(Number(v)), 0)) * 10
+      ) / 10,
+    }));
+
+    res.json(history);
+  } catch (error) {
+    console.error('Netdata history error:', error.message);
+    res.status(503).json({ error: 'System history unavailable' });
+  }
+});
+
+// ============================================================================
 // START SERVER
 // ============================================================================
 

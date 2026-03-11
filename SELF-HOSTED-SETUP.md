@@ -2,12 +2,12 @@
 
 Your dashboard now runs completely on your own server with NO external dependencies!
 
-## What Changed?
+## What This Is
 
-✅ **Replaced Firebase** with your own Node.js API server
-✅ **SQLite Database** - All data stored locally
-✅ **No External Services** - Everything runs on your infrastructure
-✅ **Docker Ready** - Easy deployment with docker-compose
+✅ **JWT Auth** via self-hosted Express API — no external auth provider
+✅ **SQLite Database** — all data stored locally in `server/data/dashboard.db`
+✅ **No External Services** — everything runs on your infrastructure
+✅ **Docker Ready** — easy deployment with docker-compose
 
 ## Architecture
 
@@ -122,14 +122,15 @@ Access at: http://192.168.50.201:3005
 Edit `.env`:
 
 ```env
-# API Configuration
+# URL the browser uses to reach the backend (baked into the Vite build)
 VITE_API_URL=http://192.168.50.201:3001/api
+
+# Secret for signing JWT tokens — generate with:
+# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 JWT_SECRET=your-secure-random-string-here
 
-# Firebase (still used for authentication UI)
-VITE_FIREBASE_API_KEY=your-key
-VITE_FIREBASE_AUTH_DOMAIN=your-domain
-# ... rest of Firebase config
+# Internal URL for the API to reach Netdata (Docker service name)
+NETDATA_URL=http://netdata:19999
 ```
 
 ### Security
@@ -254,13 +255,12 @@ docker-compose up -d --build
 2. **Health Checks**: Adjust intervals based on your needs
 3. **Metrics Retention**: Old metrics are kept indefinitely (add cleanup if needed)
 
-## Migration from Firebase
+## Architecture Summary
 
-Your data is already migrated! The new system:
-- ✅ Uses Firebase Auth (UI only)
-- ✅ Stores services in your SQLite database
-- ✅ All metrics saved locally
-- ✅ No external API calls except authentication
+- Auth: JWT tokens issued by Express, stored in `localStorage`
+- Data: SQLite via sql.js, auto-saved to `server/data/dashboard.db` every 5s
+- System metrics: Express proxies Netdata's REST API on port 19999
+- No external cloud services of any kind
 
 ## Support
 

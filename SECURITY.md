@@ -43,9 +43,8 @@ We will respond within 48 hours and work with you to address the issue.
    ```
 
 3. **Rotate ALL secrets** if they were ever committed to git:
-   - Generate new JWT_SECRET
-   - Create a new Firebase project (if credentials were exposed)
-   - Update all environment variables
+   - Generate a new `JWT_SECRET` (existing sessions will be invalidated)
+   - Update all environment variables in your `.env` and deployment config
 
 ### Production Deployment Security
 
@@ -58,22 +57,12 @@ We will respond within 48 hours and work with you to address the issue.
 - Use Docker secrets or a secret management service
 - Rotate secrets regularly (every 90 days minimum)
 
-#### 2. Firebase Security
-- Enable Firebase App Check for abuse protection
-- Set up Firestore Security Rules:
-  ```javascript
-  rules_version = '2';
-  service cloud.firestore {
-    match /databases/{database}/documents {
-      match /{document=**} {
-        allow read, write: if request.auth != null;
-      }
-    }
-  }
-  ```
-- Enable email verification for new users
-- Set up password policies (min length, complexity)
-- Enable multi-factor authentication (MFA)
+#### 2. Authentication Security
+- JWT tokens are signed with `JWT_SECRET` and stored in `localStorage` (`auth_token` key)
+- Passwords are hashed with bcrypt (10 rounds) — plaintext never stored or logged
+- All protected API routes validate the JWT via `authMiddleware` before processing
+- Netdata metrics are proxied through authenticated Express endpoints — port 19999 should never be publicly exposed
+- Consider shortening the JWT expiry (currently 7 days) for higher-security deployments
 
 #### 3. Network Security
 - **Always use HTTPS** in production
@@ -100,13 +89,6 @@ We will respond within 48 hours and work with you to address the issue.
   ```
 - Limit container resources (CPU, memory)
 - Enable Docker Content Trust
-
-#### 6. Authentication Security
-- Passwords are hashed with bcrypt (10 rounds)
-- JWT tokens expire after 7 days
-- Implement token refresh mechanism
-- Add account lockout after failed login attempts
-- Log all authentication events
 
 ### Known Limitations
 
@@ -141,7 +123,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 - [ ] All secrets in environment variables (not hardcoded)
 - [ ] JWT_SECRET is a strong random string (32+ characters)
 - [ ] HTTPS enabled with valid SSL certificate
-- [ ] Firebase Security Rules configured
+- [ ] Port 19999 (Netdata) blocked from public internet — access via API proxy only
 - [ ] Firewall rules in place
 - [ ] Regular backups configured
 - [ ] Monitoring and logging enabled

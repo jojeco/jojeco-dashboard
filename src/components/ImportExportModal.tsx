@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { X, Download, Upload, Copy, Check } from 'lucide-react';
+import { Download, Upload, Copy, Check } from 'lucide-react';
+import { BaseModal } from './BaseModal';
 
 interface ImportExportModalProps {
   isOpen: boolean;
@@ -40,16 +41,12 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
     setIsLoading(true);
     setError('');
     setSuccess('');
-
     try {
-      // Validate JSON
-      JSON.parse(importData);
+      JSON.parse(importData); // validate first
       const count = await onImport(importData);
       setSuccess(`Successfully imported ${count} service(s)!`);
       setImportData('');
-      setTimeout(() => {
-        onClose();
-      }, 2000);
+      setTimeout(onClose, 2000);
     } catch (err) {
       if (err instanceof SyntaxError) {
         setError('Invalid JSON format. Please check your input.');
@@ -78,7 +75,7 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
       await navigator.clipboard.writeText(exportData);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
+    } catch {
       setError('Failed to copy to clipboard');
     }
   };
@@ -87,157 +84,121 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
-        setImportData(event.target?.result as string);
-      };
+      reader.onload = event => setImportData(event.target?.result as string);
       reader.readAsText(file);
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Import / Export Services
-          </h2>
+    <BaseModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Import / Export Services"
+      maxWidth="2xl"
+      error={error}
+      success={success}
+    >
+      {/* Tab bar — lives between header and content */}
+      <div className="-mx-6 -mt-6 mb-6 flex border-b border-gray-200 dark:border-gray-700">
+        {(['export', 'import'] as const).map(tab => (
           <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-          >
-            <X size={24} />
-          </button>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex border-b border-gray-200 dark:border-gray-700">
-          <button
-            onClick={() => setActiveTab('export')}
-            className={`flex-1 px-6 py-3 text-sm font-medium ${
-              activeTab === 'export'
+            key={tab}
+            onClick={() => { setActiveTab(tab); setError(''); setSuccess(''); }}
+            className={`flex-1 px-6 py-3 text-sm font-medium capitalize ${
+              activeTab === tab
                 ? 'text-blue-600 border-b-2 border-blue-600'
                 : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
             }`}
           >
-            <Download className="inline mr-2" size={18} />
-            Export
+            {tab === 'export'
+              ? <><Download className="inline mr-2" size={16} />Export</>
+              : <><Upload className="inline mr-2" size={16} />Import</>
+            }
           </button>
-          <button
-            onClick={() => setActiveTab('import')}
-            className={`flex-1 px-6 py-3 text-sm font-medium ${
-              activeTab === 'import'
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-            }`}
-          >
-            <Upload className="inline mr-2" size={18} />
-            Import
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="p-6">
-          {error && (
-            <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-              {error}
-            </div>
-          )}
-
-          {success && (
-            <div className="mb-4 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
-              {success}
-            </div>
-          )}
-
-          {activeTab === 'export' ? (
-            <div className="space-y-4">
-              <p className="text-gray-700 dark:text-gray-300">
-                Export all your services to a JSON file. You can use this to backup your services or import them into another account.
-              </p>
-
-              {!exportData ? (
-                <button
-                  onClick={handleExport}
-                  disabled={isLoading}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  <Download size={18} />
-                  {isLoading ? 'Exporting...' : 'Export Services'}
-                </button>
-              ) : (
-                <>
-                  <div className="relative">
-                    <textarea
-                      value={exportData}
-                      readOnly
-                      className="w-full h-64 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleDownload}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                    >
-                      <Download size={18} />
-                      Download File
-                    </button>
-                    <button
-                      onClick={handleCopy}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                    >
-                      {copied ? <Check size={18} /> : <Copy size={18} />}
-                      {copied ? 'Copied!' : 'Copy to Clipboard'}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <p className="text-gray-700 dark:text-gray-300">
-                Import services from a JSON file. This will add the services to your existing collection.
-              </p>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Upload JSON File
-                </label>
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={handleFileUpload}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Or Paste JSON Data
-                </label>
-                <textarea
-                  value={importData}
-                  onChange={(e) => setImportData(e.target.value)}
-                  className="w-full h-64 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-                  placeholder="Paste your JSON data here..."
-                />
-              </div>
-
-              <button
-                onClick={handleImport}
-                disabled={isLoading || !importData.trim()}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                <Upload size={18} />
-                {isLoading ? 'Importing...' : 'Import Services'}
-              </button>
-            </div>
-          )}
-        </div>
+        ))}
       </div>
-    </div>
+
+      {activeTab === 'export' ? (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Export all your services as a JSON backup.
+          </p>
+
+          {!exportData ? (
+            <button
+              onClick={handleExport}
+              disabled={isLoading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Download size={18} />
+              {isLoading ? 'Exporting…' : 'Export Services'}
+            </button>
+          ) : (
+            <>
+              <textarea
+                value={exportData}
+                readOnly
+                className="w-full h-64 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDownload}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                >
+                  <Download size={16} />
+                  Download
+                </button>
+                <button
+                  onClick={handleCopy}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                >
+                  {copied ? <Check size={16} /> : <Copy size={16} />}
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Import services from a JSON file. New services are added without replacing existing ones.
+          </p>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Upload JSON File
+            </label>
+            <input
+              type="file"
+              accept=".json"
+              onChange={handleFileUpload}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Or Paste JSON
+            </label>
+            <textarea
+              value={importData}
+              onChange={e => setImportData(e.target.value)}
+              className="w-full h-48 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+              placeholder="Paste your JSON data here…"
+            />
+          </div>
+
+          <button
+            onClick={handleImport}
+            disabled={isLoading || !importData.trim()}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Upload size={18} />
+            {isLoading ? 'Importing…' : 'Import Services'}
+          </button>
+        </div>
+      )}
+    </BaseModal>
   );
 };
