@@ -62,4 +62,9 @@ export const serviceService = {
     const { imported } = await api.post<{ imported: number }>('/services/import', { services });
     return imported;
   },
+
+  async seedDefaultServices(): Promise<number> {
+    const result = await api.post<{ inserted?: number; skipped?: boolean }>('/services/seed', {});
+    return result.inserted ?? 0;
+  },
 };

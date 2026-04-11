@@ -6,11 +6,10 @@ import { LogIn } from 'lucide-react';
 export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const { signInWithEmail, signUpWithEmail } = useAuth();
+  const { signInWithEmail } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,13 +23,7 @@ export function Login() {
     try {
       setError('');
       setLoading(true);
-
-      if (isSignUp) {
-        await signUpWithEmail(email, password);
-      } else {
-        await signInWithEmail(email, password);
-      }
-
+      await signInWithEmail(email, password);
       navigate('/');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to authenticate');
@@ -45,7 +38,7 @@ export function Login() {
         <div className="text-center">
           <LogIn className="mx-auto h-12 w-12 text-blue-500" />
           <h2 className="mt-6 text-3xl font-bold text-gray-900 dark:text-gray-100">
-            {isSignUp ? 'Create Account' : 'Sign In'}
+            Sign In
           </h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">jojeco</p>
         </div>
@@ -80,7 +73,7 @@ export function Login() {
               className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 placeholder-gray-400 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Password"
               disabled={loading}
-              autoComplete={isSignUp ? 'new-password' : 'current-password'}
+              autoComplete="current-password"
             />
           </div>
 
@@ -89,17 +82,17 @@ export function Login() {
             disabled={loading}
             className="w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading ? 'Loading…' : isSignUp ? 'Create Account' : 'Sign In'}
+            {loading ? 'Loading…' : 'Sign In'}
           </button>
         </form>
 
-        <div className="text-center">
+        <div className="pt-2 border-t border-gray-200 dark:border-gray-700 text-center">
           <button
             type="button"
-            onClick={() => { setIsSignUp(!isSignUp); setError(''); }}
-            className="text-sm text-blue-500 hover:text-blue-400 transition-colors"
+            onClick={() => { sessionStorage.setItem('guestMode', '1'); navigate('/'); }}
+            className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
           >
-            {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+            Continue as Guest →
           </button>
         </div>
       </div>

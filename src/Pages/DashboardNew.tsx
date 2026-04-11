@@ -1,41 +1,31 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Search, Settings, Moon, Sun,
-  ExternalLink, CheckCircle2, XCircle, HelpCircle, LogOut,
-  User as UserIcon, Plus, Download, Monitor, Lock, Server, Activity,
+  Search, Settings,
+  ExternalLink, Clock,
+  Plus, Download, Lock, Server,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { Service, ServiceMetrics } from '../types/service';
+import { Service } from '../types/service';
 import { serviceService } from '../services/serviceService';
 import { ServiceModal } from '../components/ServiceModal';
 import { ImportExportModal } from '../components/ImportExportModal';
-import { ServiceGraph } from '../components/ServiceGraph';
-import { SystemMonitor } from '../components/SystemMonitor';
 import { PasswordChangeModal } from '../components/PasswordChangeModal';
 import { BaseModal } from '../components/BaseModal';
-import { useDarkMode } from '../hooks/useDarkMode';
-import { useServiceHealth, type HealthStatus } from '../hooks/useServiceHealth';
+import { type HealthStatus } from '../hooks/useServiceHealth';
+import { api } from '../services/api';
 import { ICON_MAP } from '../utils/constants';
 
 // ============================================================================
 // SMALL COMPONENTS
 // ============================================================================
 
-function StatusPill({ status, responseTime }: HealthStatus) {
-  const statusConfig = {
-    online:  { bg: 'bg-green-500/10 dark:bg-green-500/20', text: 'text-green-700 dark:text-green-300', icon: CheckCircle2, label: 'Online' },
-    offline: { bg: 'bg-red-500/10 dark:bg-red-500/20',   text: 'text-red-700 dark:text-red-300',   icon: XCircle,      label: 'Offline' },
-    unknown: { bg: 'bg-gray-500/10 dark:bg-gray-500/20', text: 'text-gray-700 dark:text-gray-300', icon: HelpCircle,   label: 'Unknown' },
-  };
-  const config = statusConfig[status];
-  const Icon = config.icon;
-  return (
-    <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${config.bg} ${config.text}`}>
-      <Icon className="w-3.5 h-3.5" />
-      <span>{config.label}</span>
-      {responseTime && <span className="text-[10px] opacity-60">{responseTime}ms</span>}
-    </div>
-  );
+function StatusDot({ status }: { status: HealthStatus['status'] }) {
+  const cls = {
+    online:  'bg-emerald-500',
+    offline: 'bg-red-500',
+    unknown: 'bg-gray-400',
+  }[status];
+  return <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${cls} ${status === 'online' ? 'animate-pulse' : ''}`} />;
 }
 
 function TagChip({ tag, active, onClick }: { tag: string; active: boolean; onClick: () => void }) {
@@ -53,171 +43,78 @@ function TagChip({ tag, active, onClick }: { tag: string; active: boolean; onCli
   );
 }
 
-function ServiceCard({ service, onEdit }: { service: Service; onEdit: (service: Service) => void }) {
-  const health = useServiceHealth(service);
+function ServiceRow({ service, onEdit, health, isGuest }: { service: Service; onEdit: (service: Service) => void; health: HealthStatus; isGuest?: boolean }) {
   const Icon = service.icon ? (ICON_MAP[service.icon] ?? Server) : Server;
-  const bestUrl = service.url || service.lanUrl;
+  const bestUrl = isGuest ? null : (service.url || service.lanUrl);
+
+  const statusText = {
+    online:  'Up',
+    offline: 'Down',
+    unknown: 'Unknown',
+  }[health.status];
+
+  const statusColor = {
+    online:  'text-emerald-600 dark:text-emerald-400',
+    offline: 'text-red-600 dark:text-red-400',
+    unknown: 'text-gray-500 dark:text-gray-400',
+  }[health.status];
 
   return (
     <div
-      className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4 transition-all hover:shadow-lg hover:-translate-y-0.5 cursor-pointer"
-      onClick={() => onEdit(service)}
+      className={`flex items-center gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-800 last:border-0 transition-colors ${isGuest ? '' : 'hover:bg-gray-50 dark:hover:bg-gray-800/60 cursor-pointer'}`}
+      onClick={() => !isGuest && onEdit(service)}
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className={`p-2 ${service.color} bg-opacity-20 dark:bg-opacity-30 rounded-lg`}>
-            <Icon className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-gray-100">{service.name}</h3>
-            {service.description && (
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">{service.description}</p>
-            )}
-          </div>
-        </div>
+      {/* Status dot */}
+      <StatusDot status={health.status} />
+
+      {/* Icon */}
+      <div className={`p-1.5 ${service.color ?? 'bg-gray-500'} bg-opacity-15 dark:bg-opacity-25 rounded-md shrink-0`}>
+        <Icon className="w-3.5 h-3.5" />
       </div>
 
-      <div className="flex items-center justify-between mt-4">
-        <StatusPill {...health} />
+      {/* Name + description */}
+      <div className="flex-1 min-w-0">
+        <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate block">{service.name}</span>
+        {service.description && (
+          <span className="text-xs text-gray-500 dark:text-gray-400 truncate block">{service.description}</span>
+        )}
       </div>
 
+      {/* Tags */}
       {service.tags && service.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mt-3">
-          {service.tags.map(tag => (
-            <span key={tag} className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 text-xs rounded-md">
+        <div className="hidden sm:flex gap-1 shrink-0">
+          {service.tags.slice(0, 2).map(tag => (
+            <span key={tag} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-[10px] rounded">
               {tag}
             </span>
           ))}
         </div>
       )}
 
-      <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+      {/* Response time */}
+      {health.responseTime && (
+        <span className="text-[11px] text-gray-400 dark:text-gray-500 shrink-0 hidden md:flex items-center gap-1">
+          <Clock className="w-3 h-3" />
+          {health.responseTime}ms
+        </span>
+      )}
+
+      {/* Status label */}
+      <span className={`text-xs font-semibold shrink-0 w-14 text-right ${statusColor}`}>{statusText}</span>
+
+      {/* External link */}
+      {bestUrl && (
         <a
-          href={bestUrl || '#'}
-          target={bestUrl ? '_blank' : undefined}
+          href={bestUrl}
+          target="_blank"
           rel="noopener noreferrer"
-          className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-            bestUrl
-              ? 'bg-blue-500 hover:bg-blue-600 text-white'
-              : 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-          }`}
-          onClick={e => bestUrl ? e.stopPropagation() : e.preventDefault()}
+          className="text-gray-400 hover:text-blue-500 transition-colors shrink-0"
+          onClick={e => e.stopPropagation()}
         >
-          Open
-          {bestUrl && <ExternalLink className="w-4 h-4" />}
+          <ExternalLink className="w-3.5 h-3.5" />
         </a>
-      </div>
+      )}
     </div>
-  );
-}
-
-// ============================================================================
-// HEADER
-// ============================================================================
-
-function Header({
-  searchTerm, onSearchChange, onSettingsClick, onAddService,
-  onImportExport, onToggleMetrics, onSystemMonitor, showMetrics, isDark, onToggleDark,
-}: {
-  searchTerm: string;
-  onSearchChange: (term: string) => void;
-  onSettingsClick: () => void;
-  onAddService: () => void;
-  onImportExport: () => void;
-  onToggleMetrics: () => void;
-  onSystemMonitor: () => void;
-  showMetrics: boolean;
-  isDark: boolean;
-  onToggleDark: () => void;
-}) {
-  const { currentUser, logout } = useAuth();
-
-  const searchInput = (
-    <div className="relative w-full">
-      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-      <input
-        type="text"
-        placeholder="Search services…"
-        value={searchTerm}
-        onChange={e => onSearchChange(e.target.value)}
-        className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
-      />
-    </div>
-  );
-
-  return (
-    <header className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-      <div className="max-w-7xl mx-auto px-4 py-4">
-        <div className="flex items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 shrink-0">jojeco</h1>
-
-          <div className="hidden md:flex flex-1 max-w-md mx-8">{searchInput}</div>
-
-          <div className="flex items-center gap-2">
-            {currentUser && (
-              <div className="hidden sm:flex items-center gap-2 mr-2">
-                <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                  <UserIcon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-                </div>
-                <span className="text-sm text-gray-700 dark:text-gray-300">
-                  {currentUser.displayName || currentUser.email}
-                </span>
-              </div>
-            )}
-
-            <button
-              onClick={onAddService}
-              className="flex items-center gap-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-              title="Add Service"
-            >
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Add</span>
-            </button>
-
-            <button onClick={onImportExport} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Import/Export">
-              <Download className="w-5 h-5 text-gray-700 dark:text-gray-300" />
-            </button>
-
-            <button
-              onClick={onToggleMetrics}
-              className={`p-2 rounded-lg transition-colors ${
-                showMetrics
-                  ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400'
-                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-              }`}
-              title="Toggle Metrics"
-            >
-              <Activity className="w-5 h-5" />
-            </button>
-
-            <button onClick={onSystemMonitor} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="System Monitor">
-              <Monitor className="w-5 h-5 text-gray-700 dark:text-gray-300" />
-            </button>
-
-            <button onClick={onToggleDark} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Toggle dark mode">
-              {isDark ? <Sun className="w-5 h-5 text-gray-700 dark:text-gray-300" /> : <Moon className="w-5 h-5 text-gray-700" />}
-            </button>
-
-            <button onClick={onSettingsClick} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Settings">
-              <Settings className="w-5 h-5 text-gray-700 dark:text-gray-300" />
-            </button>
-
-            {currentUser && (
-              <button
-                onClick={() => logout()}
-                className="p-2 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 transition-colors"
-                aria-label="Sign out"
-                title="Sign out"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="md:hidden mt-3">{searchInput}</div>
-      </div>
-    </header>
   );
 }
 
@@ -269,46 +166,48 @@ function SettingsModal({
 
 export default function Dashboard() {
   const { currentUser } = useAuth();
-  const [isDark, setIsDark] = useDarkMode();
+  const isGuest = !currentUser;
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [passwordChangeOpen, setPasswordChangeOpen] = useState(false);
-  const [services, setServices] = useState<Service[]>([]);
+  const [services, setServices] = useState<Service[]>(() => {
+    try { const v = localStorage.getItem('cache_services'); return v ? JSON.parse(v) : []; } catch { return []; }
+  });
   const [serviceModalOpen, setServiceModalOpen] = useState(false);
   const [importExportOpen, setImportExportOpen] = useState(false);
-  const [systemMonitorOpen, setSystemMonitorOpen] = useState(false);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
-  const [showMetrics, setShowMetrics] = useState(false);
-  const [metricsData, setMetricsData] = useState<Record<string, ServiceMetrics[]>>({});
-  const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d'>('24h');
+  const [onlineCounts, setOnlineCounts] = useState<Record<string, boolean>>({});
+  const [healthMap, setHealthMap] = useState<Record<string, HealthStatus>>({});
 
-  // Subscribe to services (polls every 30s, refetches on login/logout)
   useEffect(() => {
-    if (!currentUser) return;
-    const unsubscribe = serviceService.subscribeToUserServices(setServices);
-    return () => unsubscribe();
-  }, [currentUser]);
-
-  // Load metrics for each service when the metrics panel is visible
-  useEffect(() => {
-    if (!showMetrics || services.length === 0) return;
-
-    const now = Date.now();
-    const ranges = { '1h': 3_600_000, '6h': 21_600_000, '24h': 86_400_000, '7d': 604_800_000 };
-    const startTime = now - ranges[timeRange];
-
-    Promise.all(
-      services.map(service =>
-        serviceService.getServiceMetrics(service.id, startTime, now)
-          .then(metrics => ({ serviceId: service.id, metrics }))
-      )
-    ).then(results => {
-      const map: Record<string, ServiceMetrics[]> = {};
-      results.forEach(({ serviceId, metrics }) => { map[serviceId] = metrics; });
-      setMetricsData(map);
+    const unsubscribe = serviceService.subscribeToUserServices(s => {
+      setServices(s);
+      try { localStorage.setItem('cache_services', JSON.stringify(s)); } catch {}
     });
-  }, [showMetrics, services, timeRange]);
+    return () => unsubscribe();
+  }, []);
+
+  // Server-side health checks — API can reach LAN services, browser can't
+  useEffect(() => {
+    const fetchHealth = () => {
+      api.get<Record<string, { status: string; responseTime?: number }>>('/services/health')
+        .then(data => {
+          const mapped: Record<string, HealthStatus> = {};
+          const counts: Record<string, boolean> = {};
+          for (const [id, h] of Object.entries(data)) {
+            mapped[id] = { status: h.status as HealthStatus['status'], checkedAt: new Date(), responseTime: h.responseTime };
+            counts[id] = h.status === 'online';
+          }
+          setHealthMap(mapped);
+          setOnlineCounts(counts);
+        })
+        .catch(() => {});
+    };
+    fetchHealth();
+    const id = setInterval(fetchHealth, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -346,73 +245,80 @@ export default function Dashboard() {
     }
   };
 
+  const unknownHealth: HealthStatus = { status: 'unknown', checkedAt: new Date() };
+
+  const onlineCount  = Object.values(onlineCounts).filter(Boolean).length;
+  const totalTracked = Object.keys(onlineCounts).length;
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
-      <Header
-        searchTerm={searchTerm}
-        onSearchChange={setSearchTerm}
-        onSettingsClick={() => setSettingsOpen(true)}
-        onAddService={() => { setSelectedService(null); setServiceModalOpen(true); }}
-        onImportExport={() => setImportExportOpen(true)}
-        onToggleMetrics={() => setShowMetrics(v => !v)}
-        onSystemMonitor={() => setSystemMonitorOpen(true)}
-        showMetrics={showMetrics}
-        isDark={isDark}
-        onToggleDark={() => setIsDark(v => !v)}
-      />
-
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {/* Tag filters */}
-        {allTags.length > 0 && (
-          <div className="mb-6 flex flex-wrap gap-2">
-            {allTags.map(tag => (
-              <TagChip key={tag} tag={tag} active={selectedTags.has(tag)} onClick={() => toggleTag(tag)} />
-            ))}
-          </div>
-        )}
-
-        {/* Metrics panel */}
-        {showMetrics && filteredServices.length > 0 && (
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Performance Metrics</h2>
-              <div className="flex gap-2">
-                {(['1h', '6h', '24h', '7d'] as const).map(range => (
-                  <button
-                    key={range}
-                    onClick={() => setTimeRange(range)}
-                    className={`px-3 py-1 rounded-lg text-sm ${
-                      timeRange === range
-                        ? 'bg-blue-500 text-white'
-                        : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-                    }`}
-                  >
-                    {range}
-                  </button>
-                ))}
-              </div>
+    <div className="px-4 py-6">
+      {/* Guest info */}
+      {isGuest && (
+        <div className="mb-5 rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
+          <span className="font-semibold">Services</span> — all self-hosted services running in the lab with live health status. Service URLs and internal addresses are hidden in guest view.
+        </div>
+      )}
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="relative flex-1 min-w-[160px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search services…"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
+          />
+        </div>
+        <div className="flex items-center gap-2 ml-auto">
+          {totalTracked > 0 && (
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+              onlineCount === totalTracked ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+              : onlineCount === 0 ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+              : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-300'
+            }`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${onlineCount === totalTracked ? 'bg-emerald-500' : onlineCount === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
+              {onlineCount}/{totalTracked} up
             </div>
-            <div className="space-y-4">
-              {filteredServices.map(service => (
-                <ServiceGraph
-                  key={service.id}
-                  serviceId={service.id}
-                  serviceName={service.name}
-                  metrics={metricsData[service.id] || []}
-                  timeRange={timeRange}
-                />
-              ))}
-            </div>
-          </div>
-        )}
+          )}
+          {!isGuest && (
+            <>
+              <button
+                onClick={() => { setSelectedService(null); setServiceModalOpen(true); }}
+                className="flex items-center gap-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                title="Add Service"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="hidden sm:inline">Add</span>
+              </button>
+              <button onClick={() => setImportExportOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Import/Export">
+                <Download className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+              </button>
+              <button onClick={() => setSettingsOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Settings">
+                <Settings className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
+      {/* Tag filters */}
+      {allTags.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {allTags.map(tag => (
+            <TagChip key={tag} tag={tag} active={selectedTags.has(tag)} onClick={() => toggleTag(tag)} />
+          ))}
+        </div>
+      )}
+
+      <main>
         {/* Pinned services */}
         {pinnedServices.length > 0 && (
-          <section className="mb-12">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Pinned</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <section className="mb-6">
+            <h2 className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 px-1">Pinned</h2>
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
               {pinnedServices.map(service => (
-                <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} />
+                <ServiceRow key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
               ))}
             </div>
           </section>
@@ -421,10 +327,12 @@ export default function Dashboard() {
         {/* All services */}
         {regularServices.length > 0 && (
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">All Services</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {pinnedServices.length > 0 && (
+              <h2 className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 px-1">All Services</h2>
+            )}
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
               {regularServices.map(service => (
-                <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} />
+                <ServiceRow key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
               ))}
             </div>
           </section>
@@ -432,14 +340,32 @@ export default function Dashboard() {
 
         {filteredServices.length === 0 && services.length === 0 && (
           <div className="text-center py-16">
-            <p className="text-gray-500 dark:text-gray-400 text-lg mb-4">No services yet!</p>
-            <button
-              onClick={() => { setSelectedService(null); setServiceModalOpen(true); }}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-            >
-              <Plus size={20} />
-              Add Your First Service
-            </button>
+            {isGuest ? (
+              <p className="text-gray-500 dark:text-gray-400 text-lg">No services to display.</p>
+            ) : (
+              <>
+                <p className="text-gray-500 dark:text-gray-400 text-lg mb-4">No services yet!</p>
+                <div className="flex items-center justify-center gap-3 flex-wrap">
+                  <button
+                    onClick={async () => {
+                      await serviceService.seedDefaultServices();
+                      serviceService.getUserServices().then(setServices);
+                    }}
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                  >
+                    <Server size={20} />
+                    Load JojeCo Services
+                  </button>
+                  <button
+                    onClick={() => { setSelectedService(null); setServiceModalOpen(true); }}
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 font-medium"
+                  >
+                    <Plus size={20} />
+                    Add Manually
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -455,15 +381,6 @@ export default function Dashboard() {
           </div>
         )}
       </main>
-
-      <footer className="border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4 text-sm text-gray-600 dark:text-gray-400">
-          <button onClick={() => setImportExportOpen(true)} className="hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
-            Import/Export
-          </button>
-          <span className="text-xs">v2.0.0 · {services.length} service{services.length !== 1 ? 's' : ''}</span>
-        </div>
-      </footer>
 
       <SettingsModal
         isOpen={settingsOpen}
@@ -489,11 +406,6 @@ export default function Dashboard() {
         onClose={() => setImportExportOpen(false)}
         onExport={serviceService.exportServices.bind(serviceService)}
         onImport={serviceService.importServices.bind(serviceService)}
-      />
-
-      <SystemMonitor
-        isOpen={systemMonitorOpen}
-        onClose={() => setSystemMonitorOpen(false)}
       />
     </div>
   );

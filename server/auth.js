@@ -33,6 +33,22 @@ export function authMiddleware(req, res, next) {
   }
 
   req.user = decoded;
+  req.isGuest = false;
+  next();
+}
+
+export function optionalAuthMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const decoded = verifyToken(authHeader.substring(7));
+    if (decoded) {
+      req.user = decoded;
+      req.isGuest = false;
+      return next();
+    }
+  }
+  req.user = null;
+  req.isGuest = true;
   next();
 }
 

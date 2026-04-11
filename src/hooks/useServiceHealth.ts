@@ -10,6 +10,9 @@ export type HealthStatus = {
 
 const healthCache = new Map<string, { result: HealthStatus; expires: number }>();
 
+// Internal/private IPs and hostnames that can't be reached from an external browser
+const PRIVATE_URL = /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|localhost|127\.|::1)/;
+
 export function useServiceHealth(service: Service): HealthStatus {
   const [health, setHealth] = useState<HealthStatus>({
     status: 'unknown',
@@ -18,7 +21,7 @@ export function useServiceHealth(service: Service): HealthStatus {
 
   useEffect(() => {
     const checkUrl = service.healthCheckUrl || service.url;
-    if (!checkUrl) {
+    if (!checkUrl || PRIVATE_URL.test(checkUrl)) {
       setHealth({ status: 'unknown', checkedAt: new Date() });
       return;
     }
@@ -118,7 +121,8 @@ export function useServiceHealth(service: Service): HealthStatus {
       clearInterval(checkInterval);
       controller.abort();
     };
-  }, [service]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [service.id, service.url, service.healthCheckUrl, service.healthCheckInterval]);
 
   return health;
 }

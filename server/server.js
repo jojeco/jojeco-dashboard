@@ -1,10 +1,18 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
+import { readdir, readFile } from 'fs/promises';
+import https from 'https';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import db from './database.js';
+
+const execFileAsync = promisify(execFile);
+
 import {
   generateToken,
   authMiddleware,
+  optionalAuthMiddleware,
   hashPassword,
   comparePassword,
   createUser,
@@ -23,28 +31,8 @@ app.use(express.json());
 // AUTH ROUTES
 // ============================================================================
 
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { email, password, displayName } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password required' });
-    }
-
-    const existingUser = getUserByEmail(email);
-    if (existingUser) {
-      return res.status(400).json({ error: 'User already exists' });
-    }
-
-    const passwordHash = await hashPassword(password);
-    const user = createUser(email, passwordHash, displayName);
-    const token = generateToken(user.id, user.email);
-
-    res.json({ user, token });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Registration failed' });
-  }
+app.post('/api/auth/register', (req, res) => {
+  res.status(403).json({ error: 'Registration is disabled' });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -120,27 +108,37 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
 // SERVICE ROUTES
 // ============================================================================
 
-app.get('/api/services', authMiddleware, (req, res) => {
+app.get('/api/services', optionalAuthMiddleware, (req, res) => {
   try {
-    const stmt = db.prepare(`
-      SELECT * FROM services
-      WHERE user_id = ?
-      ORDER BY created_at DESC
-    `);
-    const services = stmt.all(req.user.userId);
+    let userId = req.user?.userId;
+    if (!userId) {
+      // Guest: serve first user's services
+      const firstUser = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+      if (!firstUser) return res.json([]);
+      userId = firstUser.id;
+    }
+    const stmt = db.prepare('SELECT * FROM services WHERE user_id = ? ORDER BY created_at DESC');
+    const services = stmt.all(userId);
 
-    // Parse JSON fields
-    const parsed = services.map(service => ({
-      ...service,
-      tags: JSON.parse(service.tags || '[]'),
-      isPinned: Boolean(service.is_pinned),
-      lanUrl: service.lan_url,
-      healthCheckUrl: service.health_check_url,
-      healthCheckInterval: service.health_check_interval,
-      createdAt: service.created_at,
-      updatedAt: service.updated_at,
-      userId: service.user_id,
-    }));
+    const parsed = services.map(service => {
+      const s = {
+        ...service,
+        tags: JSON.parse(service.tags || '[]'),
+        isPinned: Boolean(service.is_pinned),
+        lanUrl: service.lan_url,
+        healthCheckUrl: service.health_check_url,
+        healthCheckInterval: service.health_check_interval,
+        createdAt: service.created_at,
+        updatedAt: service.updated_at,
+        userId: service.user_id,
+      };
+      if (req.isGuest) {
+        delete s.url; delete s.lanUrl; delete s.lan_url;
+        delete s.healthCheckUrl; delete s.health_check_url;
+        delete s.userId; delete s.user_id;
+      }
+      return s;
+    });
 
     res.json(parsed);
   } catch (error) {
@@ -479,7 +477,7 @@ app.get('/api/system/metrics', authMiddleware, async (req, res) => {
     const [cpuData, ramData, diskData, netData] = await Promise.all([
       fetchNetdata('/api/v1/data?chart=system.cpu&after=-2&points=1&format=json'),
       fetchNetdata('/api/v1/data?chart=system.ram&after=-2&points=1&format=json'),
-      fetchNetdata('/api/v1/data?chart=disk_space._&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=disk_space./&after=-2&points=1&format=json'),
       fetchNetdata('/api/v1/data?chart=system.net&after=-2&points=1&format=json'),
     ]);
 
@@ -551,6 +549,940 @@ app.get('/api/system/history', authMiddleware, async (req, res) => {
     console.error('Netdata history error:', error.message);
     res.status(503).json({ error: 'System history unavailable' });
   }
+});
+
+// ============================================================================
+// MULTI-SERVER METRICS
+// ============================================================================
+
+function parsePromValues(text, metric) {
+  const results = [];
+  for (const line of text.split('\n')) {
+    if (line.startsWith('#') || !line.trim()) continue;
+    if (!line.startsWith(metric + '{') && !line.startsWith(metric + ' ')) continue;
+    const labelStr = line.match(/\{([^}]*)\}/)?.[1] || '';
+    const value = parseFloat(line.split(' ').slice(-1)[0]);
+    const labels = {};
+    for (const m of (labelStr.match(/(\w+)="([^"]*)"/g) || [])) {
+      const eq = m.indexOf('='); labels[m.slice(0, eq)] = m.slice(eq + 2, -1);
+    }
+    results.push({ labels, value });
+  }
+  return results;
+}
+
+async function fetchServer1() {
+  try {
+    const res = await fetch('http://192.168.50.10:9182/metrics', { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error('windows_exporter error');
+    const text = await res.text();
+
+    // CPU: use load1-equivalent via processor_utility rate approximation — fall back to WMI load
+    const load1 = parsePromValues(text, 'windows_cpu_processor_performance_total')
+      .filter(m => m.labels.core !== '_Total' && m.labels.mode === 'privileged').length > 0
+      ? null : null;
+    // Use idle time approach: sum idle / sum total per core
+    const idleVals = parsePromValues(text, 'windows_cpu_time_total').filter(m => m.labels.mode === 'idle');
+    const allVals  = parsePromValues(text, 'windows_cpu_time_total');
+    const cores    = new Set(idleVals.map(m => m.labels.core)).size || 1;
+    const idleSum  = idleVals.reduce((s, m) => s + m.value, 0);
+    const totalSum = allVals.reduce((s, m) => s + m.value, 0);
+    const cpuPct   = totalSum > 0 ? Math.min(100, Math.round((1 - idleSum / totalSum) * 1000) / 10) : 0;
+
+    // Memory
+    const memAvail = parsePromValues(text, 'windows_memory_available_bytes')[0]?.value ?? 0;
+    const memLimit = parsePromValues(text, 'windows_memory_commit_limit')[0]?.value ?? 0;
+    const memTotal = memLimit;
+    const memUsed  = memTotal - memAvail;
+
+    // Disks — dynamic detection, all volumes > 512MB, exclude hidden raw volumes
+    const diskSizes = parsePromValues(text, 'windows_logical_disk_size_bytes').filter(m => m.value > 536870912 && isRealMount(m.labels.volume));
+    const diskFrees = parsePromValues(text, 'windows_logical_disk_free_bytes');
+    const disks = diskSizes.map(s => {
+      const freeEntry = diskFrees.find(f => f.labels.volume === s.labels.volume);
+      const free = freeEntry?.value ?? 0;
+      const used = s.value - free;
+      return { drive: s.labels.volume, used: Math.round(used / 1024 / 1024 / 1024 * 10) / 10, total: Math.round(s.value / 1024 / 1024 / 1024 * 10) / 10, percent: Math.round((used / s.value) * 1000) / 10 };
+    });
+
+    // Thermal zones
+    const thermalVals = parsePromValues(text, 'windows_thermalzone_temperature_celsius');
+    const temps = thermalVals.map(t => ({ type: t.labels.name?.replace(/_/g, ' ') || 'zone', value: Math.round(t.value * 10) / 10 })).filter(t => t.value > 0 && t.value < 120);
+
+    // GPU temp from OHM (port 9101)
+    try {
+      const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
+      if (ohmRes.ok) {
+        const ohmText = await ohmRes.text();
+        const gpuCoreSensor = parsePromValues(ohmText, 'ohm_gpunvidia_celsius').find(m => m.labels.sensor === 'GPU Core');
+        if (gpuCoreSensor) temps.push({ type: 'GPU Core', value: Math.round(gpuCoreSensor.value * 10) / 10 });
+      }
+    } catch {}
+
+    return {
+      id: 'server1', name: 'Server 1 (Plex)', host: '192.168.50.10', os: 'Windows 10', online: true, cpu: cpuPct,
+      memory: { used: Math.round(memUsed / 1024 / 1024), total: Math.round(memTotal / 1024 / 1024), percent: memTotal > 0 ? Math.round((memUsed / memTotal) * 1000) / 10 : 0 },
+      disks,
+      disk: disks[0] ?? null,
+      temps,
+    };
+  } catch {
+    return { id: 'server1', name: 'Server 1 (Plex)', host: '192.168.50.10', os: 'Windows 10', online: false, temps: [] };
+  }
+}
+
+async function fetchServer2() {
+  try {
+    const [cpuData, ramData, diskData] = await Promise.all([
+      fetchNetdata('/api/v1/data?chart=system.cpu&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=system.ram&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=disk_space./&after=-2&points=1&format=json'),
+    ]);
+    const cpuRow = cpuData.data?.[0];
+    const cpu = cpuRow ? Math.min(100, Math.round(cpuRow.slice(1).reduce((s, v) => s + Math.abs(Number(v)), 0) * 10) / 10) : 0;
+    const ramRow = ramData.data?.[0];
+    const ramUsed = netdataValue(ramData.labels, ramRow, 'used');
+    const ramFree = netdataValue(ramData.labels, ramRow, 'free');
+    const ramCached = netdataValue(ramData.labels, ramRow, 'cached');
+    const ramBuffers = netdataValue(ramData.labels, ramRow, 'buffers');
+    const ramTotal = ramUsed + ramFree + ramCached + ramBuffers;
+    const diskRow = diskData.data?.[0];
+    const diskUsed = netdataValue(diskData.labels, diskRow, 'used');
+    const diskAvail = netdataValue(diskData.labels, diskRow, 'avail');
+    const diskReserved = netdataValue(diskData.labels, diskRow, 'reserved_for_root');
+    const diskTotal = diskUsed + diskAvail + diskReserved;
+    let temps = [];
+    try {
+      const zones = await readdir('/sys/class/thermal');
+      const thermalZones = zones.filter(z => z.startsWith('thermal_zone'));
+      const raw = await Promise.all(thermalZones.map(async z => {
+        const [type, temp] = await Promise.all([
+          readFile(`/sys/class/thermal/${z}/type`, 'utf8').catch(() => 'unknown'),
+          readFile(`/sys/class/thermal/${z}/temp`, 'utf8').catch(() => '0'),
+        ]);
+        return { type: type.trim(), value: Math.round(parseInt(temp.trim()) / 100) / 10 };
+      }));
+      temps = raw.filter(t => t.value > 0 && t.value < 120);
+    } catch {}
+    return {
+      id: 'server2', name: 'Server 2 (Docker)', host: '192.168.50.13', os: 'Ubuntu LXC', online: true, cpu,
+      memory: { used: Math.round(ramUsed), total: Math.round(ramTotal), percent: ramTotal > 0 ? Math.round((ramUsed / ramTotal) * 1000) / 10 : 0 },
+      disk: { used: Math.round(diskUsed * 10) / 10, total: Math.round(diskTotal * 10) / 10, percent: diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 1000) / 10 : 0 },
+      temps,
+    };
+  } catch {
+    return { id: 'server2', name: 'Server 2 (Docker)', host: '192.168.50.13', os: 'Ubuntu LXC', online: false, temps: [] };
+  }
+}
+
+async function fetchServer3() {
+  try {
+    const res = await fetch('http://192.168.50.12:9100/metrics', { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error('node_exporter error');
+    const text = await res.text();
+    const load1 = parsePromValues(text, 'node_load1')[0]?.value ?? 0;
+    const cpuCores = new Set(parsePromValues(text, 'node_cpu_seconds_total').map(m => m.labels.cpu)).size || 1;
+    const cpu = Math.min(100, Math.round((load1 / cpuCores) * 1000) / 10);
+    const memTotal = parsePromValues(text, 'node_memory_MemTotal_bytes')[0]?.value ?? 0;
+    const memAvail = parsePromValues(text, 'node_memory_MemAvailable_bytes')[0]?.value ?? 0;
+    const memUsed = memTotal - memAvail;
+    const SKIP_FSTYPES = new Set(['cifs', 'smb3', 'nfs', 'nfs4', 'tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'sysfs', 'proc', 'cgroup', 'cgroup2', 'pstore', 'efivarfs']);
+    const diskSizeEntries = parsePromValues(text, 'node_filesystem_size_bytes').filter(m => !SKIP_FSTYPES.has(m.labels.fstype) && m.value > 5368709120 && isRealMount(m.labels.mountpoint));
+    const diskAvailEntries = parsePromValues(text, 'node_filesystem_avail_bytes');
+    const seenSizes = new Set();
+    const disks = diskSizeEntries.filter(m => {
+      const key = Math.round(m.value / 1e9);
+      if (seenSizes.has(key)) return false;
+      seenSizes.add(key);
+      return true;
+    }).map(m => {
+      const avail = diskAvailEntries.find(a => a.labels.mountpoint === m.labels.mountpoint && a.labels.device === m.labels.device)?.value ?? 0;
+      const used = m.value - avail;
+      return { label: m.labels.mountpoint, used: Math.round(used / 1024 / 1024 / 1024 * 10) / 10, total: Math.round(m.value / 1024 / 1024 / 1024 * 10) / 10, percent: Math.round((used / m.value) * 1000) / 10 };
+    });
+    const coreTemps = parsePromValues(text, 'node_hwmon_temp_celsius').filter(m => m.labels.chip === 'platform_coretemp_0' && m.value > 0 && m.value < 120);
+    const pkgTemp = coreTemps.find(m => m.labels.sensor === 'temp1');
+    const temps = pkgTemp ? [{ type: 'x86_pkg_temp', value: pkgTemp.value }] : coreTemps.slice(0, 1).map(t => ({ type: 'cpu', value: t.value }));
+    return {
+      id: 'server3', name: 'Server 3 (Media)', host: '192.168.50.12', os: 'Ubuntu 24.04', online: true, cpu,
+      memory: { used: Math.round(memUsed / 1024 / 1024), total: Math.round(memTotal / 1024 / 1024), percent: memTotal > 0 ? Math.round((memUsed / memTotal) * 1000) / 10 : 0 },
+      disks,
+      disk: disks[0] ?? null,
+      temps,
+    };
+  } catch {
+    return { id: 'server3', name: 'Server 3 (Media)', host: '192.168.50.12', os: 'Ubuntu 24.04', online: false, temps: [] };
+  }
+}
+
+app.get('/api/system/servers', authMiddleware, async (req, res) => {
+  const servers = await Promise.all([fetchServer1(), fetchServer2(), fetchServer3()]);
+  res.json(servers);
+});
+
+// ============================================================================
+// QBITTORRENT PROXY ROUTES
+// ============================================================================
+
+const QBT_URL = process.env.QBT_URL || 'http://192.168.50.13:9091';
+const QBT_USER = process.env.QBT_USER || 'admin';
+const QBT_PASS = process.env.QBT_PASS || 'jojeco2026';
+let qbtSid = null;
+
+async function qbtLogin() {
+  const res = await fetch(`${QBT_URL}/api/v2/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': QBT_URL },
+    body: `username=${QBT_USER}&password=${QBT_PASS}`,
+  });
+  const cookies = res.headers.get('set-cookie') || '';
+  const match = cookies.match(/SID=([^;]+)/);
+  if (match) { qbtSid = match[1]; return true; }
+  return false;
+}
+
+async function qbtFetch(path, options = {}) {
+  // Try direct call first (subnet whitelist bypasses auth)
+  const headers = { 'Referer': QBT_URL, ...(options.headers || {}) };
+  if (qbtSid) headers['Cookie'] = `SID=${qbtSid}`;
+  const res = await fetch(`${QBT_URL}${path}`, { ...options, headers });
+  if (res.status === 403) {
+    // Auth required - login and retry
+    await qbtLogin();
+    const retryHeaders = { 'Cookie': `SID=${qbtSid}`, 'Referer': QBT_URL, ...(options.headers || {}) };
+    return fetch(`${QBT_URL}${path}`, { ...options, headers: retryHeaders });
+  }
+  return res;
+}
+
+app.get('/api/torrents/list', authMiddleware, async (req, res) => {
+  try {
+    const r = await qbtFetch('/api/v2/torrents/info?sort=added_on&reverse=true');
+    res.json(await r.json());
+  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
+});
+
+app.get('/api/torrents/transfer', authMiddleware, async (req, res) => {
+  try {
+    const r = await qbtFetch('/api/v2/transfer/info');
+    res.json(await r.json());
+  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
+});
+
+app.post('/api/torrents/add', authMiddleware, async (req, res) => {
+  try {
+    const { urls, savepath } = req.body;
+    const body = new URLSearchParams({ urls, savepath: savepath || '/media/Downloads' });
+    const r = await qbtFetch('/api/v2/torrents/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    res.json({ result: await r.text() });
+  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
+});
+
+app.post('/api/torrents/:action', authMiddleware, async (req, res) => {
+  const { action } = req.params;
+  if (!['pause', 'resume', 'delete', 'recheck'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+  try {
+    const { hashes, deleteFiles } = req.body;
+    const params = new URLSearchParams({ hashes: Array.isArray(hashes) ? hashes.join('|') : hashes });
+    if (action === 'delete') params.append('deleteFiles', deleteFiles ? 'true' : 'false');
+    const r = await qbtFetch(`/api/v2/torrents/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    res.json({ result: await r.text() });
+  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
+});
+
+// ============================================================================
+// DOCKER PROXY ROUTES (via Docker socket)
+// ============================================================================
+
+import http from 'http';
+
+function dockerRequest(path, method = 'GET', body = null) {
+  return new Promise((resolve, reject) => {
+    const options = { socketPath: '/var/run/docker.sock', path, method, headers: { 'Content-Type': 'application/json' } };
+    const req = http.request(options, dres => {
+      let data = '';
+      dres.on('data', chunk => data += chunk);
+      dres.on('end', () => {
+        try { resolve({ status: dres.statusCode, body: JSON.parse(data) }); }
+        catch { resolve({ status: dres.statusCode, body: data }); }
+      });
+    });
+    req.on('error', reject);
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+app.get('/api/docker/containers', optionalAuthMiddleware, async (req, res) => {
+  try {
+    const showAll = req.query.all === '1';
+    const r = await dockerRequest(`/containers/json?all=${showAll ? '1' : '0'}`);
+    const containers = r.body.map(c => ({
+      id: c.Id.slice(0, 12),
+      name: c.Names[0]?.replace('/', '') || c.Id.slice(0, 12),
+      image: c.Image,
+      status: c.Status,
+      state: c.State,
+      health: c.Status?.includes('(healthy)') ? 'healthy'
+            : c.Status?.includes('(unhealthy)') ? 'unhealthy'
+            : c.Status?.includes('(health: starting)') ? 'starting'
+            : 'none',
+      ports: c.Ports.filter(p => p.PublicPort).map(p => `${p.PublicPort}`),
+      created: c.Created,
+    }));
+    res.json(containers.sort((a, b) => a.name.localeCompare(b.name)));
+  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
+});
+
+app.post('/api/docker/containers/:id/:action', authMiddleware, async (req, res) => {
+  const { id, action } = req.params;
+  if (!['start', 'stop', 'restart'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+  try {
+    const r = await dockerRequest(`/containers/${id}/${action}`, 'POST');
+    res.json({ result: r.status === 204 ? 'ok' : r.body });
+  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
+});
+
+app.get('/api/docker/containers/:id/logs', authMiddleware, async (req, res) => {
+  try {
+    const lines = Math.min(parseInt(req.query.lines) || 100, 500);
+    const options = { socketPath: '/var/run/docker.sock', path: `/containers/${req.params.id}/logs?stdout=1&stderr=1&tail=${lines}`, method: 'GET' };
+    const dreq = http.request(options, dres => {
+      let raw = Buffer.alloc(0);
+      dres.on('data', chunk => { raw = Buffer.concat([raw, chunk]); });
+      dres.on('end', () => {
+        const logLines = [];
+        let i = 0;
+        while (i + 8 <= raw.length) {
+          const size = raw.readUInt32BE(i + 4);
+          if (i + 8 + size > raw.length) break;
+          logLines.push(raw.slice(i + 8, i + 8 + size).toString('utf8').trimEnd());
+          i += 8 + size;
+        }
+        res.json({ logs: logLines.join('\n') });
+      });
+    });
+    dreq.on('error', () => res.status(503).json({ error: 'Docker socket unavailable' }));
+    dreq.end();
+  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
+});
+
+// ============================================================================
+// MEDIA PROXY ROUTES (Sonarr + Radarr)
+// ============================================================================
+
+const SONARR_URL = process.env.SONARR_URL || 'http://192.168.50.13:8989';
+const SONARR_KEY = process.env.SONARR_KEY || 'ec7a0e9ece5a4cca9ca0047b4a4ec57b';
+const RADARR_URL = process.env.RADARR_URL || 'http://192.168.50.13:7878';
+const RADARR_KEY = process.env.RADARR_KEY || 'bb4d373c02874e19982410059dd56c28';
+
+async function arrFetch(baseUrl, apiKey, path) {
+  const r = await fetch(`${baseUrl}/api/v3${path}`, { headers: { 'X-Api-Key': apiKey } });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+
+app.get('/api/media/queue', authMiddleware, async (req, res) => {
+  try {
+    const [sq, rq] = await Promise.allSettled([
+      arrFetch(SONARR_URL, SONARR_KEY, '/queue?pageSize=50&includeUnknownSeriesItems=false'),
+      arrFetch(RADARR_URL, RADARR_KEY, '/queue?pageSize=50&includeUnknownMovieItems=false'),
+    ]);
+    res.json({
+      sonarr: sq.status === 'fulfilled' ? sq.value.records || [] : [],
+      radarr: rq.status === 'fulfilled' ? rq.value.records || [] : [],
+    });
+  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
+});
+
+app.get('/api/media/stats', authMiddleware, async (req, res) => {
+  try {
+    const [ss, rs, sq, rq] = await Promise.allSettled([
+      arrFetch(SONARR_URL, SONARR_KEY, '/wanted/missing?pageSize=1'),
+      arrFetch(RADARR_URL, RADARR_KEY, '/wanted/missing?pageSize=1'),
+      arrFetch(SONARR_URL, SONARR_KEY, '/queue?pageSize=1'),
+      arrFetch(RADARR_URL, RADARR_KEY, '/queue?pageSize=1'),
+    ]);
+    res.json({
+      sonarr: { missing: ss.status === 'fulfilled' ? ss.value.totalRecords || 0 : null, queued: sq.status === 'fulfilled' ? sq.value.totalRecords || 0 : null },
+      radarr: { missing: rs.status === 'fulfilled' ? rs.value.totalRecords || 0 : null, queued: rq.status === 'fulfilled' ? rq.value.totalRecords || 0 : null },
+    });
+  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
+});
+
+// ============================================================================
+// SEED DEFAULT SERVICES
+// ============================================================================
+
+const DEFAULT_SERVICES = [
+  { name: 'Plex',        description: 'Media server',           url: 'http://192.168.50.10:32400/web', icon: 'Film',     color: 'bg-yellow-500', tags: ['media'] },
+  { name: 'Overseerr',   description: 'Media requests',         url: 'https://seerr.jojeco.ca',        icon: 'Film',     color: 'bg-blue-500',   tags: ['media'] },
+  { name: 'Sonarr',      description: 'TV show manager',        url: 'http://192.168.50.13:8989',      icon: 'Monitor',  color: 'bg-teal-500',   tags: ['media', 'arr'] },
+  { name: 'Radarr',      description: 'Movie manager',          url: 'http://192.168.50.13:7878',      icon: 'Film',     color: 'bg-orange-500', tags: ['media', 'arr'] },
+  { name: 'Prowlarr',    description: 'Indexer manager',        url: 'http://192.168.50.13:9696',      icon: 'Radio',    color: 'bg-purple-500', tags: ['media', 'arr'] },
+  { name: 'qBittorrent', description: 'Torrent client',         url: 'http://192.168.50.13:9091',      icon: 'Download', color: 'bg-green-500',  tags: ['download'] },
+  { name: 'Navidrome',   description: 'Music streaming',        url: 'https://navidrome.jojeco.ca',    icon: 'Music',    color: 'bg-pink-500',   tags: ['media', 'music'] },
+  { name: 'Portainer',   description: 'Docker management',      url: 'http://192.168.50.13:9000',      icon: 'Box',      color: 'bg-cyan-500',   tags: ['infra'] },
+  { name: 'Grafana',     description: 'Metrics & monitoring',   url: 'http://192.168.50.13:3002',      icon: 'Activity', color: 'bg-red-500',    tags: ['infra', 'monitoring'] },
+  { name: 'LiteLLM',     description: 'AI model gateway',       url: 'http://192.168.50.13:4000/ui',   icon: 'Cpu',      color: 'bg-indigo-500', tags: ['ai'] },
+  { name: 'Open WebUI',  description: 'AI chat interface',      url: 'https://ai.jojeco.ca',           icon: 'MessageSquare', color: 'bg-blue-600', tags: ['ai'] },
+  { name: 'Proxmox',     description: 'Hypervisor',             url: 'https://192.168.50.1:8006',      icon: 'Server',   color: 'bg-gray-500',   tags: ['infra'] },
+];
+
+app.post('/api/services/seed', authMiddleware, (req, res) => {
+  try {
+    const existing = db.prepare('SELECT COUNT(*) as count FROM services WHERE user_id = ?').get(req.user.userId);
+    if (existing.count > 0 && !req.body.force) {
+      return res.json({ skipped: true, message: 'Services already exist. Send force:true to overwrite.' });
+    }
+
+    const stmt = db.prepare(`
+      INSERT INTO services (id, user_id, name, description, url, lan_url, icon, color, tags, is_pinned, health_check_url, health_check_interval, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const now = Date.now();
+    let inserted = 0;
+    for (const s of DEFAULT_SERVICES) {
+      stmt.run(crypto.randomUUID(), req.user.userId, s.name, s.description, s.url, null, s.icon, s.color, JSON.stringify(s.tags), 0, s.url, 60, now, now);
+      inserted++;
+    }
+    res.json({ inserted });
+  } catch (error) {
+    console.error('Seed error:', error);
+    res.status(500).json({ error: 'Seed failed' });
+  }
+});
+
+// ============================================================================
+// CD RIP STATUS ROUTE
+// ============================================================================
+
+const RIP_STATUS_URL = process.env.RIP_STATUS_URL || 'http://192.168.50.10:9998';
+
+app.get('/api/rip/status', authMiddleware, async (req, res) => {
+  try {
+    const r = await fetch(`${RIP_STATUS_URL}/`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error(`${r.status}`);
+    const text = await r.text();
+    // Strip UTF-8 BOM that PowerShell Set-Content adds
+    const clean = text.startsWith('\uFEFF') ? text.slice(1) : text;
+    res.json(JSON.parse(clean));
+  } catch {
+    res.json({ status: 'idle', album: '', track: 0, total: 0, percent: 0, trackName: '', updatedAt: '' });
+  }
+});
+
+// ============================================================================
+// AI CHAT ROUTE
+// ============================================================================
+
+const LITELLM_URL = 'http://192.168.50.13:4000/v1/chat/completions';
+const LITELLM_KEY = 'cafe9800069dd9fe49e4337a3a062fc8e10a747e9d12739cbdff0f8b44ce74e9';
+
+app.post('/api/ai/chat', authMiddleware, async (req, res) => {
+  const { model = 'local-smart', messages, max_tokens = 2000, temperature = 0.7 } = req.body;
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages array required' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  try {
+    const upstream = await fetch(LITELLM_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LITELLM_KEY}`,
+      },
+      body: JSON.stringify({ model, messages, stream: true, max_tokens, temperature }),
+      signal: AbortSignal.timeout(180000),
+    });
+
+    if (!upstream.ok) {
+      const errText = await upstream.text();
+      res.write(`data: {"error":"LiteLLM ${upstream.status}: ${errText.slice(0,200)}"}\n\n`);
+      res.end();
+      return;
+    }
+
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value, { stream: true }));
+    }
+    res.end();
+  } catch (err) {
+    res.write(`data: {"error":"${String(err.message).replace(/"/g, "'")}"}\n\n`);
+    res.end();
+  }
+});
+
+// ============================================================================
+// LAB OVERVIEW ROUTES
+// ============================================================================
+
+const LAB_MACHINES = [
+  { id: 'server1', name: 'Server 1', host: '192.168.50.10', role: 'Plex + Games',    os: 'Windows 10',  always_on: true,  gpu_label: 'GTX 1060' },
+  { id: 'server2', name: 'Server 2', host: '192.168.50.13', role: 'Docker Host',     os: 'Debian LXC',  always_on: true,  gpu_label: null },
+  { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'LLM Node',        os: 'Ubuntu',      always_on: true,  gpu_label: 'GTX 1060 Max-Q' },
+  { id: 'macmini', name: 'Mac Mini', host: '192.168.50.30', role: 'DNS + Monitor',   os: 'macOS',       always_on: true,  gpu_label: null },
+  { id: 'jopc',    name: 'JoPc',     host: '192.168.50.20', role: 'RTX 3080 Ti',     os: 'Windows',     always_on: false, gpu_label: 'RTX 3080 Ti' },
+  { id: 'macbook', name: 'MacBook',  host: '192.168.50.40', role: 'M4 (burst)',      os: 'macOS',       always_on: false, gpu_label: null },
+];
+
+const SKIP_FS_PATHS = new Set(['/etc/hostname', '/etc/hosts', '/etc/resolv.conf']);
+// macOS APFS internal volumes to skip (not user-facing)
+const SKIP_FS_PREFIXES = ['/etc/', '/proc/', '/sys/', '/dev/', '/run/', '/System/Volumes/VM', '/System/Volumes/Preboot', '/System/Volumes/Recovery', '/System/Volumes/Hardware', '/System/Volumes/Update', '/private/var/'];
+// Windows hidden volume pattern (e.g., HarddiskVolume3)
+const WIN_RAW_VOLUME_RE = /^HarddiskVolume\d+$/i;
+
+function isRealMount(path) {
+  if (SKIP_FS_PATHS.has(path)) return false;
+  if (SKIP_FS_PREFIXES.some(p => path.startsWith(p))) return false;
+  if (/\.[a-z]+$/.test(path)) return false; // file path with extension
+  if (WIN_RAW_VOLUME_RE.test(path)) return false; // Windows hidden volumes
+  return true;
+}
+
+function dedupeDisks(fsArray) {
+  const seen = new Set();
+  return fsArray.filter(d => {
+    const key = `${d.size}:${Math.round(d.used / 1e9)}`; // same size+used = same disk shown twice
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function fetchLabGlancesDetailed(host) {
+  const base = `http://${host}:61208/api/4`;
+  const g = (path) => fetch(`${base}${path}`, { signal: AbortSignal.timeout(4000) })
+    .then(r => r.ok ? r.json() : null).catch(() => null);
+  const [cpu, mem, fs, sensors, gpu] = await Promise.all([g('/cpu'), g('/mem'), g('/fs'), g('/sensors'), g('/gpu')]);
+  if (!cpu && !mem) throw new Error('offline');
+
+  const rawDisks = (fs ?? []).filter(d => d.size > 5368709120 && isRealMount(d.mnt_point));
+  const disks = dedupeDisks(rawDisks).map(d => ({
+    label: d.mnt_point,
+    used: d.used,
+    size: d.size,
+    percent: d.percent,
+  }));
+
+  // Prefer discrete GPU (NVIDIA/AMD) over integrated Intel
+  const allGpus = Array.isArray(gpu) ? gpu : [];
+  const discrete = allGpus.find(g => !g.name?.toLowerCase().includes('intel') && !g.name?.toLowerCase().includes('uhd'));
+  const gpuEntry = discrete ?? allGpus[0] ?? null;
+  const gpuData = gpuEntry ? {
+    name: gpuEntry.name || gpuEntry.gpu_id || 'GPU',
+    temp: gpuEntry.temperature ?? null,
+    utilization: gpuEntry.proc ?? null,
+    mem_percent: gpuEntry.mem ?? null,
+  } : null;
+
+  // Only include actual temperature sensors (not battery %, fan speed, etc.)
+  const TEMP_TYPES = new Set(['temperature_core', 'temperature', 'temperature_alarm']);
+  const allTemps = (sensors ?? [])
+    .filter(s => TEMP_TYPES.has(s.type) && s.value > 0 && s.value < 105)
+    .map(s => s.value);
+  const maxTemp = allTemps.length > 0 ? Math.round(Math.max(...allTemps) * 10) / 10 : null;
+
+  return {
+    online: true,
+    cpu: cpu?.total != null ? Math.round(cpu.total * 10) / 10 : null,
+    mem: mem ? { used: mem.used, total: mem.total, percent: mem.percent } : null,
+    disks,
+    gpu: gpuData,
+    temp: maxTemp,
+  };
+}
+
+async function fetchLabServer1Detailed() {
+  // Try Glances first
+  try {
+    return await fetchLabGlancesDetailed('192.168.50.10');
+  } catch {
+    // Fall back to windows_exporter with dynamic drive detection
+    try {
+      const res = await fetch('http://192.168.50.10:9182/metrics', { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error('no metrics');
+      const text = await res.text();
+
+      const idleVals = parsePromValues(text, 'windows_cpu_time_total').filter(m => m.labels.mode === 'idle');
+      const allVals  = parsePromValues(text, 'windows_cpu_time_total');
+      const idleSum  = idleVals.reduce((s, m) => s + m.value, 0);
+      const totalSum = allVals.reduce((s, m) => s + m.value, 0);
+      const cpuPct   = totalSum > 0 ? Math.min(100, Math.round((1 - idleSum / totalSum) * 1000) / 10) : 0;
+
+      const memAvail = parsePromValues(text, 'windows_memory_available_bytes')[0]?.value ?? 0;
+      const memLimit = parsePromValues(text, 'windows_memory_commit_limit')[0]?.value ?? 0;
+      const memUsed  = memLimit - memAvail;
+
+      // Dynamic drive detection — all volumes > 512MB, exclude hidden raw volumes
+      const diskSizes = parsePromValues(text, 'windows_logical_disk_size_bytes')
+        .filter(m => m.value > 536870912 && isRealMount(m.labels.volume));
+      const diskFrees = parsePromValues(text, 'windows_logical_disk_free_bytes');
+      const disks = diskSizes.map(s => {
+        const free = diskFrees.find(f => f.labels.volume === s.labels.volume)?.value ?? 0;
+        const used = s.value - free;
+        return { label: s.labels.volume, used, size: s.value, percent: Math.round((used / s.value) * 1000) / 10 };
+      });
+
+      const thermalVals = parsePromValues(text, 'windows_thermalzone_temperature_celsius');
+      const temps = thermalVals.map(t => t.value).filter(t => t > 0 && t < 120);
+      const maxTemp = temps.length > 0 ? Math.round(Math.max(...temps) * 10) / 10 : null;
+
+      // GPU temp from OHM (port 9101)
+      let gpuTemp = null;
+      try {
+        const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
+        if (ohmRes.ok) {
+          const ohmText = await ohmRes.text();
+          const gpuCoreSensor = parsePromValues(ohmText, 'ohm_gpunvidia_celsius').find(m => m.labels.sensor === 'GPU Core');
+          if (gpuCoreSensor) gpuTemp = Math.round(gpuCoreSensor.value * 10) / 10;
+        }
+      } catch {}
+
+      const gpu = gpuTemp !== null ? { name: 'GTX 1060 6GB', temp: gpuTemp, utilization: null, mem_percent: null } : null;
+      return { online: true, cpu: cpuPct, mem: { used: memUsed, total: memLimit, percent: memLimit > 0 ? Math.round((memUsed / memLimit) * 1000) / 10 : 0 }, disks, gpu, temp: maxTemp };
+    } catch {
+      return { online: false };
+    }
+  }
+}
+
+async function fetchLabBurstMachine(host) {
+  // Online = Ollama responds
+  try {
+    await fetch(`http://${host}:11434`, { signal: AbortSignal.timeout(2500) });
+    // Try Glances for full metrics
+    try {
+      return await fetchLabGlancesDetailed(host);
+    } catch {
+      return { online: true, cpu: null, mem: null, disks: [], gpu: null, temp: null };
+    }
+  } catch {
+    return { online: false };
+  }
+}
+
+const CRITICAL_SERVICES = [
+  { id: 'plex',       name: 'Plex',       url: 'http://192.168.50.10:32400/identity' },
+  { id: 'adguard',    name: 'AdGuard',    url: 'http://192.168.50.30:3000' },
+  { id: 'ollama',     name: 'Ollama',     url: 'http://192.168.50.12:11434' },
+  { id: 'prometheus', name: 'Prometheus', url: 'http://192.168.50.13:9090/-/healthy' },
+];
+
+async function fetchTailscaleStatus() {
+  try {
+    const { stdout } = await execFileAsync('ssh', [
+      '-i', '/root/.ssh/jojeco_lab_key',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'ConnectTimeout=4',
+      '-o', 'BatchMode=yes',
+      'jj@192.168.50.30',
+      '/usr/local/bin/tailscale status --json'
+    ], { timeout: 6000 });
+    const data = JSON.parse(stdout);
+    const self = data.Self ?? {};
+    const peers = Object.values(data.Peer ?? {});
+    const onlinePeers = peers.filter(p => !p.Offline);
+    return {
+      online: self.Online !== false,
+      ip: (self.TailscaleIPs ?? [])[0] ?? null,
+      peers: peers.length,
+      onlinePeers: onlinePeers.length,
+      peerList: peers.map(p => ({ name: p.HostName, online: !p.Offline, ip: (p.TailscaleIPs??[])[0] })),
+    };
+  } catch {
+    return { online: false, ip: null, peers: 0, onlinePeers: 0, peerList: [] };
+  }
+}
+
+async function fetchLabServer2Detailed() {
+  // Glances on S2 runs in Docker and can't see host filesystem — use Glances for CPU/RAM/GPU/temp
+  // then supplement disk from Netdata (which has host access)
+  const glances = await fetchLabGlancesDetailed('192.168.50.13').catch(() => null);
+  if (!glances) return { online: false };
+
+  // Glances gives 0 disks on this host — pull root disk from Netdata
+  let disks = glances.disks ?? [];
+  if (disks.length === 0) {
+    try {
+      const nd = await fetchNetdata('/api/v1/data?chart=disk_space./&after=-2&points=1&format=json');
+      const row = nd.data?.[0];
+      if (row) {
+        const used    = netdataValue(nd.labels, row, 'used');
+        const avail   = netdataValue(nd.labels, row, 'avail');
+        const reserved= netdataValue(nd.labels, row, 'reserved_for_root');
+        const total   = used + avail + reserved;
+        if (total > 0) disks = [{ label: '/', used: used * 1024 * 1024 * 1024, size: total * 1024 * 1024 * 1024, percent: Math.round((used / total) * 1000) / 10 }];
+      }
+    } catch {}
+  }
+
+  return { ...glances, disks };
+}
+
+app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
+  const [s1, s2, s3, mini, jopc, macbook, services, tailscale] = await Promise.all([
+    fetchLabServer1Detailed(),
+    fetchLabServer2Detailed(),
+    fetchLabGlancesDetailed('192.168.50.12').catch(() => ({ online: false })),
+    fetchLabGlancesDetailed('192.168.50.30').catch(() => ({ online: false })),
+    fetchLabBurstMachine('192.168.50.20'),
+    fetchLabBurstMachine('192.168.50.40'),
+    Promise.all(CRITICAL_SERVICES.map(async s => {
+      try {
+        const r = await fetch(s.url, { signal: AbortSignal.timeout(3000) });
+        return { ...s, online: r.ok || r.status < 500 };
+      } catch { return { ...s, online: false }; }
+    })),
+    fetchTailscaleStatus(),
+  ]);
+
+  const machineData = [s1, s2, s3, mini, jopc, macbook];
+  const machines = LAB_MACHINES.map((m, i) => ({ ...m, ...machineData[i] }));
+
+  // Compute health
+  const issues = [];
+  machines.filter(m => m.always_on).forEach(m => {
+    if (!m.online) issues.push({ severity: 'critical', message: `${m.name} is offline` });
+  });
+  services.forEach(s => {
+    if (!s.online) issues.push({ severity: 'critical', message: `${s.name} is down` });
+  });
+  if (!tailscale.online) issues.push({ severity: 'critical', message: 'Tailscale is down' });
+  machines.filter(m => m.online).forEach(m => {
+    (m.disks ?? []).forEach(d => {
+      if (d.percent > 85) issues.push({ severity: 'degraded', message: `${m.name} ${d.label} disk at ${d.percent.toFixed(0)}%` });
+    });
+    if (m.cpu > 90) issues.push({ severity: 'degraded', message: `${m.name} CPU at ${m.cpu.toFixed(0)}%` });
+    if (m.gpu?.temp > 80) issues.push({ severity: 'degraded', message: `${m.name} GPU temp ${m.gpu.temp}°C` });
+    if (m.temp > 85) issues.push({ severity: 'degraded', message: `${m.name} CPU temp ${m.temp}°C` });
+  });
+
+  const status = issues.some(i => i.severity === 'critical') ? 'critical'
+               : issues.length > 0 ? 'degraded'
+               : 'healthy';
+
+  const serviceMap = Object.fromEntries(services.map(s => [s.id, s.online]));
+  serviceMap.tailscale = tailscale.online;
+
+  const safeMachines = req.isGuest ? machines.map(({ host, ...rest }) => rest) : machines;
+  res.json({ machines: safeMachines, status, issues, services: serviceMap, tailscale });
+});
+
+// ============================================================================
+// OPS DASHBOARD ROUTES
+// ============================================================================
+
+const GLANCES_NODES = [
+  { id: 'server1', name: 'Server 1', host: '192.168.50.10', role: 'Plex + Games' },
+  { id: 'server2', name: 'Server 2', host: '192.168.50.13', role: 'Docker Host' },
+  { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'LLM Node' },
+  { id: 'macmini', name: 'Mac Mini', host: '192.168.50.30', role: 'DNS + Monitor' },
+];
+
+const OLLAMA_NODES = [
+  { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'GTX 1060 Max-Q' },
+  { id: 'server1', name: 'Server 1', host: '192.168.50.10', role: 'GTX 1060' },
+  { id: 'macbook', name: 'MacBook M4', host: '192.168.50.40', role: 'M4 (burst)' },
+  { id: 'jopc',    name: 'JoPc',      host: '192.168.50.20', role: 'RTX 3080 Ti (burst)' },
+];
+
+async function fetchGlances(host) {
+  const base = `http://${host}:61208/api/4`;
+  const g = (path) => fetch(`${base}${path}`, { signal: AbortSignal.timeout(4000) }).then(r => r.json()).catch(() => null);
+  const [cpu, mem, fs, sensors] = await Promise.all([g('/cpu'), g('/mem'), g('/fs'), g('/sensors')]);
+  if (!cpu && !mem) throw new Error('offline');
+  return {
+    cpu: cpu?.total ?? null,
+    mem: mem ? { used: mem.used, total: mem.total, percent: mem.percent } : null,
+    fs: (fs ?? []).map(d => ({ mnt_point: d.mnt_point, used: d.used, size: d.size, percent: d.percent })),
+    sensors: (sensors ?? []).filter(s => s.value > 0 && s.value < 120).map(s => ({ label: s.label, value: s.value })),
+  };
+}
+
+app.get('/api/ops/glances', authMiddleware, async (req, res) => {
+  const results = await Promise.all(GLANCES_NODES.map(async node => {
+    try {
+      const data = await fetchGlances(node.host);
+      return { ...node, online: true, ...data };
+    } catch {
+      return { ...node, online: false };
+    }
+  }));
+  res.json(results);
+});
+
+app.get('/api/ops/fleet', optionalAuthMiddleware, async (req, res) => {
+  const nodes = await Promise.all(OLLAMA_NODES.map(async node => {
+    try {
+      const r = await fetch(`http://${node.host}:11434/api/tags`, { signal: AbortSignal.timeout(3000) });
+      if (!r.ok) throw new Error('not ok');
+      const data = await r.json();
+      const models = (data.models || []).map(m => ({ name: m.name, size: m.size }));
+      return { ...node, online: true, models };
+    } catch {
+      return { ...node, online: false, models: [] };
+    }
+  }));
+
+  let litellm = { online: false, spend: null };
+  try {
+    const [healthRes, spendRes] = await Promise.all([
+      fetch(`http://192.168.50.13:4000/health/readiness`, {
+        headers: { Authorization: `Bearer ${LITELLM_KEY}` },
+        signal: AbortSignal.timeout(3000),
+      }),
+      fetch(`http://192.168.50.13:4000/global/spend`, {
+        headers: { Authorization: `Bearer ${LITELLM_KEY}` },
+        signal: AbortSignal.timeout(3000),
+      }),
+    ]);
+    const health = await healthRes.json().catch(() => ({}));
+    const spend = spendRes.ok ? await spendRes.json().catch(() => ({})) : {};
+    litellm = { online: health.status === 'connected', spend: spend.spend ?? null };
+  } catch {}
+
+  res.json({ nodes, litellm });
+});
+
+// Public stats for jojeco.ca (no auth)
+app.get('/api/public/stats', async (req, res) => {
+  try {
+    const firstUser = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+    const count = firstUser
+      ? db.prepare('SELECT COUNT(*) as n FROM services WHERE user_id = ?').get(firstUser.id)?.n ?? 0
+      : 0;
+    res.json({ online_services: count });
+  } catch { res.json({ online_services: null }); }
+});
+
+// Server-side health checks — browser can't reach LAN IPs, API can
+const serverHealthCache = new Map(); // serviceId -> {status, responseTime, checkedAt}
+
+app.get('/api/services/health', optionalAuthMiddleware, async (req, res) => {
+  let userId = req.user?.userId;
+  if (!userId) {
+    const firstUser = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+    if (!firstUser) return res.json({});
+    userId = firstUser.id;
+  }
+
+  const services = db.prepare(
+    'SELECT id, url, lan_url, health_check_url, health_check_interval FROM services WHERE user_id = ?'
+  ).all(userId);
+
+  const CACHE_TTL = 60_000;
+  const results = {};
+
+  await Promise.all(services.map(async svc => {
+    const checkUrl = svc.health_check_url || svc.lan_url || svc.url;
+    if (!checkUrl) { results[svc.id] = { status: 'unknown' }; return; }
+
+    const cached = serverHealthCache.get(svc.id);
+    if (cached && Date.now() - cached.checkedAt < CACHE_TTL) {
+      results[svc.id] = cached; return;
+    }
+
+    const start = Date.now();
+    try {
+      const statusCode = await new Promise((resolve, reject) => {
+        const parsed = new URL(checkUrl);
+        const isHttps = parsed.protocol === 'https:';
+        const lib = isHttps ? https : null;
+        if (!lib) {
+          // HTTP — use fetch
+          fetch(checkUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+            .then(r => resolve(r.status)).catch(reject);
+          return;
+        }
+        const req = https.request({
+          hostname: parsed.hostname,
+          port: parsed.port || 443,
+          path: parsed.pathname + (parsed.search || ''),
+          method: 'HEAD',
+          timeout: 5000,
+          rejectUnauthorized: false,
+        }, res => { res.resume(); resolve(res.statusCode); });
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+        req.on('error', reject);
+        req.end();
+      });
+      // Any HTTP response means the server is reachable — only connection failures = offline
+      const result = { status: 'online', responseTime: Date.now() - start, checkedAt: Date.now() };
+      serverHealthCache.set(svc.id, result);
+      results[svc.id] = result;
+    } catch {
+      const result = { status: 'offline', checkedAt: Date.now() };
+      serverHealthCache.set(svc.id, result);
+      results[svc.id] = result;
+    }
+  }));
+
+  res.json(results);
+});
+
+// ============================================================================
+// CHAOS PAGE — REAL LAB SERVICE HEALTH
+// ============================================================================
+
+const CHAOS_SERVICES = [
+  // Core infrastructure
+  { id: 'dashboard-api',  name: 'Dashboard API',  category: 'Core',    url: 'http://192.168.50.13:3001', dependsOn: [] },
+  { id: 'authelia',       name: 'Authelia SSO',   category: 'Core',    url: 'http://192.168.50.13:9091', dependsOn: ['authelia-redis'] },
+  { id: 'authelia-redis', name: 'Auth Redis',     category: 'Core',    url: 'http://192.168.50.13:6380', dependsOn: [] },
+  { id: 'adguard',        name: 'AdGuard DNS',    category: 'Core',    url: 'http://192.168.50.13:3100', dependsOn: [] },
+  // Media
+  { id: 'plex',           name: 'Plex',           category: 'Media',   url: 'http://192.168.50.10:32400', dependsOn: [] },
+  { id: 'sonarr',         name: 'Sonarr',         category: 'Media',   url: 'http://192.168.50.13:8989', dependsOn: [] },
+  { id: 'radarr',         name: 'Radarr',         category: 'Media',   url: 'http://192.168.50.13:7878', dependsOn: [] },
+  { id: 'tdarr',          name: 'Tdarr',          category: 'Media',   url: 'http://192.168.50.13:8265', dependsOn: [] },
+  // Storage & cloud
+  { id: 'nextcloud',      name: 'Nextcloud',      category: 'Storage', url: 'http://192.168.50.13:8880', dependsOn: ['nextcloud-redis', 'nextcloud-db'] },
+  { id: 'nextcloud-redis',name: 'NC Redis',       category: 'Storage', url: 'http://192.168.50.13:6379', dependsOn: [] },
+  { id: 'nextcloud-db',   name: 'NC MariaDB',     category: 'Storage', url: 'http://192.168.50.13:3306', dependsOn: [] },
+  // AI
+  { id: 'litellm',        name: 'LiteLLM',        category: 'AI',      url: 'http://192.168.50.13:4000', dependsOn: ['litellm-db'] },
+  { id: 'litellm-db',     name: 'LiteLLM DB',     category: 'AI',      url: 'http://192.168.50.13:5432', dependsOn: [] },
+  { id: 'ollama',         name: 'Ollama',         category: 'AI',      url: 'http://192.168.50.13:11434', dependsOn: [] },
+  // Monitoring
+  { id: 'prometheus',     name: 'Prometheus',     category: 'Monitoring', url: 'http://192.168.50.13:9090', dependsOn: [] },
+  { id: 'grafana',        name: 'Grafana',        category: 'Monitoring', url: 'http://192.168.50.13:3000', dependsOn: ['prometheus'] },
+  { id: 'netdata',        name: 'Netdata',        category: 'Monitoring', url: 'http://192.168.50.13:19999', dependsOn: [] },
+  // Notifications & comms
+  { id: 'ntfy',           name: 'ntfy',           category: 'Comms',   url: 'http://192.168.50.13:8080', dependsOn: [] },
+];
+
+app.get('/api/chaos/services', optionalAuthMiddleware, async (req, res) => {
+  const results = await Promise.all(CHAOS_SERVICES.map(async svc => {
+    const start = Date.now();
+    try {
+      const r = await fetch(svc.url, { signal: AbortSignal.timeout(4000) });
+      const latency = Date.now() - start;
+      const online = r.status < 500;
+      return { ...svc, online, latency, status: online ? 'healthy' : 'degraded' };
+    } catch {
+      return { ...svc, online: false, latency: null, status: 'down' };
+    }
+  }));
+  res.json(results);
 });
 
 // ============================================================================
