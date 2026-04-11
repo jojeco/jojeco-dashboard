@@ -8,11 +8,20 @@
       - "3001:3001"
     volumes:
       - ./server/data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/jobot/.ssh/jojeco_lab_key:/root/.ssh/jojeco_lab_key:ro
     environment:
       - NODE_ENV=production
       - PORT=3001
       - JWT_SECRET=${JWT_SECRET}
       - NETDATA_URL=http://netdata:19999
+      - QBT_URL=${QBT_URL}
+      - QBT_USER=${QBT_USER}
+      - QBT_PASS=${QBT_PASS}
+      - SONARR_URL=${SONARR_URL}
+      - SONARR_KEY=${SONARR_KEY}
+      - RADARR_URL=${RADARR_URL}
+      - RADARR_KEY=${RADARR_KEY}
     restart: unless-stopped
     networks:
       - jojeco-network
@@ -35,9 +44,15 @@
       - jojeco-network
     environment:
       - NODE_ENV=production
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      
+
   netdata:
     image: netdata/netdata:latest
     container_name: netdata
