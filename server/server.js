@@ -1489,6 +1489,47 @@ app.get('/api/chaos/services', optionalAuthMiddleware, async (req, res) => {
 // START SERVER
 // ============================================================================
 
+// ============================================================================
+// BACKGROUND HEALTH MONITOR — fires ntfy alerts on state changes
+// ============================================================================
+
+const NTFY_URL = 'http://192.168.50.13:8080/jojeco-alerts';
+const MONITOR_SERVICES = [
+  { id: 'plex',       name: 'Plex',       url: 'http://192.168.50.10:32400' },
+  { id: 'nextcloud',  name: 'Nextcloud',  url: 'http://192.168.50.13:8880' },
+  { id: 'authelia',   name: 'Authelia',   url: 'http://192.168.50.13:9091' },
+  { id: 'sonarr',     name: 'Sonarr',     url: 'http://192.168.50.13:8989' },
+  { id: 'radarr',     name: 'Radarr',     url: 'http://192.168.50.13:7878' },
+  { id: 'litellm',    name: 'LiteLLM',    url: 'http://192.168.50.13:4000' },
+  { id: 'ollama',     name: 'Ollama',     url: 'http://192.168.50.13:11434' },
+  { id: 'ntfy',       name: 'ntfy',       url: 'http://192.168.50.13:8080' },
+];
+
+const serviceState = {};
+
+async function runHealthMonitor() {
+  for (const svc of MONITOR_SERVICES) {
+    let online = false;
+    try {
+      const r = await fetch(svc.url, { signal: AbortSignal.timeout(4000) });
+      online = r.status < 500;
+    } catch { online = false; }
+
+    const prev = serviceState[svc.id];
+    serviceState[svc.id] = online;
+
+    if (prev === undefined) continue; // skip first run (no prior state)
+
+    if (prev && !online) {
+      console.log(`[monitor] ${svc.name} went DOWN`);
+      fetch(NTFY_URL, { method: 'POST', body: `⚠️ ${svc.name} is DOWN`, headers: { Priority: 'high', Tags: 'warning' } }).catch(() => {});
+    } else if (!prev && online) {
+      console.log(`[monitor] ${svc.name} recovered`);
+      fetch(NTFY_URL, { method: 'POST', body: `✅ ${svc.name} recovered`, headers: { Tags: 'white_check_mark' } }).catch(() => {});
+    }
+  }
+}
+
 async function startServer() {
   await db.init();
 
@@ -1496,6 +1537,11 @@ async function startServer() {
     console.log(`🚀 JojeCo Dashboard API running on port ${PORT}`);
     console.log(`📊 Database: ${db.name}`);
   });
+
+  // Prime initial state, then poll every 2 minutes
+  await runHealthMonitor();
+  setInterval(runHealthMonitor, 2 * 60 * 1000);
+  console.log('🔍 Health monitor started (2min interval)');
 }
 
 startServer().catch(console.error);
