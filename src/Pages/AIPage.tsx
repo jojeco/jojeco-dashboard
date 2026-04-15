@@ -1,4 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const h = (e: MediaQueryListEvent) => setMobile(e.matches);
+    mq.addEventListener('change', h);
+    return () => mq.removeEventListener('change', h);
+  }, []);
+  return mobile;
+}
 import { Send, Trash2, Bot, User, ChevronDown, FlaskConical, MessageSquare, Plus, X, Clock, ChevronLeft } from 'lucide-react';
 import { getToken } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -120,6 +131,7 @@ const API = '/api';
 export default function AIPage() {
   const { currentUser } = useAuth();
   const isGuest = !currentUser;
+  const isMobile = useIsMobile();
   const [model, setModel] = useState('local-smart');
   const [preset, setPreset] = useState('none');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -299,7 +311,7 @@ export default function AIPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 120px)', position: 'relative', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: isMobile ? 'calc(100dvh - 104px)' : 'calc(100dvh - 60px)', position: 'relative', overflow: 'hidden' }}>
 
       {/* Conversations sidebar */}
       {!isGuest && (
@@ -309,12 +321,13 @@ export default function AIPage() {
               onClick={() => setSidebarOpen(false)} />
           )}
           <div style={{
-            position: typeof window !== 'undefined' && window.innerWidth < 768 ? 'fixed' : 'relative',
+            position: isMobile ? 'fixed' : 'relative',
             zIndex: 30, width: 240, minWidth: 240, maxWidth: 240,
-            height: '100%', display: 'flex', flexDirection: 'column',
+            height: isMobile ? '100dvh' : '100%', display: 'flex', flexDirection: 'column',
             background: 'var(--surface)', borderRight: '1px solid var(--line)',
-            transform: sidebarOpen || (typeof window !== 'undefined' && window.innerWidth >= 768) ? 'translateX(0)' : 'translateX(-100%)',
+            transform: sidebarOpen || !isMobile ? 'translateX(0)' : 'translateX(-100%)',
             transition: 'transform 200ms',
+            top: isMobile ? 0 : undefined,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--line)' }}>
               <MessageSquare size={13} style={{ color: 'var(--t3)' }} />

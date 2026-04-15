@@ -620,7 +620,7 @@ export default function LabPage() {
 
       {/* Quick stats row */}
       {(docker || fleet) && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 28 }} className="stagger">
+        <div className="j-grid-3 stagger" style={{ marginBottom: 28 }}>
           {/* Docker */}
           <a href="/docker" className="j-panel" style={{ padding: '14px 16px', textDecoration: 'none', display: 'block', transition: 'border-color 120ms' }}
             onMouseEnter={e => (e.currentTarget as HTMLAnchorElement).style.borderColor = 'var(--accent-border)'}
@@ -699,7 +699,7 @@ export default function LabPage() {
       )}
 
       {/* Main two-column layout: hardware left, AI fleet right */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28, marginBottom: 28 }}>
+      <div className="j-grid-half" style={{ marginBottom: 28 }}>
 
         {/* Left: Hardware */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
