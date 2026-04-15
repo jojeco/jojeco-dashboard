@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   Search, Settings,
-  ExternalLink, Clock,
+  ExternalLink,
   Plus, Download, Lock, Server,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -19,15 +19,6 @@ import { ICON_MAP } from '../utils/constants';
 // SMALL COMPONENTS
 // ============================================================================
 
-function StatusDot({ status }: { status: HealthStatus['status'] }) {
-  const cls = {
-    online:  'bg-emerald-500',
-    offline: 'bg-red-500',
-    unknown: 'bg-gray-400',
-  }[status];
-  return <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${cls} ${status === 'online' ? 'animate-pulse' : ''}`} />;
-}
-
 function TagChip({ tag, active, onClick }: { tag: string; active: boolean; onClick: () => void }) {
   return (
     <button
@@ -43,77 +34,72 @@ function TagChip({ tag, active, onClick }: { tag: string; active: boolean; onCli
   );
 }
 
-function ServiceRow({ service, onEdit, health, isGuest }: { service: Service; onEdit: (service: Service) => void; health: HealthStatus; isGuest?: boolean }) {
+function ServiceCard({ service, onEdit, health, isGuest }: { service: Service; onEdit: (service: Service) => void; health: HealthStatus; isGuest?: boolean }) {
   const Icon = service.icon ? (ICON_MAP[service.icon] ?? Server) : Server;
   const bestUrl = isGuest ? null : (service.url || service.lanUrl);
 
-  const statusText = {
-    online:  'Up',
-    offline: 'Down',
-    unknown: 'Unknown',
+  const dotCls = {
+    online:  'bg-emerald-500',
+    offline: 'bg-red-500',
+    unknown: 'bg-gray-400',
   }[health.status];
 
   const statusColor = {
     online:  'text-emerald-600 dark:text-emerald-400',
-    offline: 'text-red-600 dark:text-red-400',
-    unknown: 'text-gray-500 dark:text-gray-400',
+    offline: 'text-red-500 dark:text-red-400',
+    unknown: 'text-gray-400 dark:text-gray-500',
   }[health.status];
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-800 last:border-0 transition-colors ${isGuest ? '' : 'hover:bg-gray-50 dark:hover:bg-gray-800/60 cursor-pointer'}`}
+      className={`relative bg-white dark:bg-gray-800 border rounded-xl p-3 flex flex-col gap-2 transition-all ${
+        health.status === 'offline'
+          ? 'border-red-200 dark:border-red-800/60'
+          : 'border-gray-200 dark:border-gray-700'
+      } ${isGuest ? '' : 'hover:border-blue-300 dark:hover:border-blue-700 cursor-pointer hover:shadow-sm'}`}
       onClick={() => !isGuest && onEdit(service)}
     >
-      {/* Status dot */}
-      <StatusDot status={health.status} />
-
-      {/* Icon */}
-      <div className={`p-1.5 ${service.color ?? 'bg-gray-500'} bg-opacity-15 dark:bg-opacity-25 rounded-md shrink-0`}>
-        <Icon className="w-3.5 h-3.5" />
+      {/* Top row: icon + status dot */}
+      <div className="flex items-start justify-between gap-2">
+        <div className={`p-2 ${service.color ?? 'bg-gray-500'} bg-opacity-15 dark:bg-opacity-25 rounded-lg`}>
+          <Icon className="w-4 h-4" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          {health.responseTime && (
+            <span className="text-[10px] text-gray-400 hidden sm:block">{health.responseTime}ms</span>
+          )}
+          <span className={`inline-block w-2 h-2 rounded-full ${dotCls} ${health.status === 'online' ? 'animate-pulse' : ''}`} />
+        </div>
       </div>
 
-      {/* Name + description */}
-      <div className="flex-1 min-w-0">
-        <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate block">{service.name}</span>
+      {/* Name */}
+      <div>
+        <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate leading-tight">{service.name}</div>
         {service.description && (
-          <span className="text-xs text-gray-500 dark:text-gray-400 truncate block">{service.description}</span>
+          <div className="text-[11px] text-gray-400 dark:text-gray-500 truncate mt-0.5">{service.description}</div>
         )}
       </div>
 
-      {/* Tags */}
-      {service.tags && service.tags.length > 0 && (
-        <div className="hidden sm:flex gap-1 shrink-0">
-          {service.tags.slice(0, 2).map(tag => (
-            <span key={tag} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-[10px] rounded">
-              {tag}
-            </span>
-          ))}
+      {/* Bottom row: tags + link + status */}
+      <div className="flex items-center gap-1 mt-auto">
+        {service.tags && service.tags.slice(0, 2).map(tag => (
+          <span key={tag} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-[10px] rounded">
+            {tag}
+          </span>
+        ))}
+        <div className="flex items-center gap-1.5 ml-auto">
+          <span className={`text-[11px] font-semibold ${statusColor}`}>
+            {health.status === 'online' ? 'Up' : health.status === 'offline' ? 'Down' : '—'}
+          </span>
+          {bestUrl && (
+            <a href={bestUrl} target="_blank" rel="noopener noreferrer"
+              className="text-gray-400 hover:text-blue-500 transition-colors"
+              onClick={e => e.stopPropagation()}>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
         </div>
-      )}
-
-      {/* Response time */}
-      {health.responseTime && (
-        <span className="text-[11px] text-gray-400 dark:text-gray-500 shrink-0 hidden md:flex items-center gap-1">
-          <Clock className="w-3 h-3" />
-          {health.responseTime}ms
-        </span>
-      )}
-
-      {/* Status label */}
-      <span className={`text-xs font-semibold shrink-0 w-14 text-right ${statusColor}`}>{statusText}</span>
-
-      {/* External link */}
-      {bestUrl && (
-        <a
-          href={bestUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-gray-400 hover:text-blue-500 transition-colors shrink-0"
-          onClick={e => e.stopPropagation()}
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-        </a>
-      )}
+      </div>
     </div>
   );
 }
@@ -259,8 +245,9 @@ export default function Dashboard() {
         </div>
       )}
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <div className="relative flex-1 min-w-[160px] max-w-sm">
+      <div className="mb-4 space-y-2">
+        {/* Row 1: search full width */}
+        <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
@@ -270,8 +257,9 @@ export default function Dashboard() {
             className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
           />
         </div>
-        <div className="flex items-center gap-2 ml-auto">
-          {totalTracked > 0 && (
+        {/* Row 2: status pill + action buttons */}
+        <div className="flex items-center justify-between">
+          {totalTracked > 0 ? (
             <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
               onlineCount === totalTracked ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
               : onlineCount === 0 ? 'bg-red-500/10 text-red-700 dark:text-red-300'
@@ -280,34 +268,36 @@ export default function Dashboard() {
               <div className={`w-1.5 h-1.5 rounded-full ${onlineCount === totalTracked ? 'bg-emerald-500' : onlineCount === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
               {onlineCount}/{totalTracked} up
             </div>
-          )}
+          ) : <div />}
           {!isGuest && (
-            <>
+            <div className="flex items-center gap-1">
               <button
                 onClick={() => { setSelectedService(null); setServiceModalOpen(true); }}
-                className="flex items-center gap-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
                 title="Add Service"
               >
                 <Plus className="w-4 h-4" />
-                <span className="hidden sm:inline">Add</span>
+                <span>Add</span>
               </button>
-              <button onClick={() => setImportExportOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Import/Export">
-                <Download className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+              <button onClick={() => setImportExportOpen(true)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Import/Export">
+                <Download className="w-4 h-4 text-gray-600 dark:text-gray-400" />
               </button>
-              <button onClick={() => setSettingsOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Settings">
-                <Settings className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+              <button onClick={() => setSettingsOpen(true)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Settings">
+                <Settings className="w-4 h-4 text-gray-600 dark:text-gray-400" />
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Tag filters */}
+      {/* Tag filters — horizontally scrollable */}
       {allTags.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          {allTags.map(tag => (
-            <TagChip key={tag} tag={tag} active={selectedTags.has(tag)} onClick={() => toggleTag(tag)} />
-          ))}
+        <div className="mb-4 overflow-x-auto scrollbar-none -mx-4 px-4">
+          <div className="flex gap-2 w-max">
+            {allTags.map(tag => (
+              <TagChip key={tag} tag={tag} active={selectedTags.has(tag)} onClick={() => toggleTag(tag)} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -316,9 +306,9 @@ export default function Dashboard() {
         {pinnedServices.length > 0 && (
           <section className="mb-6">
             <h2 className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 px-1">Pinned</h2>
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
               {pinnedServices.map(service => (
-                <ServiceRow key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
+                <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
               ))}
             </div>
           </section>
@@ -330,9 +320,9 @@ export default function Dashboard() {
             {pinnedServices.length > 0 && (
               <h2 className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 px-1">All Services</h2>
             )}
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
               {regularServices.map(service => (
-                <ServiceRow key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
+                <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
               ))}
             </div>
           </section>
