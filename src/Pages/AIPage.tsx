@@ -311,7 +311,7 @@ export default function AIPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div style={{ display: 'flex', height: isMobile ? 'calc(100dvh - 104px)' : 'calc(100dvh - 60px)', position: 'relative', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: isMobile ? 'calc(100dvh - 104px)' : 'calc(100dvh - 52px)', position: 'relative', overflow: 'hidden' }}>
 
       {/* Conversations sidebar */}
       {!isGuest && (
