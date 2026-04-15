@@ -16,6 +16,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Prevent white flash on overscroll / rubber-band scroll in dark mode */
+html, body {
+  background-color: #111827; /* matches dark:bg-gray-900 */
+  overscroll-behavior: none;
+}
+
 /* Hide scrollbar while keeping scroll functionality */
 .scrollbar-none {
   scrollbar-width: none;

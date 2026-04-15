@@ -918,46 +918,126 @@ app.get('/api/media/stats', authMiddleware, async (req, res) => {
   } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
 });
 
-app.get('/api/media/upcoming', optionalAuthMiddleware, async (req, res) => {
-  try {
-    const today = new Date();
-    const end = new Date(today); end.setDate(today.getDate() + 45);
-    const startStr = today.toISOString().slice(0, 10);
-    const endStr = end.toISOString().slice(0, 10);
-    const [cal, movies] = await Promise.allSettled([
-      arrFetch(SONARR_URL, SONARR_KEY, `/calendar?start=${startStr}&end=${endStr}&includeSeries=true`),
-      arrFetch(RADARR_URL, RADARR_KEY, '/movie?monitored=true'),
-    ]);
-    const episodes = (cal.status === 'fulfilled' && Array.isArray(cal.value) ? cal.value : []).map(ep => ({
-      type: 'episode',
-      id: ep.id,
-      title: ep.series?.title || 'Unknown',
-      episode: `S${String(ep.seasonNumber).padStart(2,'0')}E${String(ep.episodeNumber).padStart(2,'0')}`,
-      episodeTitle: ep.title || '',
-      airDate: ep.airDateUtc || ep.airDate || '',
-      hasFile: ep.hasFile || false,
-      network: ep.series?.network || '',
-    }));
-    const upcomingMovies = (movies.status === 'fulfilled' && Array.isArray(movies.value) ? movies.value : [])
-      .filter(m => {
-        const release = m.digitalRelease || m.physicalRelease || m.inCinemas;
-        if (!release) return false;
-        const d = new Date(release);
-        return d >= today && d <= end;
-      })
-      .map(m => ({
-        type: 'movie',
-        id: m.id,
-        title: m.title,
-        year: m.year,
-        digitalRelease: m.digitalRelease || null,
-        physicalRelease: m.physicalRelease || null,
-        inCinemas: m.inCinemas || null,
-        studio: m.studio || '',
-      }));
-    res.json({ episodes, movies: upcomingMovies });
-  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
+// ============================================================================
+// MEDIA UPCOMING — Sonarr calendar + Radarr unreleased
+// ============================================================================
+
+app.get('/api/media/upcoming', authMiddleware, async (req, res) => {
+  const now = new Date();
+  const future = new Date(now.getTime() + 45 * 24 * 60 * 60 * 1000);
+  const start = now.toISOString().split('T')[0];
+  const end   = future.toISOString().split('T')[0];
+  const [sonarrCal, radarrMovies] = await Promise.allSettled([
+    arrFetch(SONARR_URL, SONARR_KEY, `/calendar?start=${start}&end=${end}&includeSeries=true&includeEpisodeFile=false&includeUnmonitored=false`),
+    arrFetch(RADARR_URL, RADARR_KEY, '/movie?monitored=true'),
+  ]);
+  const episodes = sonarrCal.status === 'fulfilled'
+    ? sonarrCal.value.map(ep => ({
+        type: 'episode',
+        id: ep.id,
+        title: ep.series?.title || 'Unknown Show',
+        episode: `S${String(ep.seasonNumber).padStart(2,'0')}E${String(ep.episodeNumber).padStart(2,'0')}`,
+        episodeTitle: ep.title,
+        airDate: ep.airDate,
+        hasFile: ep.hasFile,
+        network: ep.series?.network || null,
+      })).sort((a, b) => a.airDate.localeCompare(b.airDate))
+    : [];
+  const movies = radarrMovies.status === 'fulfilled'
+    ? radarrMovies.value
+        .filter(m => m.monitored && !m.hasFile && m.status !== 'deleted')
+        .filter(m => m.digitalRelease || m.physicalRelease || m.inCinemas)
+        .map(m => ({
+          type: 'movie',
+          id: m.id,
+          title: m.title,
+          year: m.year,
+          status: m.status,
+          inCinemas: m.inCinemas || null,
+          digitalRelease: m.digitalRelease || null,
+          physicalRelease: m.physicalRelease || null,
+        }))
+        .sort((a, b) => {
+          const da = a.digitalRelease || a.physicalRelease || a.inCinemas || '9999-99-99';
+          const db2 = b.digitalRelease || b.physicalRelease || b.inCinemas || '9999-99-99';
+          return da.localeCompare(db2);
+        })
+    : [];
+  res.json({ episodes, movies });
 });
+
+// ============================================================================
+// OLLAMA ACTIVE SESSIONS — which models are currently generating
+// ============================================================================
+
+app.get('/api/lab/ollama/ps', optionalAuthMiddleware, async (req, res) => {
+  const results = await Promise.all(OLLAMA_NODES.map(async node => {
+    try {
+      const r = await fetch(`http://${node.host}:11434/api/ps`, { signal: AbortSignal.timeout(3000) });
+      if (!r.ok) return { id: node.id, active: [] };
+      const data = await r.json();
+      return { id: node.id, active: (data.models || []).map(m => ({ name: m.name, size_vram: m.size_vram })) };
+    } catch { return { id: node.id, active: [] }; }
+  }));
+  res.json(results);
+});
+
+// ============================================================================
+// TEMP HISTORY — rolling window storage + query
+// ============================================================================
+
+app.get('/api/lab/temps/history', optionalAuthMiddleware, (req, res) => {
+  const { machine, hours = '24' } = req.query;
+  const windowMs = Math.min(parseInt(hours) || 24, 168) * 60 * 60 * 1000;
+  const since = Date.now() - windowMs;
+  try {
+    if (machine) {
+      const rows = db.prepare('SELECT timestamp, cpu_temp, gpu_temp FROM temp_history WHERE machine_id = ? AND timestamp > ? ORDER BY timestamp ASC').all(machine, since);
+      return res.json(rows);
+    }
+    const ids = ['server1','server2','server3','macmini','jopc','macbook'];
+    const result = {};
+    for (const id of ids) {
+      result[id] = db.prepare('SELECT timestamp, cpu_temp, gpu_temp FROM temp_history WHERE machine_id = ? AND timestamp > ? ORDER BY timestamp ASC').all(id, since);
+    }
+    res.json(result);
+  } catch { res.status(500).json({ error: 'DB error' }); }
+});
+
+// ============================================================================
+// AI CONVERSATION HISTORY
+// ============================================================================
+
+app.get('/api/ai/conversations', authMiddleware, (req, res) => {
+  const rows = db.prepare('SELECT id, title, model, preset, messages, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC').all(req.user.userId);
+  res.json(rows.map(c => ({ ...c, messages: JSON.parse(c.messages || '[]') })));
+});
+
+app.post('/api/ai/conversations', authMiddleware, (req, res) => {
+  const { title, model, preset = 'none', messages = [] } = req.body;
+  if (!title || !model) return res.status(400).json({ error: 'title and model required' });
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare('INSERT INTO conversations (id, user_id, title, model, preset, messages, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id, req.user.userId, title, model, preset, JSON.stringify(messages), now, now);
+  res.json({ id });
+});
+
+app.put('/api/ai/conversations/:id', authMiddleware, (req, res) => {
+  const { title, messages } = req.body;
+  const now = Date.now();
+  if (messages !== undefined) {
+    db.prepare('UPDATE conversations SET messages = ?, title = COALESCE(?, title), updated_at = ? WHERE id = ? AND user_id = ?').run(JSON.stringify(messages), title ?? null, now, req.params.id, req.user.userId);
+  } else if (title !== undefined) {
+    db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?').run(title, now, req.params.id, req.user.userId);
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/ai/conversations/:id', authMiddleware, (req, res) => {
+  db.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').run(req.params.id, req.user.userId);
+  res.json({ ok: true });
+});
+
 
 // ============================================================================
 // SEED DEFAULT SERVICES
@@ -1078,8 +1158,8 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 
 const LAB_MACHINES = [
   { id: 'server1', name: 'Server 1', host: '192.168.50.10', role: 'Plex + Games',    os: 'Windows 10',  always_on: true,  gpu_label: 'GTX 1060' },
-  { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'LLM Node',        os: 'Ubuntu',      always_on: true,  gpu_label: 'GTX 1060 Max-Q' },
   { id: 'server2', name: 'Server 2', host: '192.168.50.13', role: 'Docker Host',     os: 'Debian LXC',  always_on: true,  gpu_label: null },
+  { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'LLM Node',        os: 'Ubuntu',      always_on: true,  gpu_label: 'GTX 1060 Max-Q' },
   { id: 'macmini', name: 'Mac Mini', host: '192.168.50.30', role: 'DNS + Monitor',   os: 'macOS',       always_on: true,  gpu_label: null },
   { id: 'jopc',    name: 'JoPc',     host: '192.168.50.20', role: 'RTX 3080 Ti',     os: 'Windows',     always_on: false, gpu_label: 'RTX 3080 Ti' },
   { id: 'macbook', name: 'MacBook',  host: '192.168.50.40', role: 'M4 (burst)',      os: 'macOS',       always_on: false, gpu_label: null },
@@ -1307,7 +1387,7 @@ app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
     fetchTailscaleStatus(),
   ]);
 
-  const machineData = [s1, s3, s2, mini, jopc, macbook];
+  const machineData = [s1, s2, s3, mini, jopc, macbook];
   const machines = LAB_MACHINES.map((m, i) => ({ ...m, ...machineData[i] }));
 
   // Compute health
@@ -1321,9 +1401,7 @@ app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
   if (!tailscale.online) issues.push({ severity: 'critical', message: 'Tailscale is down' });
   machines.filter(m => m.online).forEach(m => {
     (m.disks ?? []).forEach(d => {
-      const freeGB = (d.total ?? 0) - (d.used ?? 0);
-      const diskName = d.label ?? d.drive ?? 'disk';
-      if (freeGB < 50 && (d.total ?? 0) > 0) issues.push({ severity: 'degraded', message: `${m.name} ${diskName} low: ${freeGB.toFixed(0)}GB free` });
+      if (d.percent > 85) issues.push({ severity: 'degraded', message: `${m.name} ${d.label} disk at ${d.percent.toFixed(0)}%` });
     });
     if (m.cpu > 90) issues.push({ severity: 'degraded', message: `${m.name} CPU at ${m.cpu.toFixed(0)}%` });
     if (m.gpu?.temp > 80) issues.push({ severity: 'degraded', message: `${m.name} GPU temp ${m.gpu.temp}°C` });
@@ -1539,41 +1617,6 @@ app.get('/api/chaos/services', optionalAuthMiddleware, async (req, res) => {
   res.json(results);
 });
 
-// ── Chaos Agent proxy ────────────────────────────────────────────────────────
-
-const CHAOS_AGENT_URL    = 'http://jojeco-chaos-agent:9999';
-const CHAOS_AGENT_SECRET = process.env.CHAOS_SECRET || '';
-
-async function chaosProxy(path, options = {}) {
-  const res = await fetch(`${CHAOS_AGENT_URL}${path}`, {
-    ...options,
-    headers: { 'X-Chaos-Token': CHAOS_AGENT_SECRET, 'Content-Type': 'application/json', ...(options.headers || {}) },
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw Object.assign(new Error(err.detail || 'agent error'), { status: res.status, detail: err.detail });
-  }
-  return res.json();
-}
-
-app.get('/api/chaos/agent/status', authMiddleware, async (req, res) => {
-  try { res.json(await chaosProxy('/status')); }
-  catch (e) { res.status(e.status || 503).json({ error: e.message }); }
-});
-
-app.post('/api/chaos/agent/run/:module', authMiddleware, async (req, res) => {
-  try {
-    const result = await chaosProxy(`/run/${req.params.module}`, { method: 'POST', body: JSON.stringify(req.body) });
-    res.json(result);
-  } catch (e) { res.status(e.status || 503).json({ error: e.message, detail: e.detail }); }
-});
-
-app.post('/api/chaos/agent/abort', authMiddleware, async (req, res) => {
-  try { res.json(await chaosProxy('/abort', { method: 'POST' })); }
-  catch (e) { res.status(e.status || 503).json({ error: e.message }); }
-});
-
 // ============================================================================
 // START SERVER
 // ============================================================================
@@ -1619,8 +1662,43 @@ async function runHealthMonitor() {
   }
 }
 
+
+// ============================================================================
+// BACKGROUND TEMP POLLER
+// ============================================================================
+
+async function pollTemps() {
+  const now = Date.now();
+  const tasks = [
+    { id: 'server1', fn: () => fetchLabServer1Detailed() },
+    { id: 'server2', fn: () => fetchLabServer2Detailed() },
+    { id: 'server3', fn: () => fetchLabGlancesDetailed('192.168.50.12').catch(() => ({ online: false })) },
+    { id: 'macmini', fn: () => fetchLabGlancesDetailed('192.168.50.30').catch(() => ({ online: false })) },
+    { id: 'jopc',    fn: () => fetchLabBurstMachine('192.168.50.20') },
+    { id: 'macbook', fn: () => fetchLabBurstMachine('192.168.50.40') },
+  ];
+  await Promise.allSettled(tasks.map(async ({ id, fn }) => {
+    try {
+      const data = await fn();
+      if (!data.online) return;
+      const cpuTemp = data.temp ?? null;
+      const gpuTemp = data.gpu?.temp ?? null;
+      if (cpuTemp !== null || gpuTemp !== null) {
+        db.prepare('INSERT INTO temp_history (machine_id, timestamp, cpu_temp, gpu_temp) VALUES (?,?,?,?)').run(id, now, cpuTemp, gpuTemp);
+      }
+    } catch {}
+  }));
+  // Purge older than 6 months
+  db.prepare('DELETE FROM temp_history WHERE timestamp < ?').run(now - 180 * 24 * 60 * 60 * 1000);
+}
+
 async function startServer() {
   await db.init();
+
+  // Migrate: add new tables if not exist
+  db.prepare('CREATE TABLE IF NOT EXISTS temp_history (id INTEGER PRIMARY KEY AUTOINCREMENT, machine_id TEXT NOT NULL, timestamp INTEGER NOT NULL, cpu_temp REAL, gpu_temp REAL)').run();
+  db.prepare('CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, model TEXT NOT NULL, preset TEXT DEFAULT \'none\', messages TEXT NOT NULL DEFAULT \'[]\', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)').run();
+  console.log('📐 DB migration complete (temp_history, conversations)');
 
   app.listen(PORT, () => {
     console.log(`🚀 JojeCo Dashboard API running on port ${PORT}`);
@@ -1631,6 +1709,11 @@ async function startServer() {
   await runHealthMonitor();
   setInterval(runHealthMonitor, 2 * 60 * 1000);
   console.log('🔍 Health monitor started (2min interval)');
+
+  // Temp history poller — every 30 seconds
+  setTimeout(pollTemps, 8000); // first run after 8s (let other services stabilize)
+  setInterval(pollTemps, 30000);
+  console.log('🌡️  Temp history poller started (30s interval)');
 }
 
 startServer().catch(console.error);

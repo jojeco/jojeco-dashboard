@@ -25,6 +25,63 @@ interface FleetData {
 
 interface DockerSummary { running: number; stopped: number; unhealthy: number }
 
+// ─── Model metadata ───────────────────────────────────────────────────────────
+
+const MODEL_DESC: Record<string, string> = {
+  'jojeco-fast':      'Fast text · summaries',
+  'jojeco-code':      'Code generation',
+  'jojeco-smart':     'Complex reasoning',
+  'jojeco-reason':    'Deep analysis · debug',
+  'jojeco-assistant': 'General assistant',
+};
+
+const MODEL_CATEGORY: Record<string, { label: string; color: string }> = {
+  'gemma4':           { label: 'fast',   color: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300' },
+  'phi4':             { label: 'fast',   color: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300' },
+  'deepseek-r1':      { label: 'reason', color: 'bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-300' },
+  'qwen2.5-coder':    { label: 'code',   color: 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' },
+  'qwen2.5':          { label: 'general', color: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400' },
+  'llava':            { label: 'vision', color: 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300' },
+  'nomic-embed-text': { label: 'embed',  color: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' },
+};
+
+function getCategory(name: string) {
+  const base = name.includes(':') ? name.split(':')[0] : name;
+  if (base.startsWith('jojeco-')) return { label: 'preset', color: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300' };
+  return MODEL_CATEGORY[base] ?? { label: 'general', color: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400' };
+}
+
+function nodeShort(name: string) {
+  const map: Record<string, string> = { 'Server 3': 'S3', 'Server 1': 'S1', 'MacBook M4': 'MBP', 'JoPc': 'JoPc' };
+  return map[name] ?? name.slice(0, 3);
+}
+
+// tok/s benchmarks — fleet benchmark 2026-04-11
+const MODEL_SPEED: Record<string, number> = {
+  'gemma4:e4b':    125,
+  'gemma4:26b':    31.7,
+  'gemma4:31b':    1.6,
+  'qwen2.5:7b':    17,
+  'qwen2.5:14b':   8,
+  'qwen2.5-coder:7b': 17,
+  'deepseek-r1:14b':  4.9,
+  'deepseek-r1:7b':   9,
+  'llava:7b':      14,
+};
+
+function modelSpeed(name: string): number | null {
+  if (MODEL_SPEED[name] != null) return MODEL_SPEED[name];
+  // strip tag for alias lookup
+  const base = name.includes(':') ? name.split(':')[0] : name;
+  return MODEL_SPEED[base] ?? null;
+}
+
+function speedColor(tps: number) {
+  if (tps >= 80) return 'text-emerald-600 dark:text-emerald-400';
+  if (tps >= 20) return 'text-yellow-600 dark:text-yellow-400';
+  return 'text-orange-500 dark:text-orange-400';
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function pctColor(pct: number) {
@@ -111,7 +168,7 @@ function OllamaCard({ node }: { node: OllamaNode }) {
         ? 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
         : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40'
     }`}>
-      <div className="flex items-start justify-between mb-2">
+      <div className="flex items-start justify-between mb-1">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">{node.name}</div>
           <div className="text-[11px] text-gray-500 dark:text-gray-400">{node.role}</div>
@@ -124,21 +181,79 @@ function OllamaCard({ node }: { node: OllamaNode }) {
           {node.online ? 'Online' : 'Offline'}
         </span>
       </div>
-
-      {node.online && node.models.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
-          {node.models.map(m => (
-            <span
-              key={m.name}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-mono"
-            >
-              {m.name.includes(':') ? m.name.split(':')[0] : m.name}
-            </span>
-          ))}
+      {node.online && (
+        <div className="text-[11px] text-gray-400 dark:text-gray-500">
+          {node.models.length} model{node.models.length !== 1 ? 's' : ''} loaded
         </div>
-      ) : node.online ? (
-        <div className="text-xs text-gray-400">No models loaded</div>
-      ) : null}
+      )}
+    </div>
+  );
+}
+
+function ModelCatalog({ nodes }: { nodes: OllamaNode[] }) {
+  const catalog = new Map<string, { size: number; nodeNames: string[] }>();
+  nodes.filter(n => n.online).forEach(node => {
+    node.models.forEach(m => {
+      const existing = catalog.get(m.name);
+      if (existing) {
+        existing.nodeNames.push(node.name);
+      } else {
+        catalog.set(m.name, { size: m.size, nodeNames: [node.name] });
+      }
+    });
+  });
+
+  const entries = Array.from(catalog.entries())
+    .map(([name, d]) => ({ name, ...d }))
+    .sort((a, b) => {
+      const aPreset = a.name.startsWith('jojeco-');
+      const bPreset = b.name.startsWith('jojeco-');
+      if (aPreset !== bPreset) return aPreset ? -1 : 1;
+      const aEmbed = a.name.includes('embed');
+      const bEmbed = b.name.includes('embed');
+      if (aEmbed !== bEmbed) return aEmbed ? 1 : -1;
+      return b.size - a.size;
+    });
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-3">
+        Model Catalog · {entries.length} unique models
+      </div>
+      <div className="space-y-1">
+        {entries.map(({ name, size, nodeNames }) => {
+          const cat = getCategory(name);
+          const tps = modelSpeed(name);
+          const desc = MODEL_DESC[name];
+          const sizeGB = size > 0 ? (size / 1073741824).toFixed(1) + ' GB' : null;
+          return (
+            <div key={name} className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/40">
+              <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wide ${cat.color}`}>
+                {cat.label}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-mono font-medium text-gray-900 dark:text-gray-100 truncate">{name}</div>
+                {desc && <div className="text-[10px] text-gray-400 dark:text-gray-500">{desc}</div>}
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {nodeNames.map(n => (
+                  <span key={n} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-600 text-gray-500 dark:text-gray-300 font-medium">
+                    {nodeShort(n)}
+                  </span>
+                ))}
+                {sizeGB && (
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono w-12 text-right">{sizeGB}</span>
+                )}
+                {tps != null && (
+                  <span className={`text-[10px] font-semibold w-14 text-right ${speedColor(tps)}`}>{tps} t/s</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -293,12 +408,15 @@ export default function OpsPage() {
               </div>
             )}
 
-            {/* Ollama nodes */}
+            {/* Ollama node status */}
             <div className="grid grid-cols-2 gap-3">
               {(fleet?.nodes ?? []).map(node => (
                 <OllamaCard key={node.id} node={node} />
               ))}
             </div>
+
+            {/* Unified model catalog */}
+            {fleet && <ModelCatalog nodes={fleet.nodes} />}
           </div>
         </div>
       )}
