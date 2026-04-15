@@ -269,7 +269,7 @@ export default function DockerPage() {
       )}
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }} className="stagger">
+      <div className="j-grid-4 stagger">
         {[
           { label: 'Running', val: runningCount, color: 'var(--ok)' },
           { label: 'Stopped', val: stoppedCount, color: stoppedCount > 0 ? 'var(--err)' : 'var(--t3)' },

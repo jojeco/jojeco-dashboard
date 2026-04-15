@@ -133,7 +133,7 @@ export default function TorrentsPage() {
 
       {/* Transfer stats */}
       {transfer && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+        <div className="j-grid-4">
           {[
             { icon: Download, label: 'Download', val: fmt(transfer.dl_info_speed) + '/s', color: 'var(--accent)' },
             { icon: Upload, label: 'Upload', val: fmt(transfer.up_info_speed) + '/s', color: 'var(--ok)' },
