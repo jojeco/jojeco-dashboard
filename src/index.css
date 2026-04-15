@@ -1,32 +1,112 @@
-﻿@tailwind base;
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-* {
+*, *::before, *::after {
+  box-sizing: border-box;
   margin: 0;
   padding: 0;
-  box-sizing: border-box;
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+:root {
+  --canvas:        #09090b;
+  --surface:       #111116;
+  --raised:        #18181f;
+  --line:          rgba(255,255,255,0.055);
+  --line-2:        rgba(255,255,255,0.10);
+  --accent:        #14b8a6;
+  --accent-dim:    rgba(20,184,166,0.12);
+  --accent-border: rgba(20,184,166,0.22);
+  --ok:            #10b981;
+  --ok-dim:        rgba(16,185,129,0.10);
+  --warn:          #f59e0b;
+  --warn-dim:      rgba(245,158,11,0.10);
+  --err:           #f43f5e;
+  --t1:            #fafafa;
+  --t2:            #a1a1aa;
+  --t3:            #52525b;
+}
+
+html, body {
+  background-color: var(--canvas);
+  color: var(--t1);
+  font-family: 'Geist', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-/* Prevent white flash on overscroll / rubber-band scroll in dark mode */
-html, body {
-  background-color: #111827; /* matches dark:bg-gray-900 */
   overscroll-behavior: none;
 }
 
-/* Hide scrollbar while keeping scroll functionality */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 99px; }
+
 .scrollbar-none {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-.scrollbar-none::-webkit-scrollbar {
-  display: none;
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* Stagger delays */
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 50ms; }
+.stagger > *:nth-child(3) { animation-delay: 100ms; }
+.stagger > *:nth-child(4) { animation-delay: 150ms; }
+.stagger > *:nth-child(5) { animation-delay: 200ms; }
+.stagger > *:nth-child(6) { animation-delay: 250ms; }
+.stagger > *:nth-child(7) { animation-delay: 300ms; }
+.stagger > *:nth-child(8) { animation-delay: 350ms; }
+
+/* Shared panel */
+.j-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
 }
+.j-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.j-panel-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--t2);
+  letter-spacing: 0.01em;
+}
+
+/* Chip */
+.j-chip {
+  font-size: 10px;
+  font-weight: 500;
+  font-family: 'Geist Mono', monospace;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-border);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.j-chip-ok   { color: var(--ok);   background: var(--ok-dim);   border-color: rgba(16,185,129,0.2); }
+.j-chip-warn { color: var(--warn); background: var(--warn-dim); border-color: rgba(245,158,11,0.2); }
+
+/* Status dot */
+.j-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+.j-dot-ok   { background: var(--ok);   box-shadow: 0 0 0 3px var(--ok-dim); }
+.j-dot-warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-dim); }
+.j-dot-err  { background: var(--err);  box-shadow: 0 0 0 3px rgba(244,63,94,0.15); }
+.j-dot-off  { background: var(--t3); }
+
+/* Mini bar */
+.j-bar-track { height: 3px; background: var(--raised); border-radius: 99px; overflow: hidden; }
+.j-bar-fill  { height: 100%; border-radius: 99px; background: var(--accent); transition: width 600ms cubic-bezier(0.16,1,0.3,1); }
+.j-bar-ok    { background: var(--ok); }
+.j-bar-warn  { background: var(--warn); }
+.j-bar-err   { background: var(--err); }
+
+/* Page content area */
+.j-content { padding: 28px 32px; }
+@media (max-width: 768px) { .j-content { padding: 16px; } }

@@ -25,12 +25,17 @@ function fmtEta(s: number) {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
-function stateColor(s: string) {
-  if (['downloading', 'metaDL', 'allocating'].includes(s)) return 'text-blue-400';
-  if (['uploading', 'stalledUP', 'queuedUP', 'forcedUP'].includes(s)) return 'text-green-400';
-  if (s.startsWith('paused')) return 'text-yellow-400';
-  if (['error', 'missingFiles'].includes(s)) return 'text-red-400';
-  return 'text-gray-400';
+function stateColor(s: string): string {
+  if (['downloading', 'metaDL', 'allocating'].includes(s)) return 'var(--accent)';
+  if (['uploading', 'stalledUP', 'queuedUP', 'forcedUP'].includes(s)) return 'var(--ok)';
+  if (s.startsWith('paused')) return 'var(--warn)';
+  if (['error', 'missingFiles'].includes(s)) return 'var(--err)';
+  return 'var(--t3)';
+}
+function barColor(tab: Tab): string {
+  if (tab === 'done') return 'var(--ok)';
+  if (tab === 'error') return 'var(--err)';
+  return 'var(--accent)';
 }
 const STATE_LABELS: Record<string, string> = {
   downloading: 'Downloading', uploading: 'Seeding', pausedDL: 'Paused', pausedUP: 'Done (seeding paused)',
@@ -45,6 +50,16 @@ function classifyTab(t: Torrent): Tab {
   if (['error', 'missingFiles'].includes(t.state)) return 'error';
   if (['uploading', 'stalledUP', 'pausedUP', 'queuedUP', 'forcedUP'].includes(t.state) || t.progress >= 1) return 'done';
   return 'active';
+}
+
+function ActionBtn({ onClick, title, color, children }: { onClick: () => void; title: string; color: string; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} title={title}
+      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none', cursor: 'pointer',
+        background: `${color}14`, color }}>
+      {children}
+    </button>
+  );
 }
 
 export default function TorrentsPage() {
@@ -75,7 +90,6 @@ export default function TorrentsPage() {
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 5000); return () => clearInterval(id); }, [refresh]);
 
-  // Clear selection when switching tabs
   const switchTab = (t: Tab) => { setTab(t); setSelected(new Set()); };
 
   const act = async (action: string, hashes: string[], extra?: Record<string, unknown>) => {
@@ -99,60 +113,67 @@ export default function TorrentsPage() {
 
   const activeTorrents = torrents.filter(t => classifyTab(t) === 'active')
     .sort((a, b) => { const ga = a.state === 'downloading' ? 0 : 1, gb = b.state === 'downloading' ? 0 : 1; return ga !== gb ? ga - gb : b.progress - a.progress; });
-  const doneTorrents = torrents.filter(t => classifyTab(t) === 'done')
-    .sort((a, b) => b.progress - a.progress);
+  const doneTorrents = torrents.filter(t => classifyTab(t) === 'done').sort((a, b) => b.progress - a.progress);
   const errorTorrents = torrents.filter(t => classifyTab(t) === 'error');
 
   const tabData: Record<Tab, Torrent[]> = { active: activeTorrents, done: doneTorrents, error: errorTorrents };
   const current = tabData[tab];
   const sel = Array.from(selected).filter(h => current.some(t => t.hash === h));
 
-  if (loading) return <div className="flex items-center justify-center h-64 text-gray-400">Loading...</div>;
-  if (error) return <div className="flex items-center justify-center h-64 text-red-400">{error}</div>;
+  if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--t3)', fontSize: 13 }}>Loading...</div>;
+  if (error) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--err)', fontSize: 13 }}>{error}</div>;
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
+    <div className="j-content" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {isGuest && (
-        <div className="rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-          <span className="font-semibold">Torrents</span> — active download queue managed by qBittorrent. Queue management is available to signed-in users.
+        <div style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
+          <strong style={{ color: 'var(--t1)' }}>Torrents</strong> — active download queue via qBittorrent. Queue management requires sign-in.
         </div>
       )}
 
       {/* Transfer stats */}
       {transfer && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
           {[
-            { icon: Download, label: 'Download', val: fmt(transfer.dl_info_speed) + '/s', color: 'text-blue-500' },
-            { icon: Upload, label: 'Upload', val: fmt(transfer.up_info_speed) + '/s', color: 'text-green-500' },
-            { icon: Download, label: 'Session DL', val: fmt(transfer.dl_info_data), color: 'text-gray-500' },
+            { icon: Download, label: 'Download', val: fmt(transfer.dl_info_speed) + '/s', color: 'var(--accent)' },
+            { icon: Upload, label: 'Upload', val: fmt(transfer.up_info_speed) + '/s', color: 'var(--ok)' },
+            { icon: Download, label: 'Session DL', val: fmt(transfer.dl_info_data), color: 'var(--t3)' },
           ].map(({ icon: Icon, label, val, color }) => (
-            <div key={label} className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
-              <div className={`flex items-center gap-2 ${color} mb-1`}><Icon className="w-4 h-4" /><span className="text-xs text-gray-500">{label}</span></div>
-              <div className="text-xl font-bold text-gray-900 dark:text-white">{val}</div>
+            <div key={label} className="j-panel" style={{ padding: '12px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <Icon size={12} style={{ color }} />
+                <span style={{ fontSize: 10, color: 'var(--t3)' }}>{label}</span>
+              </div>
+              <div style={{ fontSize: 20, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--t1)' }}>{val}</div>
             </div>
           ))}
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center gap-2 mb-1">
-              {transfer.connection_status === 'connected' ? <Wifi className="w-4 h-4 text-green-500" /> : <WifiOff className="w-4 h-4 text-yellow-500" />}
-              <span className="text-xs text-gray-500">VPN</span>
+          <div className="j-panel" style={{ padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              {transfer.connection_status === 'connected'
+                ? <Wifi size={12} style={{ color: 'var(--ok)' }} />
+                : <WifiOff size={12} style={{ color: 'var(--warn)' }} />}
+              <span style={{ fontSize: 10, color: 'var(--t3)' }}>VPN</span>
             </div>
-            <div className="text-sm font-semibold text-gray-900 dark:text-white capitalize">{transfer.connection_status}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)', textTransform: 'capitalize' }}>{transfer.connection_status}</div>
           </div>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, borderBottom: '1px solid var(--line)', paddingBottom: 0 }}>
         {([
           { key: 'active' as Tab, label: 'In Progress', count: activeTorrents.length },
           { key: 'done' as Tab, label: 'Completed', count: doneTorrents.length },
           { key: 'error' as Tab, label: 'Errors', count: errorTorrents.length },
         ]).map(({ key, label, count }) => (
           <button key={key} onClick={() => switchTab(key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === key ? 'border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+            style={{ padding: '8px 14px', fontSize: 12, fontWeight: 500, border: 'none', borderBottom: `2px solid ${tab === key ? 'var(--accent)' : 'transparent'}`, marginBottom: -1, cursor: 'pointer', background: 'none', color: tab === key ? 'var(--accent)' : 'var(--t3)', transition: 'color 120ms', display: 'flex', alignItems: 'center', gap: 6 }}>
             {label}
             {count > 0 && (
-              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${tab === key ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
+              <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 999, fontWeight: 600,
+                background: tab === key ? 'var(--accent-dim)' : 'var(--raised)',
+                color: tab === key ? 'var(--accent)' : 'var(--t3)',
+                border: `1px solid ${tab === key ? 'var(--accent-border)' : 'var(--line)'}` }}>
                 {count}
               </span>
             )}
@@ -161,92 +182,100 @@ export default function TorrentsPage() {
       </div>
 
       {/* Toolbar */}
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          {!isGuest && (
-            <button onClick={() => setShowAdd(v => !v)} className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">
-              <Plus className="w-4 h-4" /> Add
-            </button>
-          )}
-          {current.length > 0 && !isGuest && (
-            <button onClick={() => toggleAll(current.map(t => t.hash))}
-              className="px-3 py-2 text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg">
-              {current.every(t => selected.has(t.hash)) ? 'Deselect all' : 'Select all'}
-            </button>
-          )}
-          {sel.length > 0 && (
-            <>
-              {tab === 'active' && (
-                <>
-                  <button onClick={() => act('resume', sel)} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm"><Play className="w-4 h-4" /> Resume</button>
-                  <button onClick={() => act('pause', sel)} className="flex items-center gap-1.5 px-3 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg text-sm"><Pause className="w-4 h-4" /> Pause</button>
-                </>
-              )}
-              {tab === 'done' && (
-                <button onClick={() => act('resume', sel)} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm"><Play className="w-4 h-4" /> Re-seed</button>
-              )}
-              <button onClick={() => act('recheck', sel)} className="flex items-center gap-1.5 px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm"><RotateCcw className="w-4 h-4" /> Recheck</button>
-              <button onClick={() => { if (confirm(`Remove ${sel.length} torrent(s)?`)) { act('delete', sel, { deleteFiles: false }); setSelected(new Set()); } }}
-                className="flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm"><Trash2 className="w-4 h-4" /> Remove</button>
-              <span className="text-sm text-gray-500">{sel.length} selected</span>
-            </>
-          )}
-          <button onClick={refresh} className="ml-auto p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><RefreshCw className="w-4 h-4" /></button>
-        </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        {!isGuest && (
+          <button onClick={() => setShowAdd(v => !v)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'var(--accent)', color: '#fff', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+            <Plus size={13} /> Add
+          </button>
+        )}
+        {current.length > 0 && !isGuest && (
+          <button onClick={() => toggleAll(current.map(t => t.hash))}
+            style={{ padding: '6px 10px', fontSize: 11, background: 'var(--raised)', color: 'var(--t2)', borderRadius: 6, border: '1px solid var(--line)', cursor: 'pointer' }}>
+            {current.every(t => selected.has(t.hash)) ? 'Deselect all' : 'Select all'}
+          </button>
+        )}
+        {sel.length > 0 && (
+          <>
+            {tab === 'active' && (
+              <>
+                <ActionBtn onClick={() => act('resume', sel)} title="Resume" color="var(--ok)"><Play size={11} /> Resume</ActionBtn>
+                <ActionBtn onClick={() => act('pause', sel)} title="Pause" color="var(--warn)"><Pause size={11} /> Pause</ActionBtn>
+              </>
+            )}
+            {tab === 'done' && (
+              <ActionBtn onClick={() => act('resume', sel)} title="Re-seed" color="var(--ok)"><Play size={11} /> Re-seed</ActionBtn>
+            )}
+            <ActionBtn onClick={() => act('recheck', sel)} title="Recheck" color="var(--t2)"><RotateCcw size={11} /> Recheck</ActionBtn>
+            <ActionBtn onClick={() => { if (confirm(`Remove ${sel.length} torrent(s)?`)) { act('delete', sel, { deleteFiles: false }); setSelected(new Set()); } }} title="Remove" color="var(--err)">
+              <Trash2 size={11} /> Remove
+            </ActionBtn>
+            <span style={{ fontSize: 12, color: 'var(--t3)' }}>{sel.length} selected</span>
+          </>
+        )}
+        <button onClick={refresh} style={{ marginLeft: 'auto', padding: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)' }}>
+          <RefreshCw size={14} />
+        </button>
       </div>
 
       {showAdd && (
-        <div className="flex gap-2">
+        <div style={{ display: 'flex', gap: 8 }}>
           <input value={addUrl} onChange={e => setAddUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && addTorrent()}
             placeholder="Magnet link or .torrent URL…"
-            className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white" />
-          <button onClick={addTorrent} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Add</button>
-          <button onClick={() => setShowAdd(false)} className="px-3 py-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 text-sm">Cancel</button>
+            style={{ flex: 1, padding: '8px 12px', background: 'var(--raised)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 13, color: 'var(--t1)', outline: 'none', transition: 'border-color 120ms' }}
+            onFocus={e => (e.currentTarget as HTMLInputElement).style.borderColor = 'var(--accent-border)'}
+            onBlur={e => (e.currentTarget as HTMLInputElement).style.borderColor = 'var(--line)'}
+          />
+          <button onClick={addTorrent} style={{ padding: '8px 14px', background: 'var(--accent)', color: '#fff', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Add</button>
+          <button onClick={() => setShowAdd(false)} style={{ padding: '8px 10px', background: 'none', color: 'var(--t3)', border: 'none', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
         </div>
       )}
 
       {/* Torrent list */}
       {current.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <Download className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p>{tab === 'active' ? 'No active downloads' : tab === 'done' ? 'No completed torrents' : 'No errors'}</p>
+        <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--t3)' }}>
+          <Download size={40} style={{ margin: '0 auto 12px', opacity: 0.2 }} />
+          <p style={{ fontSize: 13 }}>{tab === 'active' ? 'No active downloads' : tab === 'done' ? 'No completed torrents' : 'No errors'}</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {current.map(t => (
-            <div key={t.hash} onClick={() => toggle(t.hash)}
-              className={`bg-white dark:bg-gray-800 border rounded-xl p-4 cursor-pointer transition-all ${selected.has(t.hash) ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'}`}>
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-900 dark:text-white text-sm truncate">{t.name}</div>
-                  <div className={`text-xs mt-0.5 ${stateColor(t.state)}`}>{STATE_LABELS[t.state] || t.state}</div>
+            <div key={t.hash} onClick={() => toggle(t.hash)} className="j-panel"
+              style={{ padding: 14, cursor: 'pointer', transition: 'border-color 120ms',
+                borderColor: selected.has(t.hash) ? 'var(--accent)' : t.state === 'error' ? 'rgba(244,63,94,0.3)' : 'var(--line)' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
+                  <div style={{ fontSize: 11, marginTop: 2, color: stateColor(t.state) }}>{STATE_LABELS[t.state] || t.state}</div>
                 </div>
-                <div className="text-right shrink-0 text-xs text-gray-500">
-                  <div>{fmt(t.size)}</div>
-                  {t.state === 'downloading' && <div className="text-blue-400">{fmtEta(t.eta)}</div>}
-                </div>
-              </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 mb-2">
-                <div className={`h-1.5 rounded-full ${tab === 'done' ? 'bg-green-500' : tab === 'error' ? 'bg-red-500' : 'bg-blue-500'}`}
-                  style={{ width: `${(t.progress * 100).toFixed(1)}%` }} />
-              </div>
-              <div className="flex items-center justify-between text-xs text-gray-500">
-                <span>{(t.progress * 100).toFixed(1)}%</span>
-                <div className="flex gap-3">
-                  {t.dlspeed > 0 && <span className="text-blue-400">↓ {fmt(t.dlspeed)}/s</span>}
-                  {t.upspeed > 0 && <span className="text-green-400">↑ {fmt(t.upspeed)}/s</span>}
-                  <span>🌱 {t.num_seeds}/{t.num_leechs}</span>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontSize: 11, fontFamily: 'Geist Mono, monospace', color: 'var(--t2)' }}>{fmt(t.size)}</div>
+                  {t.state === 'downloading' && <div style={{ fontSize: 11, fontFamily: 'Geist Mono, monospace', color: 'var(--accent)' }}>{fmtEta(t.eta)}</div>}
                 </div>
               </div>
-              <div className="flex gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700" onClick={e => e.stopPropagation()}>
+              <div className="j-bar-track" style={{ marginBottom: 8 }}>
+                <div className="j-bar-fill" style={{ width: `${(t.progress * 100).toFixed(1)}%`, background: barColor(tab) }} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                <span style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--t3)' }}>{(t.progress * 100).toFixed(1)}%</span>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  {t.dlspeed > 0 && <span style={{ color: 'var(--accent)' }}>↓ {fmt(t.dlspeed)}/s</span>}
+                  {t.upspeed > 0 && <span style={{ color: 'var(--ok)' }}>↑ {fmt(t.upspeed)}/s</span>}
+                  <span style={{ color: 'var(--t3)' }}>🌱 {t.num_seeds}/{t.num_leechs}</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line)' }} onClick={e => e.stopPropagation()}>
                 {tab === 'active' && (
                   t.state.startsWith('paused') || t.state === 'stalledDL'
-                    ? <button onClick={() => act('resume', [t.hash])} className="flex items-center gap-1 px-2 py-1 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-md"><Play className="w-3 h-3" /> Resume</button>
-                    : <button onClick={() => act('pause', [t.hash])} className="flex items-center gap-1 px-2 py-1 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded-md"><Pause className="w-3 h-3" /> Pause</button>
+                    ? <ActionBtn onClick={() => act('resume', [t.hash])} title="Resume" color="var(--ok)"><Play size={10} /> Resume</ActionBtn>
+                    : <ActionBtn onClick={() => act('pause', [t.hash])} title="Pause" color="var(--warn)"><Pause size={10} /> Pause</ActionBtn>
                 )}
-                <button onClick={() => act('recheck', [t.hash])} className="flex items-center gap-1 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-md"><RotateCcw className="w-3 h-3" /> Recheck</button>
-                <button onClick={() => { if (confirm('Remove torrent?')) act('delete', [t.hash], { deleteFiles: false }); }}
-                  className="flex items-center gap-1 px-2 py-1 text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-md ml-auto"><Trash2 className="w-3 h-3" /> Remove</button>
+                <ActionBtn onClick={() => act('recheck', [t.hash])} title="Recheck" color="var(--t3)"><RotateCcw size={10} /> Recheck</ActionBtn>
+                <div style={{ marginLeft: 'auto' }}>
+                  <ActionBtn onClick={() => { if (confirm('Remove torrent?')) act('delete', [t.hash], { deleteFiles: false }); }} title="Remove" color="var(--err)">
+                    <Trash2 size={10} /> Remove
+                  </ActionBtn>
+                </div>
               </div>
             </div>
           ))}

@@ -56,9 +56,9 @@ Owner: Jordan — CS student, personal home lab project.`;
 const CODE_SYSTEM_PROMPT = `You are an expert software engineer and sysadmin. Be concise and precise. Always show working code examples. Prefer practical solutions over theoretical ones.`;
 
 const PRESETS = [
-  { id: 'none',  label: 'None',   color: '',       prompt: null,               defaultModel: null },
-  { id: 'lab',   label: '🏠 Lab', color: 'blue',   prompt: LAB_SYSTEM_PROMPT,  defaultModel: 'local-smart' },
-  { id: 'code',  label: '💻 Code', color: 'purple', prompt: CODE_SYSTEM_PROMPT, defaultModel: 'local-code' },
+  { id: 'none',  label: 'None',  accentColor: null,          prompt: null,               defaultModel: null },
+  { id: 'lab',   label: 'Lab',   accentColor: 'var(--accent)', prompt: LAB_SYSTEM_PROMPT,  defaultModel: 'local-smart' },
+  { id: 'code',  label: 'Code',  accentColor: '#a78bfa',       prompt: CODE_SYSTEM_PROMPT, defaultModel: 'local-code' },
 ];
 
 function genId() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
@@ -77,13 +77,13 @@ function timeAgo(ts: number) {
 
 function ModelPill({ model, selected, onClick }: { model: typeof MODELS[0]; selected: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick}
-      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-        selected
-          ? 'bg-blue-600 border-blue-600 text-white'
-          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400'
-      }`}
-      title={model.desc}>
+    <button onClick={onClick} title={model.desc}
+      style={{
+        padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer', transition: 'all 120ms',
+        background: selected ? 'var(--accent-dim)' : 'var(--raised)',
+        color: selected ? 'var(--accent)' : 'var(--t2)',
+        border: `1px solid ${selected ? 'var(--accent-border)' : 'var(--line)'}`,
+      }}>
       {model.label}
     </button>
   );
@@ -92,16 +92,24 @@ function ModelPill({ model, selected, onClick }: { model: typeof MODELS[0]; sele
 function MessageBubble({ msg }: { msg: Message }) {
   const isUser = msg.role === 'user';
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-      <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${isUser ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'}`}>
-        {isUser ? <User className="w-4 h-4 text-white" /> : <Bot className="w-4 h-4 text-gray-600 dark:text-gray-300" />}
+    <div style={{ display: 'flex', gap: 10, flexDirection: isUser ? 'row-reverse' : 'row' }}>
+      <div style={{
+        flexShrink: 0, width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: isUser ? 'var(--accent)' : 'var(--raised)',
+        border: isUser ? 'none' : '1px solid var(--line)',
+      }}>
+        {isUser
+          ? <User size={14} style={{ color: '#fff' }} />
+          : <Bot size={14} style={{ color: 'var(--t2)' }} />}
       </div>
-      <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words ${
-        isUser
-          ? 'bg-blue-600 text-white rounded-tr-sm'
-          : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 rounded-tl-sm'
-      }`}>
-        {msg.content || <span className="opacity-40 italic">thinking…</span>}
+      <div style={{
+        maxWidth: '80%', borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+        padding: '10px 14px', fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        background: isUser ? 'var(--accent)' : 'var(--surface)',
+        color: isUser ? '#fff' : 'var(--t1)',
+        border: isUser ? 'none' : '1px solid var(--line)',
+      }}>
+        {msg.content || <span style={{ opacity: 0.4, fontStyle: 'italic' }}>thinking…</span>}
       </div>
     </div>
   );
@@ -129,7 +137,6 @@ export default function AIPage() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  // Load conversations list
   const loadConversations = useCallback(async () => {
     if (isGuest) return;
     const h = { Authorization: `Bearer ${getToken()}` };
@@ -141,7 +148,6 @@ export default function AIPage() {
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
-  // Auto-save current conversation after each exchange
   const scheduleAutoSave = useCallback((msgs: Message[], convId: string | null, title?: string) => {
     if (isGuest || msgs.length === 0) return;
     if (pendingSaveRef.current) clearTimeout(pendingSaveRef.current);
@@ -268,7 +274,6 @@ export default function AIPage() {
         }
       }
 
-      // Save after complete response
       const finalMessages = [...history, { role: 'assistant' as const, content: accumulated }];
       scheduleAutoSave(finalMessages, activeConvId);
 
@@ -294,55 +299,61 @@ export default function AIPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex h-[calc(100vh-120px)] relative">
-      {/* Sidebar */}
+    <div style={{ display: 'flex', height: 'calc(100vh - 120px)', position: 'relative', overflow: 'hidden' }}>
+
+      {/* Conversations sidebar */}
       {!isGuest && (
         <>
-          {/* Overlay on mobile */}
           {sidebarOpen && (
-            <div className="fixed inset-0 bg-black/40 z-20 md:hidden" onClick={() => setSidebarOpen(false)} />
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 20 }}
+              onClick={() => setSidebarOpen(false)} />
           )}
-          <div className={`
-            fixed md:relative z-30 md:z-auto
-            w-64 h-full flex flex-col
-            bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800
-            transition-transform duration-200
-            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-            ${sidebarOpen || window.innerWidth >= 768 ? '' : 'md:w-64'}
-          `} style={{ minWidth: '16rem', maxWidth: '16rem' }}>
-            <div className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-800">
-              <MessageSquare className="w-4 h-4 text-gray-500" />
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300 flex-1">Conversations</span>
-              <button onClick={newChat}
-                className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white" title="New chat">
-                <Plus className="w-3.5 h-3.5" />
+          <div style={{
+            position: typeof window !== 'undefined' && window.innerWidth < 768 ? 'fixed' : 'relative',
+            zIndex: 30, width: 240, minWidth: 240, maxWidth: 240,
+            height: '100%', display: 'flex', flexDirection: 'column',
+            background: 'var(--surface)', borderRight: '1px solid var(--line)',
+            transform: sidebarOpen || (typeof window !== 'undefined' && window.innerWidth >= 768) ? 'translateX(0)' : 'translateX(-100%)',
+            transition: 'transform 200ms',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--line)' }}>
+              <MessageSquare size={13} style={{ color: 'var(--t3)' }} />
+              <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--t2)', flex: 1 }}>Conversations</span>
+              <button onClick={newChat} style={{ padding: '4px 6px', borderRadius: 6, background: 'var(--accent)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="New chat">
+                <Plus size={12} style={{ color: '#fff' }} />
               </button>
-              <button onClick={() => setSidebarOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 md:hidden">
-                <ChevronLeft className="w-3.5 h-3.5" />
+              <button onClick={() => setSidebarOpen(false)} style={{ padding: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)' }}>
+                <ChevronLeft size={13} />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            <div style={{ flex: 1, overflowY: 'auto', padding: '6px 6px' }}>
               {conversations.length === 0 ? (
-                <div className="text-center py-8 text-gray-400 text-xs">No saved conversations</div>
+                <div style={{ textAlign: 'center', padding: '32px 0', fontSize: 11, color: 'var(--t3)' }}>No saved conversations</div>
               ) : (
                 conversations
                   .sort((a, b) => b.updated_at - a.updated_at)
                   .map(conv => (
                     <button key={conv.id} onClick={() => loadConversation(conv)}
-                      className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors group relative ${
-                        activeConvId === conv.id
-                          ? 'bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800'
-                          : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                      }`}>
-                      <div className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate pr-5">{conv.title}</div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <Clock className="w-2.5 h-2.5 text-gray-400" />
-                        <span className="text-[10px] text-gray-400">{timeAgo(conv.updated_at)}</span>
-                        <span className="text-[10px] text-gray-400">· {conv.model.replace('local-', '')}</span>
+                      style={{
+                        width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8, marginBottom: 2,
+                        background: activeConvId === conv.id ? 'var(--raised)' : 'transparent',
+                        border: `1px solid ${activeConvId === conv.id ? 'var(--accent-border)' : 'transparent'}`,
+                        cursor: 'pointer', position: 'relative', transition: 'background 120ms',
+                      }}
+                      onMouseEnter={e => { if (activeConvId !== conv.id) (e.currentTarget as HTMLButtonElement).style.background = 'var(--raised)'; }}
+                      onMouseLeave={e => { if (activeConvId !== conv.id) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}>
+                      <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 20 }}>{conv.title}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <Clock size={9} style={{ color: 'var(--t3)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--t3)' }}>{timeAgo(conv.updated_at)}</span>
+                        <span style={{ fontSize: 10, color: 'var(--t3)' }}>· {conv.model.replace('local-', '')}</span>
                       </div>
                       <button onClick={(e) => deleteConversation(conv.id, e)}
-                        className="absolute right-2 top-2.5 opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-red-500 transition-opacity">
-                        <X className="w-3 h-3" />
+                        style={{ position: 'absolute', right: 8, top: 8, padding: 2, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', opacity: 0, transition: 'opacity 120ms, color 120ms' }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--err)'; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--t3)'; }}
+                        className="conv-delete">
+                        <X size={11} />
                       </button>
                     </button>
                   ))
@@ -353,92 +364,90 @@ export default function AIPage() {
       )}
 
       {/* Main chat */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
         {isGuest && (
-          <div className="mx-4 mt-4 rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-700 dark:text-blue-300 shrink-0">
-            <span className="font-semibold">AI Chat</span> — direct access to the local AI fleet. Sign in to use the chat.
+          <div style={{ margin: '12px 16px 0', padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)', flexShrink: 0 }}>
+            <strong style={{ color: 'var(--t1)' }}>AI Chat</strong> — direct access to the local AI fleet. Sign in to use.
           </div>
         )}
 
         {/* Toolbar */}
-        <div className="px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0 space-y-2">
-          <div className="flex items-center gap-1.5">
-            {/* Sidebar toggle on mobile */}
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface)', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {!isGuest && (
-              <button onClick={() => setSidebarOpen(v => !v)}
-                className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 md:hidden">
-                <MessageSquare className="w-4 h-4" />
+              <button onClick={() => setSidebarOpen(v => !v)} style={{ padding: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)' }}>
+                <MessageSquare size={14} />
               </button>
             )}
-            <FlaskConical className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <FlaskConical size={12} style={{ color: 'var(--t3)', flexShrink: 0 }} />
             {PRESETS.map(p => (
               <button key={p.id} onClick={() => applyPreset(p.id)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                  preset === p.id
-                    ? p.color === 'blue' ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-                      : p.color === 'purple' ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300'
-                      : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-                    : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-                }`}>
+                style={{
+                  padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: 'none', transition: 'all 120ms',
+                  background: preset === p.id ? (p.accentColor ? `${p.accentColor}18` : 'var(--raised)') : 'transparent',
+                  color: preset === p.id ? (p.accentColor ?? 'var(--t1)') : 'var(--t3)',
+                }}>
                 {p.label}
               </button>
             ))}
             {messages.length > 0 && (
               <button onClick={clear} disabled={streaming}
-                className="ml-auto flex items-center gap-1.5 text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-40">
-                <Trash2 className="w-3.5 h-3.5" /> Clear
+                style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer', opacity: streaming ? 0.4 : 1, transition: 'color 120ms' }}
+                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--err)'}
+                onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = 'var(--t3)'}>
+                <Trash2 size={12} /> Clear
               </button>
             )}
           </div>
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-            <span className="text-xs text-gray-400 shrink-0">Model:</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflowX: 'auto' }} className="scrollbar-none">
+            <span style={{ fontSize: 11, color: 'var(--t3)', flexShrink: 0 }}>Model:</span>
             {MODELS.map(m => (
               <ModelPill key={m.id} model={m} selected={model === m.id} onClick={() => setModel(m.id)} />
             ))}
           </div>
         </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-gray-50 dark:bg-gray-950">
+        {/* Messages area */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, background: 'var(--canvas)' }}>
           {convLoading ? (
-            <div className="flex items-center justify-center h-full text-gray-400 text-sm">Loading…</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 12, color: 'var(--t3)' }}>Loading…</div>
           ) : isEmpty ? (
-            <div className="flex flex-col items-center justify-center h-full text-center gap-3 opacity-50">
-              <Bot className="w-12 h-12 text-gray-400" />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', textAlign: 'center', gap: 12, opacity: 0.5 }}>
+              <Bot size={40} style={{ color: 'var(--t3)' }} />
               <div>
                 {activePreset.id !== 'none' ? (
                   <>
-                    <p className="text-gray-600 dark:text-gray-400 font-medium">{activePreset.label} mode active</p>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--t2)' }}>{activePreset.label} mode active</p>
+                    <p style={{ fontSize: 11, color: 'var(--t3)', marginTop: 4 }}>
                       {activePreset.id === 'lab' ? 'Ask anything about the JojeCo lab' : 'Coding assistant mode'}
                     </p>
                   </>
                 ) : (
                   <>
-                    <p className="text-gray-600 dark:text-gray-400 font-medium">Local AI — no cloud, no logging</p>
-                    <p className="text-xs text-gray-500 mt-1">Pick a preset or just start typing</p>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--t2)' }}>Local AI — no cloud, no logging</p>
+                    <p style={{ fontSize: 11, color: 'var(--t3)', marginTop: 4 }}>Pick a preset or just start typing</p>
                   </>
                 )}
-                <p className="text-xs text-gray-400 mt-2">Shift+Enter for new line · Enter to send</p>
+                <p style={{ fontSize: 10, color: 'var(--t3)', marginTop: 8 }}>Shift+Enter for new line · Enter to send</p>
               </div>
             </div>
           ) : (
             messages.map((msg, i) => <MessageBubble key={i} msg={msg} />)
           )}
           {error && (
-            <div className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</div>
+            <div style={{ fontSize: 11, color: 'var(--err)', background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.20)', borderRadius: 8, padding: '8px 12px' }}>{error}</div>
           )}
           <div ref={bottomRef} />
         </div>
 
         {/* Input */}
-        <div className="shrink-0 px-4 py-3 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-          {activePreset.id !== 'none' && (
-            <div className={`text-xs mb-2 px-1 ${activePreset.color === 'blue' ? 'text-blue-500' : 'text-purple-500'}`}>
+        <div style={{ flexShrink: 0, padding: '10px 14px 12px', borderTop: '1px solid var(--line)', background: 'var(--surface)' }}>
+          {activePreset.id !== 'none' && activePreset.accentColor && (
+            <div style={{ fontSize: 11, marginBottom: 6, paddingLeft: 2, color: activePreset.accentColor }}>
               {activePreset.label} preset active
             </div>
           )}
-          <div className="flex gap-2 items-end">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             <textarea
               ref={inputRef}
               value={input}
@@ -451,21 +460,28 @@ export default function AIPage() {
               }
               rows={1}
               disabled={streaming || isGuest}
-              className="flex-1 resize-none overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 max-h-40"
-              style={{ height: 'auto' }}
+              style={{
+                flex: 1, resize: 'none', overflow: 'hidden', background: 'var(--raised)',
+                border: '1px solid var(--line)', borderRadius: 10, padding: '9px 14px',
+                fontSize: 13, color: 'var(--t1)', outline: 'none', maxHeight: 160,
+                fontFamily: 'Geist, system-ui, sans-serif', transition: 'border-color 120ms',
+                opacity: (streaming || isGuest) ? 0.6 : 1,
+              }}
+              onFocus={e => (e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--accent-border)'}
+              onBlur={e => (e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--line)'}
               onInput={e => { const t = e.currentTarget; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }}
             />
             {streaming ? (
               <button onClick={stop}
-                className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-red-500 hover:bg-red-600 text-white transition-colors"
+                style={{ flexShrink: 0, width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, background: 'var(--err)', border: 'none', cursor: 'pointer' }}
                 title="Stop generation">
-                <ChevronDown className="w-4 h-4" />
+                <ChevronDown size={15} style={{ color: '#fff' }} />
               </button>
             ) : (
               <button onClick={send} disabled={!input.trim() || isGuest}
-                className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ flexShrink: 0, width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, background: 'var(--accent)', border: 'none', cursor: (!input.trim() || isGuest) ? 'not-allowed' : 'pointer', opacity: (!input.trim() || isGuest) ? 0.4 : 1, transition: 'opacity 120ms' }}
                 title="Send (Enter)">
-                <Send className="w-4 h-4" />
+                <Send size={14} style={{ color: '#fff' }} />
               </button>
             )}
           </div>

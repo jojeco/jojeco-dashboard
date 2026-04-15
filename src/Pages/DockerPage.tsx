@@ -12,22 +12,23 @@ interface Container {
   compose_project?: string;
 }
 
-function stateColor(state: string) {
-  if (state === 'running') return 'bg-green-500';
-  if (state === 'exited') return 'bg-red-500';
-  if (state === 'paused') return 'bg-yellow-500';
-  return 'bg-gray-400';
+function stateDot(state: string): string {
+  if (state === 'running') return 'j-dot-ok';
+  if (state === 'exited') return 'j-dot-err';
+  if (state === 'paused') return 'j-dot-warn';
+  return 'j-dot-off';
 }
 
 function HealthBadge({ health }: { health: Container['health'] }) {
   if (health === 'none') return null;
-  const styles: Record<string, string> = {
-    healthy:   'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
-    unhealthy: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
-    starting:  'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400',
+  const styles: Record<string, { bg: string; color: string }> = {
+    healthy:   { bg: 'rgba(16,185,129,0.10)',  color: 'var(--ok)'   },
+    unhealthy: { bg: 'rgba(244,63,94,0.10)',    color: 'var(--err)'  },
+    starting:  { bg: 'rgba(245,158,11,0.10)',   color: 'var(--warn)' },
   };
+  const s = styles[health] ?? { bg: 'var(--raised)', color: 'var(--t3)' };
   return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${styles[health]}`}>
+    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 600, background: s.bg, color: s.color }}>
       {health}
     </span>
   );
@@ -79,55 +80,53 @@ interface ContainerRowProps {
 
 function ContainerRow({ c, isGuest, acting, logsFor, logs, logsLoading, onAction, onFetchLogs }: ContainerRowProps) {
   return (
-    <div className={`bg-white dark:bg-gray-800 border rounded-xl overflow-hidden ${
-      c.health === 'unhealthy' ? 'border-red-300 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'
-    }`}>
-      <div className="flex items-center gap-3 p-3">
-        <div className={`w-2 h-2 rounded-full shrink-0 ${stateColor(c.state)}`} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-gray-900 dark:text-white text-sm">{c.name}</span>
+    <div className="j-panel" style={{ overflow: 'hidden', borderColor: c.health === 'unhealthy' ? 'rgba(244,63,94,0.3)' : 'var(--line)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12 }}>
+        <span className={`j-dot ${stateDot(c.state)}`} style={{ flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 500, color: 'var(--t1)', fontSize: 13 }}>{c.name}</span>
             <HealthBadge health={c.health} />
           </div>
-          <div className="text-xs text-gray-500 truncate">{c.image}</div>
+          <div style={{ fontSize: 11, color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.image}</div>
         </div>
-        <div className="hidden md:flex items-center gap-2 text-xs text-gray-500 shrink-0">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           {c.ports.slice(0, 3).map(p => (
-            <span key={p} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-[11px]">{p}</span>
+            <span key={p} style={{ padding: '2px 5px', background: 'var(--raised)', color: 'var(--t2)', borderRadius: 4, fontSize: 10, border: '1px solid var(--line)', fontFamily: 'Geist Mono, monospace' }}>{p}</span>
           ))}
-          <span>{timeSince(c.created)}</span>
+          <span style={{ fontSize: 10, color: 'var(--t3)' }}>{timeSince(c.created)}</span>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
           {!isGuest && (c.state === 'running' ? (
             <>
               <button onClick={() => onAction(c.id, 'restart')} disabled={acting[c.id]} title="Restart"
-                className="p-1.5 text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 rounded-lg disabled:opacity-50">
-                <RotateCcw className="w-3.5 h-3.5" />
+                style={{ padding: 5, borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--warn)', opacity: acting[c.id] ? 0.4 : 1 }}>
+                <RotateCcw size={13} />
               </button>
               <button onClick={() => onAction(c.id, 'stop')} disabled={acting[c.id]} title="Stop"
-                className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg disabled:opacity-50">
-                <Square className="w-3.5 h-3.5" />
+                style={{ padding: 5, borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--err)', opacity: acting[c.id] ? 0.4 : 1 }}>
+                <Square size={13} />
               </button>
             </>
           ) : (
             <button onClick={() => onAction(c.id, 'start')} disabled={acting[c.id]} title="Start"
-              className="p-1.5 text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg disabled:opacity-50">
-              <Play className="w-3.5 h-3.5" />
+              style={{ padding: 5, borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ok)', opacity: acting[c.id] ? 0.4 : 1 }}>
+              <Play size={13} />
             </button>
           ))}
           {!isGuest && (
             <button onClick={() => onFetchLogs(c.id)} title="Logs"
-              className="p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
-              {logsFor === c.id ? <ChevronUp className="w-3.5 h-3.5" /> : <Terminal className="w-3.5 h-3.5" />}
+              style={{ padding: 5, borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)' }}>
+              {logsFor === c.id ? <ChevronUp size={13} /> : <Terminal size={13} />}
             </button>
           )}
         </div>
       </div>
       {logsFor === c.id && (
-        <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-950 p-3">
+        <div style={{ borderTop: '1px solid var(--line)', background: '#050505', padding: 12 }}>
           {logsLoading
-            ? <div className="text-gray-400 text-xs animate-pulse">Fetching logs…</div>
-            : <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap overflow-auto max-h-64 leading-relaxed">{logs}</pre>
+            ? <div style={{ fontSize: 11, color: 'var(--t3)', fontStyle: 'italic' }}>Fetching logs…</div>
+            : <pre style={{ fontSize: 11, color: '#4ade80', fontFamily: 'Geist Mono, monospace', whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: 256, lineHeight: 1.5, margin: 0 }}>{logs}</pre>
           }
         </div>
       )}
@@ -156,40 +155,28 @@ function StackGroup({ name, containers, isGuest, acting, logsFor, logs, logsLoad
   const isStandalone = name === '__standalone__';
 
   return (
-    <div className="space-y-1">
-      <button
-        onClick={() => setCollapsed(v => !v)}
-        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors group"
-      >
-        {collapsed ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400 rotate-180" />}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <button onClick={() => setCollapsed(v => !v)}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer', width: '100%', transition: 'background 120ms' }}
+        onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = 'var(--raised)'}
+        onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = 'none'}>
+        {collapsed ? <ChevronDown size={12} style={{ color: 'var(--t3)' }} /> : <ChevronDown size={12} style={{ color: 'var(--t3)', transform: 'rotate(180deg)' }} />}
         {isStandalone
-          ? <Box className="w-3.5 h-3.5 text-gray-400" />
-          : <Layers className="w-3.5 h-3.5 text-blue-400" />
+          ? <Box size={12} style={{ color: 'var(--t3)' }} />
+          : <Layers size={12} style={{ color: 'var(--accent)' }} />
         }
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+        <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--t2)' }}>
           {isStandalone ? 'Standalone' : name}
         </span>
-        <div className="flex items-center gap-2 ml-auto">
-          {unhealthy > 0 && (
-            <span className="text-xs text-red-500 font-medium">⚠ {unhealthy}</span>
-          )}
-          <span className="text-xs text-gray-400">{running}/{containers.length} running</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          {unhealthy > 0 && <span style={{ fontSize: 11, color: 'var(--err)', fontWeight: 600 }}>⚠ {unhealthy}</span>}
+          <span style={{ fontSize: 11, color: 'var(--t3)' }}>{running}/{containers.length} running</span>
         </div>
       </button>
       {!collapsed && (
-        <div className="space-y-2 pl-2">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 8 }}>
           {sorted.map(c => (
-            <ContainerRow
-              key={c.id}
-              c={c}
-              isGuest={isGuest}
-              acting={acting}
-              logsFor={logsFor}
-              logs={logs}
-              logsLoading={logsLoading}
-              onAction={onAction}
-              onFetchLogs={onFetchLogs}
-            />
+            <ContainerRow key={c.id} c={c} isGuest={isGuest} acting={acting} logsFor={logsFor} logs={logs} logsLoading={logsLoading} onAction={onAction} onFetchLogs={onFetchLogs} />
           ))}
         </div>
       )}
@@ -263,8 +250,8 @@ export default function DockerPage() {
   const stackCount = new Set(containers.map(c => c.compose_project).filter(Boolean)).size;
   const imageCount = new Set(containers.map(c => c.image.split(':')[0])).size;
 
-  if (loading && containers.length === 0) return <div className="flex items-center justify-center h-64 text-gray-400">Loading containers...</div>;
-  if (error) return <div className="flex items-center justify-center h-64 text-red-400">{error}</div>;
+  if (loading && containers.length === 0) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--t3)', fontSize: 13 }}>Loading containers...</div>;
+  if (error) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--err)', fontSize: 13 }}>{error}</div>;
 
   const groups = groupByStack(filtered);
   const stackNames = Object.keys(groups).sort((a, b) => {
@@ -274,108 +261,87 @@ export default function DockerPage() {
   });
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
+    <div className="j-content" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {isGuest && (
-        <div className="rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-          <span className="font-semibold">Docker</span> — live view of all containers. Management controls available to signed-in users.
+        <div style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
+          <strong style={{ color: 'var(--t1)' }}>Docker</strong> — live view of all containers. Management controls available to signed-in users.
         </div>
       )}
 
-      {/* Header stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-3 border border-gray-200 dark:border-gray-700">
-          <div className="text-xs text-gray-500 mb-1">Running</div>
-          <div className="text-2xl font-bold text-green-500">{runningCount}</div>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-3 border border-gray-200 dark:border-gray-700">
-          <div className="text-xs text-gray-500 mb-1">Stopped</div>
-          <div className={`text-2xl font-bold ${stoppedCount > 0 ? 'text-red-400' : 'text-gray-400'}`}>{stoppedCount}</div>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-3 border border-gray-200 dark:border-gray-700">
-          <div className="text-xs text-gray-500 mb-1">Stacks</div>
-          <div className="text-2xl font-bold text-blue-400">{stackCount}</div>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-3 border border-gray-200 dark:border-gray-700">
-          <div className="text-xs text-gray-500 mb-1">Images</div>
-          <div className="text-2xl font-bold text-gray-600 dark:text-gray-300">{imageCount}</div>
-        </div>
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }} className="stagger">
+        {[
+          { label: 'Running', val: runningCount, color: 'var(--ok)' },
+          { label: 'Stopped', val: stoppedCount, color: stoppedCount > 0 ? 'var(--err)' : 'var(--t3)' },
+          { label: 'Stacks', val: stackCount, color: 'var(--accent)' },
+          { label: 'Images', val: imageCount, color: 'var(--t2)' },
+        ].map(({ label, val, color }) => (
+          <div key={label} className="j-panel" style={{ padding: '12px 14px' }}>
+            <div style={{ fontSize: 10, color: 'var(--t3)', marginBottom: 6 }}>{label}</div>
+            <div style={{ fontSize: 24, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color, lineHeight: 1 }}>{val}</div>
+          </div>
+        ))}
       </div>
 
       {unhealthyCount > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm">
-          <span className="font-semibold">⚠ {unhealthyCount} unhealthy container{unhealthyCount > 1 ? 's' : ''}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.20)', color: 'var(--err)', fontSize: 12 }}>
+          <span className="j-dot j-dot-err" />
+          <span style={{ fontWeight: 600 }}>{unhealthyCount} unhealthy container{unhealthyCount > 1 ? 's' : ''}</span>
         </div>
       )}
 
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-0 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        <div style={{ position: 'relative', flex: 1, maxWidth: 360 }}>
+          <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--t3)' }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search containers, images, stacks…"
-            className="w-full pl-9 pr-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white" />
+            style={{ width: '100%', paddingLeft: 30, paddingRight: 10, paddingTop: 7, paddingBottom: 7, background: 'var(--raised)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, color: 'var(--t1)', outline: 'none', boxSizing: 'border-box', transition: 'border-color 120ms' }}
+            onFocus={e => (e.currentTarget as HTMLInputElement).style.borderColor = 'var(--accent-border)'}
+            onBlur={e => (e.currentTarget as HTMLInputElement).style.borderColor = 'var(--line)'}
+          />
         </div>
-        <div className="flex items-center gap-1 flex-wrap">
-          <span className="text-xs text-gray-400 mr-1">Sort:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--t3)', marginRight: 2 }}>Sort:</span>
           {(['state', 'name', 'created'] as SortKey[]).map(k => (
             <button key={k} onClick={() => setSortKey(k)}
-              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${sortKey === k ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+              style={{ padding: '4px 8px', borderRadius: 4, fontSize: 11, fontWeight: 500, cursor: 'pointer', border: `1px solid ${sortKey === k ? 'var(--accent-border)' : 'var(--line)'}`,
+                background: sortKey === k ? 'var(--accent-dim)' : 'var(--raised)',
+                color: sortKey === k ? 'var(--accent)' : 'var(--t2)' }}>
               {k}
             </button>
           ))}
         </div>
-        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
-          <input type="checkbox" checked={groupByCompose} onChange={e => setGroupByCompose(e.target.checked)} className="rounded" />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--t2)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={groupByCompose} onChange={e => setGroupByCompose(e.target.checked)} />
           Group by stack
         </label>
-        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
-          <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} className="rounded" />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--t2)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
           Show stopped
         </label>
-        <span className="text-xs text-gray-400">{filtered.length}</span>
-        <button onClick={refresh} className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-          <RefreshCw className="w-4 h-4" />
+        <span style={{ fontSize: 11, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace' }}>{filtered.length}</span>
+        <button onClick={refresh} style={{ padding: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)' }}>
+          <RefreshCw size={13} />
         </button>
       </div>
 
       {/* Container list */}
-      <div className="space-y-4">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {groupByCompose ? (
           stackNames.map(name => (
-            <StackGroup
-              key={name}
-              name={name}
-              containers={groups[name]}
-              isGuest={isGuest}
-              acting={acting}
-              logsFor={logsFor}
-              logs={logs}
-              logsLoading={logsLoading}
-              sortKey={sortKey}
-              onAction={action}
-              onFetchLogs={fetchLogs}
-            />
+            <StackGroup key={name} name={name} containers={groups[name]} isGuest={isGuest} acting={acting} logsFor={logsFor} logs={logs} logsLoading={logsLoading} sortKey={sortKey} onAction={action} onFetchLogs={fetchLogs} />
           ))
         ) : (
-          <div className="space-y-2">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {sortContainers(filtered, sortKey).map(c => (
-              <ContainerRow
-                key={c.id}
-                c={c}
-                isGuest={isGuest}
-                acting={acting}
-                logsFor={logsFor}
-                logs={logs}
-                logsLoading={logsLoading}
-                onAction={action}
-                onFetchLogs={fetchLogs}
-              />
+              <ContainerRow key={c.id} c={c} isGuest={isGuest} acting={acting} logsFor={logsFor} logs={logs} logsLoading={logsLoading} onAction={action} onFetchLogs={fetchLogs} />
             ))}
           </div>
         )}
         {filtered.length === 0 && (
-          <div className="text-center py-12 text-gray-400">
-            <Box className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p>No containers found</p>
+          <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--t3)' }}>
+            <Box size={36} style={{ margin: '0 auto 12px', opacity: 0.2 }} />
+            <p style={{ fontSize: 13 }}>No containers found</p>
           </div>
         )}
       </div>
