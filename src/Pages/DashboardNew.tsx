@@ -15,20 +15,15 @@ import { type HealthStatus } from '../hooks/useServiceHealth';
 import { api } from '../services/api';
 import { ICON_MAP } from '../utils/constants';
 
-// ============================================================================
-// SMALL COMPONENTS
-// ============================================================================
-
 function TagChip({ tag, active, onClick }: { tag: string; active: boolean; onClick: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-        active
-          ? 'bg-blue-500 text-white'
-          : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-      }`}
-    >
+    <button onClick={onClick}
+      style={{
+        padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: '1px solid', transition: 'all 120ms',
+        background: active ? 'var(--accent-dim)' : 'var(--raised)',
+        color: active ? 'var(--accent)' : 'var(--t2)',
+        borderColor: active ? 'var(--accent-border)' : 'var(--line)',
+      }}>
       {tag}
     </button>
   );
@@ -38,64 +33,50 @@ function ServiceCard({ service, onEdit, health, isGuest }: { service: Service; o
   const Icon = service.icon ? (ICON_MAP[service.icon] ?? Server) : Server;
   const bestUrl = isGuest ? null : (service.url || service.lanUrl);
 
-  const dotCls = {
-    online:  'bg-emerald-500',
-    offline: 'bg-red-500',
-    unknown: 'bg-gray-400',
-  }[health.status];
-
-  const statusColor = {
-    online:  'text-emerald-600 dark:text-emerald-400',
-    offline: 'text-red-500 dark:text-red-400',
-    unknown: 'text-gray-400 dark:text-gray-500',
-  }[health.status];
+  const dotClass = health.status === 'online' ? 'j-dot-ok' : health.status === 'offline' ? 'j-dot-err' : 'j-dot-off';
+  const statusColor = health.status === 'online' ? 'var(--ok)' : health.status === 'offline' ? 'var(--err)' : 'var(--t3)';
 
   return (
-    <div
-      className={`relative bg-white dark:bg-gray-800 border rounded-xl p-3 flex flex-col gap-2 transition-all ${
-        health.status === 'offline'
-          ? 'border-red-200 dark:border-red-800/60'
-          : 'border-gray-200 dark:border-gray-700'
-      } ${isGuest ? '' : 'hover:border-blue-300 dark:hover:border-blue-700 cursor-pointer hover:shadow-sm'}`}
+    <div className="j-panel"
+      style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, cursor: isGuest ? 'default' : 'pointer', transition: 'border-color 120ms',
+        borderColor: health.status === 'offline' ? 'rgba(244,63,94,0.25)' : 'var(--line)' }}
       onClick={() => !isGuest && onEdit(service)}
-    >
-      {/* Top row: icon + status dot */}
-      <div className="flex items-start justify-between gap-2">
-        <div className={`p-2 ${service.color ?? 'bg-gray-500'} bg-opacity-15 dark:bg-opacity-25 rounded-lg`}>
-          <Icon className="w-4 h-4" />
+      onMouseEnter={e => { if (!isGuest) (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--accent-border)'; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = health.status === 'offline' ? 'rgba(244,63,94,0.25)' : 'var(--line)'; }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ padding: 8, background: 'var(--raised)', borderRadius: 8, border: '1px solid var(--line)' }}>
+          <Icon size={14} style={{ color: 'var(--t2)' }} />
         </div>
-        <div className="flex items-center gap-1.5">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {health.responseTime && (
-            <span className="text-[10px] text-gray-400 hidden sm:block">{health.responseTime}ms</span>
+            <span style={{ fontSize: 10, fontFamily: 'Geist Mono, monospace', color: 'var(--t3)' }}>{health.responseTime}ms</span>
           )}
-          <span className={`inline-block w-2 h-2 rounded-full ${dotCls} ${health.status === 'online' ? 'animate-pulse' : ''}`} />
+          <span className={`j-dot ${dotClass}`} style={health.status === 'online' ? { animation: 'pulseDot 2s ease-in-out infinite' } : {}} />
         </div>
       </div>
-
-      {/* Name */}
       <div>
-        <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate leading-tight">{service.name}</div>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{service.name}</div>
         {service.description && (
-          <div className="text-[11px] text-gray-400 dark:text-gray-500 truncate mt-0.5">{service.description}</div>
+          <div style={{ fontSize: 11, color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{service.description}</div>
         )}
       </div>
-
-      {/* Bottom row: tags + link + status */}
-      <div className="flex items-center gap-1 mt-auto">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 'auto' }}>
         {service.tags && service.tags.slice(0, 2).map(tag => (
-          <span key={tag} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-[10px] rounded">
+          <span key={tag} style={{ fontSize: 9, padding: '2px 5px', borderRadius: 3, background: 'var(--raised)', color: 'var(--t3)', border: '1px solid var(--line)' }}>
             {tag}
           </span>
         ))}
-        <div className="flex items-center gap-1.5 ml-auto">
-          <span className={`text-[11px] font-semibold ${statusColor}`}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: statusColor }}>
             {health.status === 'online' ? 'Up' : health.status === 'offline' ? 'Down' : '—'}
           </span>
           {bestUrl && (
             <a href={bestUrl} target="_blank" rel="noopener noreferrer"
-              className="text-gray-400 hover:text-blue-500 transition-colors"
-              onClick={e => e.stopPropagation()}>
-              <ExternalLink className="w-3 h-3" />
+              style={{ color: 'var(--t3)', transition: 'color 120ms' }}
+              onClick={e => e.stopPropagation()}
+              onMouseEnter={e => (e.currentTarget as HTMLAnchorElement).style.color = 'var(--accent)'}
+              onMouseLeave={e => (e.currentTarget as HTMLAnchorElement).style.color = 'var(--t3)'}>
+              <ExternalLink size={11} />
             </a>
           )}
         </div>
@@ -103,10 +84,6 @@ function ServiceCard({ service, onEdit, health, isGuest }: { service: Service; o
     </div>
   );
 }
-
-// ============================================================================
-// SETTINGS MODAL
-// ============================================================================
 
 function SettingsModal({
   isOpen,
@@ -121,34 +98,27 @@ function SettingsModal({
 
   return (
     <BaseModal isOpen={isOpen} onClose={onClose} title="Settings" maxWidth="sm">
-      <div className="space-y-4">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {currentUser && (
-          <div className="pb-4 border-b border-gray-200 dark:border-gray-700">
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Signed in as</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">{currentUser.email}</p>
+          <div style={{ paddingBottom: 16, borderBottom: '1px solid var(--line)' }}>
+            <p style={{ fontSize: 13, fontWeight: 500, color: 'var(--t2)', marginBottom: 4 }}>Signed in as</p>
+            <p style={{ fontSize: 13, color: 'var(--t3)', marginBottom: 12 }}>{currentUser.email}</p>
             <button
               onClick={() => { onClose(); onPasswordChange(); }}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors w-full justify-center"
-            >
-              <Lock className="w-4 h-4" />
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: '8px 16px', background: 'var(--accent)', color: '#fff', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+              <Lock size={14} />
               Change Password
             </button>
           </div>
         )}
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Self-hosted service dashboard with real-time health monitoring.
-        </p>
-        <p className="text-xs text-gray-400 dark:text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">
+        <p style={{ fontSize: 13, color: 'var(--t2)' }}>Self-hosted service dashboard with real-time health monitoring.</p>
+        <p style={{ fontSize: 11, color: 'var(--t3)', paddingTop: 12, borderTop: '1px solid var(--line)' }}>
           v2.0.0 · {new Date().toISOString().split('T')[0]}
         </p>
       </div>
     </BaseModal>
   );
 }
-
-// ============================================================================
-// MAIN DASHBOARD
-// ============================================================================
 
 export default function Dashboard() {
   const { currentUser } = useAuth();
@@ -174,7 +144,6 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, []);
 
-  // Server-side health checks — API can reach LAN services, browser can't
   useEffect(() => {
     const fetchHealth = () => {
       api.get<Record<string, { status: string; responseTime?: number }>>('/services/health')
@@ -232,68 +201,68 @@ export default function Dashboard() {
   };
 
   const unknownHealth: HealthStatus = { status: 'unknown', checkedAt: new Date() };
-
   const onlineCount  = Object.values(onlineCounts).filter(Boolean).length;
   const totalTracked = Object.keys(onlineCounts).length;
 
   return (
-    <div className="px-4 py-6">
-      {/* Guest info */}
+    <div className="j-content">
       {isGuest && (
-        <div className="mb-5 rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-          <span className="font-semibold">Services</span> — all self-hosted services running in the lab with live health status. Service URLs and internal addresses are hidden in guest view.
+        <div style={{ marginBottom: 20, padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
+          <strong style={{ color: 'var(--t1)' }}>Services</strong> — all self-hosted services with live health status. URLs hidden in guest view.
         </div>
       )}
+
       {/* Toolbar */}
-      <div className="mb-4 space-y-2">
-        {/* Row 1: search full width */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+      <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ position: 'relative' }}>
+          <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--t3)' }} />
           <input
             type="text"
             placeholder="Search services…"
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
+            style={{ width: '100%', paddingLeft: 36, paddingRight: 12, paddingTop: 8, paddingBottom: 8, background: 'var(--raised)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 13, color: 'var(--t1)', outline: 'none', boxSizing: 'border-box', transition: 'border-color 120ms' }}
+            onFocus={e => (e.currentTarget as HTMLInputElement).style.borderColor = 'var(--accent-border)'}
+            onBlur={e => (e.currentTarget as HTMLInputElement).style.borderColor = 'var(--line)'}
           />
         </div>
-        {/* Row 2: status pill + action buttons */}
-        <div className="flex items-center justify-between">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           {totalTracked > 0 ? (
-            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-              onlineCount === totalTracked ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-              : onlineCount === 0 ? 'bg-red-500/10 text-red-700 dark:text-red-300'
-              : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-300'
-            }`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${onlineCount === totalTracked ? 'bg-emerald-500' : onlineCount === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+              background: onlineCount === totalTracked ? 'rgba(16,185,129,0.08)' : onlineCount === 0 ? 'rgba(244,63,94,0.08)' : 'rgba(245,158,11,0.08)',
+              color: onlineCount === totalTracked ? 'var(--ok)' : onlineCount === 0 ? 'var(--err)' : 'var(--warn)',
+              border: `1px solid ${onlineCount === totalTracked ? 'rgba(16,185,129,0.2)' : onlineCount === 0 ? 'rgba(244,63,94,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
+              <span className={`j-dot ${onlineCount === totalTracked ? 'j-dot-ok' : onlineCount === 0 ? 'j-dot-err' : 'j-dot-warn'}`} />
               {onlineCount}/{totalTracked} up
             </div>
           ) : <div />}
           {!isGuest && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => { setSelectedService(null); setServiceModalOpen(true); }}
-                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                title="Add Service"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button onClick={() => { setSelectedService(null); setServiceModalOpen(true); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'var(--accent)', color: '#fff', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                <Plus size={13} /> Add
               </button>
-              <button onClick={() => setImportExportOpen(true)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Import/Export">
-                <Download className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+              <button onClick={() => setImportExportOpen(true)}
+                style={{ padding: 6, borderRadius: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', transition: 'background 120ms, color 120ms' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--raised)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--t1)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--t3)'; }}>
+                <Download size={14} />
               </button>
-              <button onClick={() => setSettingsOpen(true)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Settings">
-                <Settings className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+              <button onClick={() => setSettingsOpen(true)}
+                style={{ padding: 6, borderRadius: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', transition: 'background 120ms, color 120ms' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--raised)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--t1)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--t3)'; }}>
+                <Settings size={14} />
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Tag filters — horizontally scrollable */}
+      {/* Tag filters */}
       {allTags.length > 0 && (
-        <div className="mb-4 overflow-x-auto scrollbar-none -mx-4 px-4">
-          <div className="flex gap-2 w-max">
+        <div style={{ marginBottom: 16, overflowX: 'auto', marginLeft: -32, marginRight: -32, paddingLeft: 32, paddingRight: 32 }} className="scrollbar-none">
+          <div style={{ display: 'flex', gap: 6, width: 'max-content' }}>
             {allTags.map(tag => (
               <TagChip key={tag} tag={tag} active={selectedTags.has(tag)} onClick={() => toggleTag(tag)} />
             ))}
@@ -302,11 +271,13 @@ export default function Dashboard() {
       )}
 
       <main>
-        {/* Pinned services */}
         {pinnedServices.length > 0 && (
-          <section className="mb-6">
-            <h2 className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 px-1">Pinned</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+          <section style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+              Pinned
+              <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
               {pinnedServices.map(service => (
                 <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
               ))}
@@ -314,13 +285,15 @@ export default function Dashboard() {
           </section>
         )}
 
-        {/* All services */}
         {regularServices.length > 0 && (
           <section>
             {pinnedServices.length > 0 && (
-              <h2 className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 px-1">All Services</h2>
+              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                All Services
+                <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+              </div>
             )}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
               {regularServices.map(service => (
                 <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
               ))}
@@ -329,29 +302,22 @@ export default function Dashboard() {
         )}
 
         {filteredServices.length === 0 && services.length === 0 && (
-          <div className="text-center py-16">
+          <div style={{ textAlign: 'center', padding: '64px 0' }}>
             {isGuest ? (
-              <p className="text-gray-500 dark:text-gray-400 text-lg">No services to display.</p>
+              <p style={{ fontSize: 14, color: 'var(--t3)' }}>No services to display.</p>
             ) : (
               <>
-                <p className="text-gray-500 dark:text-gray-400 text-lg mb-4">No services yet!</p>
-                <div className="flex items-center justify-center gap-3 flex-wrap">
+                <p style={{ fontSize: 14, color: 'var(--t3)', marginBottom: 16 }}>No services yet!</p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <button
-                    onClick={async () => {
-                      await serviceService.seedDefaultServices();
-                      serviceService.getUserServices().then(setServices);
-                    }}
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-                  >
-                    <Server size={20} />
-                    Load JojeCo Services
+                    onClick={async () => { await serviceService.seedDefaultServices(); serviceService.getUserServices().then(setServices); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px', background: 'var(--accent)', color: '#fff', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+                    <Server size={16} /> Load JojeCo Services
                   </button>
                   <button
                     onClick={() => { setSelectedService(null); setServiceModalOpen(true); }}
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 font-medium"
-                  >
-                    <Plus size={20} />
-                    Add Manually
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 20px', background: 'var(--raised)', color: 'var(--t1)', borderRadius: 8, border: '1px solid var(--line)', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+                    <Plus size={16} /> Add Manually
                   </button>
                 </div>
               </>
@@ -360,29 +326,18 @@ export default function Dashboard() {
         )}
 
         {filteredServices.length === 0 && services.length > 0 && (
-          <div className="text-center py-16">
-            <p className="text-gray-500 dark:text-gray-400 text-lg">No services match your filter.</p>
-            <button
-              onClick={() => { setSearchTerm(''); setSelectedTags(new Set()); }}
-              className="mt-4 text-blue-500 hover:text-blue-600 font-medium"
-            >
+          <div style={{ textAlign: 'center', padding: '64px 0' }}>
+            <p style={{ fontSize: 14, color: 'var(--t3)', marginBottom: 12 }}>No services match your filter.</p>
+            <button onClick={() => { setSearchTerm(''); setSelectedTags(new Set()); }}
+              style={{ fontSize: 13, fontWeight: 500, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}>
               Clear filters
             </button>
           </div>
         )}
       </main>
 
-      <SettingsModal
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onPasswordChange={() => setPasswordChangeOpen(true)}
-      />
-
-      <PasswordChangeModal
-        isOpen={passwordChangeOpen}
-        onClose={() => setPasswordChangeOpen(false)}
-      />
-
+      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} onPasswordChange={() => setPasswordChangeOpen(true)} />
+      <PasswordChangeModal isOpen={passwordChangeOpen} onClose={() => setPasswordChangeOpen(false)} />
       <ServiceModal
         isOpen={serviceModalOpen}
         onClose={() => { setServiceModalOpen(false); setSelectedService(null); }}
@@ -390,7 +345,6 @@ export default function Dashboard() {
         onDelete={serviceService.deleteService.bind(serviceService)}
         service={selectedService}
       />
-
       <ImportExportModal
         isOpen={importExportOpen}
         onClose={() => setImportExportOpen(false)}
