@@ -261,7 +261,7 @@ export default function Dashboard() {
 
       {/* Tag filters */}
       {allTags.length > 0 && (
-        <div style={{ marginBottom: 16, overflowX: 'auto', marginLeft: -32, marginRight: -32, paddingLeft: 32, paddingRight: 32 }} className="scrollbar-none">
+        <div style={{ marginBottom: 16, overflowX: 'auto', marginLeft: -16, marginRight: -16, paddingLeft: 16, paddingRight: 16 }} className="scrollbar-none">
           <div style={{ display: 'flex', gap: 6, width: 'max-content' }}>
             {allTags.map(tag => (
               <TagChip key={tag} tag={tag} active={selectedTags.has(tag)} onClick={() => toggleTag(tag)} />

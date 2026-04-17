@@ -165,8 +165,8 @@ function TempSparkline({ history }: { history: TempPoint[] }) {
 // ─── Machine Card (ring gauge layout) ────────────────────────────────────────
 function MachineCard({ m, history, isMobile }: { m: Machine; history: TempPoint[]; isMobile: boolean }) {
   const [open, setOpen] = useState(false);
-  const totalDisk = m.disks.reduce((s, d) => s + d.size, 0);
-  const usedDisk  = m.disks.reduce((s, d) => s + d.used, 0);
+  const totalDisk = (m.disks ?? []).reduce((s, d) => s + d.size, 0);
+  const usedDisk  = (m.disks ?? []).reduce((s, d) => s + d.used, 0);
   const diskPct   = totalDisk > 0 ? (usedDisk / totalDisk) * 100 : 0;
   const isIntegrated = (n: string) => /intel|uhd|iris/i.test(n);
 
@@ -367,7 +367,8 @@ export default function LabPage() {
   useEffect(() => { fetchAll(); const id = setInterval(fetchAll, 10000); return () => clearInterval(id); }, [fetchAll]);
 
   useAuth();
-  const alwaysOn = data?.machines.filter(m => m.always_on) ?? [];
+  const ORDER = ['server1','server2','server3','macmini'];
+  const alwaysOn = (data?.machines.filter(m => m.always_on) ?? []).sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
   const burst    = data?.machines.filter(m => !m.always_on) ?? [];
   const isMobile = isMobileRef.current;
 
