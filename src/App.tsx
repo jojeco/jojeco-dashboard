@@ -1,5 +1,19 @@
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Component, ReactNode } from 'react';
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
+  state = { err: null };
+  static getDerivedStateFromError(e: Error) { return { err: e.message }; }
+  render() {
+    if (this.state.err) return (
+      <div style={{ padding: 32, color: 'rgba(255,255,255,0.8)', fontFamily: 'monospace', fontSize: 13 }}>
+        <div style={{ color: '#ef4444', fontWeight: 700, marginBottom: 8 }}>Render error</div>
+        <div>{this.state.err}</div>
+      </div>
+    );
+    return this.props.children;
+  }
+}
 import { LogOut, LogIn, Server, Download, Container, Film, Bot, Zap, LayoutDashboard } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -169,7 +183,7 @@ function App() {
           <Routes>
             <Route path="/login"    element={<Login />} />
             <Route path="/birthday" element={<Birthday />} />
-            <Route path="/"         element={<ProtectedRoute><LabPage /></ProtectedRoute>} />
+            <Route path="/"         element={<ProtectedRoute><ErrorBoundary><LabPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/services" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/torrents" element={<ProtectedRoute><TorrentsPage /></ProtectedRoute>} />
             <Route path="/docker"   element={<ProtectedRoute><DockerPage /></ProtectedRoute>} />

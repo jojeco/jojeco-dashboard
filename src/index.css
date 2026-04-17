@@ -195,7 +195,7 @@ button { font-family: inherit; cursor: pointer; }
 .j-mobile-content {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 16px;
   padding-bottom: calc(var(--bottom-nav-h) + 8px);
 }
 
@@ -402,6 +402,8 @@ button { font-family: inherit; cursor: pointer; }
   .j-shell        { display: none !important; }
   .j-shell-mobile { display: flex; }
   .j-bottom-nav   { display: flex; }
+  /* j-content is already inside j-mobile-content which has its own padding */
+  .j-content      { padding: 0; max-width: none; }
   .j-grid-3    { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .j-grid-4    { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .j-grid-half { grid-template-columns: 1fr; gap: 10px; }

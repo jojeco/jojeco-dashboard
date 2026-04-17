@@ -1619,8 +1619,73 @@ async function runHealthMonitor() {
   }
 }
 
+// ============================================================================
+// OLLAMA ACTIVE SESSIONS
+// ============================================================================
+
+app.get('/api/lab/ollama/ps', optionalAuthMiddleware, async (req, res) => {
+  const results = await Promise.all(OLLAMA_NODES.map(async node => {
+    try {
+      const r = await fetch(`http://${node.host}:11434/api/ps`, { signal: AbortSignal.timeout(3000) });
+      if (!r.ok) return { id: node.id, active: [] };
+      const data = await r.json();
+      return { id: node.id, active: (data.models || []).map(m => ({ name: m.name, size_vram: m.size_vram })) };
+    } catch { return { id: node.id, active: [] }; }
+  }));
+  res.json(results);
+});
+
+// ============================================================================
+// TEMP HISTORY
+// ============================================================================
+
+app.get('/api/lab/temps/history', optionalAuthMiddleware, (req, res) => {
+  const { machine, hours = '24' } = req.query;
+  const windowMs = Math.min(parseInt(hours) || 24, 168) * 60 * 60 * 1000;
+  const since = Date.now() - windowMs;
+  try {
+    if (machine) {
+      const rows = db.prepare('SELECT timestamp, cpu_temp, gpu_temp FROM temp_history WHERE machine_id = ? AND timestamp > ? ORDER BY timestamp ASC').all(machine, since);
+      return res.json(rows);
+    }
+    const ids = ['server1','server2','server3','macmini','jopc','macbook'];
+    const result = {};
+    for (const id of ids) {
+      result[id] = db.prepare('SELECT timestamp, cpu_temp, gpu_temp FROM temp_history WHERE machine_id = ? AND timestamp > ? ORDER BY timestamp ASC').all(id, since);
+    }
+    res.json(result);
+  } catch { res.status(500).json({ error: 'DB error' }); }
+});
+
+async function pollTemps() {
+  const now = Date.now();
+  const tasks = [
+    { id: 'server1', fn: () => fetchLabServer1Detailed() },
+    { id: 'server2', fn: () => fetchLabServer2Detailed() },
+    { id: 'server3', fn: () => fetchLabGlancesDetailed('192.168.50.12').catch(() => ({ online: false })) },
+    { id: 'macmini', fn: () => fetchLabGlancesDetailed('192.168.50.30').catch(() => ({ online: false })) },
+    { id: 'jopc',    fn: () => fetchLabBurstMachine('192.168.50.20') },
+    { id: 'macbook', fn: () => fetchLabBurstMachine('192.168.50.40') },
+  ];
+  await Promise.allSettled(tasks.map(async ({ id, fn }) => {
+    try {
+      const data = await fn();
+      if (!data.online) return;
+      const cpuTemp = data.temp ?? null;
+      const gpuTemp = data.gpu?.temp ?? null;
+      if (cpuTemp !== null || gpuTemp !== null) {
+        db.prepare('INSERT INTO temp_history (machine_id, timestamp, cpu_temp, gpu_temp) VALUES (?,?,?,?)').run(id, now, cpuTemp, gpuTemp);
+      }
+    } catch {}
+  }));
+  db.prepare('DELETE FROM temp_history WHERE timestamp < ?').run(now - 180 * 24 * 60 * 60 * 1000);
+}
+
 async function startServer() {
   await db.init();
+
+  // Migrate: ensure temp_history table exists
+  db.prepare('CREATE TABLE IF NOT EXISTS temp_history (id INTEGER PRIMARY KEY AUTOINCREMENT, machine_id TEXT NOT NULL, timestamp INTEGER NOT NULL, cpu_temp REAL, gpu_temp REAL)').run();
 
   app.listen(PORT, () => {
     console.log(`🚀 JojeCo Dashboard API running on port ${PORT}`);
@@ -1631,6 +1696,11 @@ async function startServer() {
   await runHealthMonitor();
   setInterval(runHealthMonitor, 2 * 60 * 1000);
   console.log('🔍 Health monitor started (2min interval)');
+
+  // Start temp polling every 5 minutes
+  pollTemps().catch(() => {});
+  setInterval(() => pollTemps().catch(() => {}), 5 * 60 * 1000);
+  console.log('🌡️  Temp poller started (5min interval)');
 }
 
 startServer().catch(console.error);
