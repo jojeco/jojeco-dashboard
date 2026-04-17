@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { LogOut, LogIn, Server, Download, Container, Film, Bot, Zap, LayoutDashboard } from 'lucide-react';
+import { LogOut, LogIn, Server, Download, Container, Film, Bot, Zap, LayoutDashboard, ChevronLeft, ChevronRight } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
@@ -39,19 +39,37 @@ function useMediaQuery(query: string) {
   return matches;
 }
 
-function TopNav() {
+function Sidebar() {
   const { currentUser, logout } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('sidebar-collapsed') === 'true'; } catch { return false; }
+  });
+
+  const toggle = () => {
+    setCollapsed(c => {
+      const next = !c;
+      try { localStorage.setItem('sidebar-collapsed', String(next)); } catch {}
+      return next;
+    });
+  };
+
   const activeId = NAV.find(n => n.href === location.pathname)?.id ?? 'lab';
 
   return (
-    <nav className="j-topnav">
-      <Link to="/" className="j-topnav-logo">
-        Joje<span style={{ color: 'var(--accent)' }}>Co</span>
-      </Link>
+    <aside className={`j-sidebar${collapsed ? ' collapsed' : ''}`}>
+      {/* Logo */}
+      <div className="j-sidebar-logo">
+        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+          <div className="j-sidebar-logomark">J</div>
+          <span className="j-sidebar-wordmark">
+            Joje<span style={{ color: 'var(--accent)' }}>Co</span>
+          </span>
+        </Link>
+      </div>
 
-      <div className="j-topnav-items">
+      {/* Nav */}
+      <nav className="j-sidebar-nav">
         {NAV.map(item => {
           const Icon = item.icon;
           const active = item.id === activeId;
@@ -59,55 +77,49 @@ function TopNav() {
             <Link
               key={item.id}
               to={item.href}
-              className={`j-topnav-item${active ? ' active' : ''}`}
+              className={`j-nav-item${active ? ' active' : ''}`}
+              title={collapsed ? item.label : undefined}
             >
-              <Icon size={13} />
-              {item.label}
+              <Icon size={16} />
+              <span className="j-nav-label">{item.label}</span>
             </Link>
           );
         })}
-      </div>
+      </nav>
 
-      <div className="j-topnav-auth">
+      {/* Footer */}
+      <div className="j-sidebar-footer">
         {currentUser ? (
           <button
             onClick={() => logout()}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '5px 11px', borderRadius: 8, fontSize: 12,
-              color: 'var(--t3)', background: 'transparent', border: '1px solid var(--line)',
-              cursor: 'pointer', transition: 'all 120ms',
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(244,63,94,0.08)';
-              (e.currentTarget as HTMLButtonElement).style.color = '#f43f5e';
-              (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(244,63,94,0.25)';
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-              (e.currentTarget as HTMLButtonElement).style.color = 'var(--t3)';
-              (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--line)';
-            }}
+            className="j-nav-item"
+            style={{ width: '100%' }}
+            title={collapsed ? 'Sign out' : undefined}
           >
-            <LogOut size={12} />
-            Sign out
+            <LogOut size={16} />
+            <span className="j-nav-label">Sign out</span>
           </button>
         ) : (
-          <button
-            onClick={() => navigate('/login')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '5px 11px', borderRadius: 8, fontSize: 12,
-              color: 'var(--accent)', background: 'var(--accent-dim)',
-              border: '1px solid var(--accent-border)', cursor: 'pointer',
-            }}
-          >
-            <LogIn size={12} />
-            Sign in
-          </button>
+          <Link to="/login" className="j-nav-item" title={collapsed ? 'Sign in' : undefined}>
+            <LogIn size={16} style={{ color: 'var(--accent)' }} />
+            <span className="j-nav-label" style={{ color: 'var(--accent)' }}>Sign in</span>
+          </Link>
         )}
+        <button
+          onClick={toggle}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-end',
+            padding: '6px 10px', border: 'none', background: 'none', color: 'var(--t3)',
+            width: '100%', transition: 'color 120ms',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--t1)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--t3)')}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+        </button>
       </div>
-    </nav>
+    </aside>
   );
 }
 
@@ -116,9 +128,12 @@ function MobileHeader() {
   const activeLabel = NAV.find(n => n.href === location.pathname)?.label ?? 'Lab';
   return (
     <header className="j-mobile-header">
-      <span className="j-mobile-logo">Joje<span style={{ color: 'var(--accent)' }}>Co</span></span>
-      <span className="j-mobile-title">{activeLabel}</span>
-      <div style={{ width: 52 }} />
+      <div className="j-mobile-logo">
+        <div className="j-mobile-logo-dot" />
+        Joje<span style={{ color: 'var(--accent)' }}>Co</span>
+      </div>
+      <span className="j-mobile-page-title">{activeLabel}</span>
+      <div className="j-mobile-spacer" />
     </header>
   );
 }
@@ -133,7 +148,7 @@ function BottomNav() {
         const active = item.id === activeId;
         return (
           <Link key={item.id} to={item.href} className={`j-bottom-nav-item${active ? ' active' : ''}`}>
-            <Icon size={18} />
+            <Icon size={20} />
             <span>{NAV_SHORT[item.id]}</span>
           </Link>
         );
@@ -146,10 +161,10 @@ function GuestBanner() {
   const navigate = useNavigate();
   return (
     <div className="j-guest-banner">
-      <p><strong style={{ color: 'var(--t1)' }}>Guest view</strong> — read-only. Sensitive details are hidden.</p>
+      <p><strong style={{ color: 'var(--t1)' }}>Guest view</strong> — read-only. Sensitive details hidden.</p>
       <button
         onClick={() => navigate('/login')}
-        style={{ fontSize: 12, fontWeight: 500, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}
+        style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}
       >
         Sign in →
       </button>
@@ -178,10 +193,12 @@ function PageShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="j-shell-desktop">
-      <TopNav />
-      {!currentUser && <GuestBanner />}
-      <main style={{ flex: 1 }}>{children}</main>
+    <div className="j-shell">
+      <Sidebar />
+      <main className="j-main">
+        {!currentUser && <GuestBanner />}
+        <div className="j-content">{children}</div>
+      </main>
     </div>
   );
 }
