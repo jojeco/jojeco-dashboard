@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { LogOut, LogIn, Server, Download, Container, Film, Bot, Zap, LayoutDashboard, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LogOut, LogIn, Server, Download, Container, Film, Bot, Zap, LayoutDashboard } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
@@ -23,10 +23,6 @@ const NAV = [
   { id: 'chaos',    label: 'Chaos',    href: '/chaos',    icon: Zap },
 ];
 
-const NAV_SHORT: Record<string, string> = {
-  lab: 'Lab', services: 'Svcs', torrents: 'DL',
-  docker: 'Docker', media: 'Media', ai: 'AI', chaos: 'Chaos',
-};
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
@@ -39,86 +35,51 @@ function useMediaQuery(query: string) {
   return matches;
 }
 
-function Sidebar() {
+function IconNav() {
   const { currentUser, logout } = useAuth();
   const location = useLocation();
-  const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem('sidebar-collapsed') === 'true'; } catch { return false; }
-  });
-
-  const toggle = () => {
-    setCollapsed(c => {
-      const next = !c;
-      try { localStorage.setItem('sidebar-collapsed', String(next)); } catch {}
-      return next;
-    });
-  };
-
   const activeId = NAV.find(n => n.href === location.pathname)?.id ?? 'lab';
 
   return (
-    <aside className={`j-sidebar${collapsed ? ' collapsed' : ''}`}>
-      {/* Logo */}
-      <div className="j-sidebar-logo">
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
-          <div className="j-sidebar-logomark">J</div>
-          <span className="j-sidebar-wordmark">
-            Joje<span style={{ color: 'var(--accent)' }}>Co</span>
-          </span>
-        </Link>
-      </div>
+    <aside className="j-icon-nav">
+      {/* Logo mark */}
+      <Link to="/" className="j-icon-nav-logo" title="JojeCo Lab">J</Link>
 
-      {/* Nav */}
-      <nav className="j-sidebar-nav">
-        {NAV.map(item => {
-          const Icon = item.icon;
-          const active = item.id === activeId;
-          return (
-            <Link
-              key={item.id}
-              to={item.href}
-              className={`j-nav-item${active ? ' active' : ''}`}
-              title={collapsed ? item.label : undefined}
-            >
-              <Icon size={16} />
-              <span className="j-nav-label">{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
-
-      {/* Footer */}
-      <div className="j-sidebar-footer">
-        {currentUser ? (
-          <button
-            onClick={() => logout()}
-            className="j-nav-item"
-            style={{ width: '100%' }}
-            title={collapsed ? 'Sign out' : undefined}
+      {/* Nav items */}
+      {NAV.map(item => {
+        const Icon = item.icon;
+        const active = item.id === activeId;
+        return (
+          <Link
+            key={item.id}
+            to={item.href}
+            className={`j-icon-btn${active ? ' active' : ''}`}
+            data-label={item.label}
           >
-            <LogOut size={16} />
-            <span className="j-nav-label">Sign out</span>
-          </button>
-        ) : (
-          <Link to="/login" className="j-nav-item" title={collapsed ? 'Sign in' : undefined}>
-            <LogIn size={16} style={{ color: 'var(--accent)' }} />
-            <span className="j-nav-label" style={{ color: 'var(--accent)' }}>Sign in</span>
+            <Icon size={18} />
           </Link>
-        )}
+        );
+      })}
+
+      <div className="j-icon-nav-spacer" />
+
+      {/* Auth */}
+      {currentUser ? (
         <button
-          onClick={toggle}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-end',
-            padding: '6px 10px', border: 'none', background: 'none', color: 'var(--t3)',
-            width: '100%', transition: 'color 120ms',
-          }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'var(--t1)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'var(--t3)')}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={() => logout()}
+          className="j-icon-btn"
+          data-label="Sign out"
+          style={{ color: 'var(--t3)' }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--err)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--t3)'; }}
         >
-          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          <LogOut size={16} />
         </button>
-      </div>
+      ) : (
+        <Link to="/login" className="j-icon-btn" data-label="Sign in" style={{ color: 'var(--accent)' }}>
+          <LogIn size={16} />
+        </Link>
+      )}
     </aside>
   );
 }
@@ -129,11 +90,11 @@ function MobileHeader() {
   return (
     <header className="j-mobile-header">
       <div className="j-mobile-logo">
-        <div className="j-mobile-logo-dot" />
+        <div className="j-mobile-logo-mark">J</div>
         Joje<span style={{ color: 'var(--accent)' }}>Co</span>
       </div>
       <span className="j-mobile-page-title">{activeLabel}</span>
-      <div className="j-mobile-spacer" />
+      <div style={{ width: 22 }} />
     </header>
   );
 }
@@ -148,8 +109,7 @@ function BottomNav() {
         const active = item.id === activeId;
         return (
           <Link key={item.id} to={item.href} className={`j-bottom-nav-item${active ? ' active' : ''}`}>
-            <Icon size={20} />
-            <span>{NAV_SHORT[item.id]}</span>
+            <Icon size={19} />
           </Link>
         );
       })}
@@ -165,9 +125,7 @@ function GuestBanner() {
       <button
         onClick={() => navigate('/login')}
         style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}
-      >
-        Sign in →
-      </button>
+      >Sign in →</button>
     </div>
   );
 }
@@ -194,7 +152,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="j-shell">
-      <Sidebar />
+      <IconNav />
       <main className="j-main">
         {!currentUser && <GuestBanner />}
         <div className="j-content">{children}</div>
