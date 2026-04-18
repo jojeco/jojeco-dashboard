@@ -80,18 +80,18 @@ export default function ControlsPage() {
   });
 
   return (
-    <div style={{ padding: '24px 28px', maxWidth: 900 }}>
-      <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--t1)', marginBottom: 4 }}>Controls</h1>
-      <p style={{ fontSize: 13, color: 'var(--t3)', marginBottom: 28 }}>Server power, container management, and manual triggers.</p>
+    <div className="j-content" style={{ maxWidth: 900 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--t1)', marginBottom: 4, letterSpacing: '-0.02em' }}>Controls</h1>
+      <p style={{ fontSize: 12, color: 'var(--t3)', marginBottom: 28 }}>Server power, container management, and manual triggers.</p>
 
       {/* Toasts */}
       <div style={{ position: 'fixed', bottom: 80, right: 20, zIndex: 9999, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {toasts.map(t => (
           <div key={t.id} style={{
             padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500,
-            background: t.ok ? 'var(--surface)' : '#3f1313',
-            border: `1px solid ${t.ok ? 'var(--accent)' : '#ef4444'}`,
-            color: t.ok ? 'var(--t1)' : '#ef4444',
+            background: t.ok ? 'var(--surface)' : 'var(--err-dim)',
+            border: `1px solid ${t.ok ? 'var(--accent-border)' : 'rgba(239,68,68,0.30)'}`,
+            color: t.ok ? 'var(--t1)' : 'var(--err)',
             boxShadow: '0 4px 20px rgba(0,0,0,0.4)', maxWidth: 320,
           }}>{t.msg}</div>
         ))}
@@ -105,7 +105,7 @@ export default function ControlsPage() {
             <div style={{ fontSize: 13, color: 'var(--t2)', marginBottom: 20 }}>{confirm.label}</div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button className="j-chip" onClick={() => setConfirm(null)}>Cancel</button>
-              <button className="j-chip" style={{ background: '#ef4444', color: '#fff', border: 'none' }}
+              <button className="j-chip" style={{ background: 'var(--err)', color: '#fff', border: 'none' }}
                 onClick={() => { confirm.fn(); setConfirm(null); }}>Confirm</button>
             </div>
           </div>
@@ -114,7 +114,7 @@ export default function ControlsPage() {
 
       {/* Server Power Controls */}
       <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 13, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Server Power</h2>
+        <div className="j-section-label">Server Power</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
           {SERVERS.map(srv => (
             <div key={srv.id} className="j-panel" style={{ padding: '14px 16px' }}>
@@ -131,7 +131,7 @@ export default function ControlsPage() {
                   }}>
                   <RotateCcw size={13} /> {loading[`restart-${srv.id}`] ? '...' : 'Restart'}
                 </button>
-                <button className="j-chip" style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', color: '#ef4444' }}
+                <button className="j-chip" style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', color: 'var(--err)' }}
                   disabled={loading[`shutdown-${srv.id}`]}
                   onClick={() => withConfirm(`Shutdown ${srv.label}`, `Are you sure you want to shut down ${srv.label}?`,
                     () => apiPost(`/api/controls/server/${srv.id}/shutdown`, `shutdown-${srv.id}`))}>
@@ -152,7 +152,7 @@ export default function ControlsPage() {
 
       {/* Manual Triggers */}
       <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 13, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Manual Triggers</h2>
+        <div className="j-section-label">Manual Triggers</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           {TRIGGERS.map(trig => {
             const Icon = trig.icon;
@@ -177,7 +177,7 @@ export default function ControlsPage() {
       {/* Container Controls */}
       <section>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
-          <h2 style={{ fontSize: 13, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>Containers ({filteredContainers.length})</h2>
+          <span className="j-panel-title">Containers ({filteredContainers.length})</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <select value={containerFilter} onChange={e => setContainerFilter(e.target.value as any)}
               style={{ fontSize: 12, background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--t2)', borderRadius: 6, padding: '4px 8px' }}>
@@ -195,9 +195,9 @@ export default function ControlsPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {filteredContainers.map(c => (
             <div key={c.name} className="j-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div className={`j-dot ${c.healthy === 'unhealthy' ? 'err' : c.running ? 'ok' : 'warn'}`} />
+              <div className={`j-dot ${c.healthy === 'unhealthy' ? 'j-dot-err' : c.running ? 'j-dot-ok' : 'j-dot-warn'}`} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', fontFamily: 'var(--font-mono)' }}>{c.name}</div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', fontFamily: "'Geist Mono', monospace" }}>{c.name}</div>
                 <div style={{ fontSize: 11, color: 'var(--t3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.status}</div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -207,7 +207,7 @@ export default function ControlsPage() {
                   <RotateCcw size={10} /> Restart
                 </button>
                 {c.running ? (
-                  <button className="j-chip" style={{ padding: '4px 8px', fontSize: 11, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}
+                  <button className="j-chip" style={{ padding: '4px 8px', fontSize: 11, color: 'var(--err)', display: 'flex', alignItems: 'center', gap: 4 }}
                     disabled={loading[`stop-c-${c.name}`]}
                     onClick={() => withConfirm(`Stop ${c.name}`, `Stop container "${c.name}"?`,
                       () => apiPost(`/api/controls/container/${c.name}/stop`, `stop-c-${c.name}`))}>
