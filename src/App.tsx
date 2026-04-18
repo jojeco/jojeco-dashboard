@@ -14,7 +14,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | n
     return this.props.children;
   }
 }
-import { LogOut, LogIn, Server, Download, Container, Film, Bot, Zap, LayoutDashboard } from 'lucide-react';
+import { LogOut, LogIn, Server, Download, Container, Film, Bot, Zap, LayoutDashboard, Sliders } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
@@ -26,6 +26,7 @@ import MediaPage from './Pages/MediaPage';
 import AIPage from './Pages/AIPage';
 import LabPage from './Pages/LabPage';
 import ChaosPage from './Pages/ChaosPage';
+import ControlsPage from './Pages/ControlsPage';
 
 const NAV = [
   { id: 'lab',      label: 'Lab',      href: '/',         icon: LayoutDashboard },
@@ -35,6 +36,7 @@ const NAV = [
   { id: 'media',    label: 'Media',    href: '/media',    icon: Film },
   { id: 'ai',       label: 'AI',       href: '/ai',       icon: Bot },
   { id: 'chaos',    label: 'Chaos',    href: '/chaos',    icon: Zap },
+  { id: 'controls', label: 'Controls', href: '/controls', icon: Sliders },
 ];
 
 
@@ -190,6 +192,7 @@ function App() {
             <Route path="/media"    element={<ProtectedRoute><MediaPage /></ProtectedRoute>} />
             <Route path="/ai"       element={<ProtectedRoute><AIPage /></ProtectedRoute>} />
             <Route path="/chaos"    element={<ChaosPage />} />
+            <Route path="/controls" element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
           </Routes>
         </PageShell>
       </AuthProvider>
