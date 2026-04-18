@@ -1198,19 +1198,22 @@ async function fetchLabServer1Detailed() {
       const temps = thermalVals.map(t => t.value).filter(t => t > 0 && t < 120);
       const maxTemp = temps.length > 0 ? Math.round(Math.max(...temps) * 10) / 10 : null;
 
-      // GPU temp from OHM (port 9101)
+      // GPU + CPU temp from OHM (port 9101) — thermalzone temps are ACPI values (~28°C), not real CPU temps
       let gpuTemp = null;
+      let cpuTempOhm = null;
       try {
         const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
         if (ohmRes.ok) {
           const ohmText = await ohmRes.text();
           const gpuCoreSensor = parsePromValues(ohmText, 'ohm_gpunvidia_celsius').find(m => m.labels.sensor === 'GPU Core');
           if (gpuCoreSensor) gpuTemp = Math.round(gpuCoreSensor.value * 10) / 10;
+          const cpuPkg = parsePromValues(ohmText, 'ohm_cpu_celsius').find(m => m.labels.sensor === 'CPU Package');
+          if (cpuPkg) cpuTempOhm = Math.round(cpuPkg.value * 10) / 10;
         }
       } catch {}
 
       const gpu = gpuTemp !== null ? { name: 'GTX 1060 6GB', temp: gpuTemp, utilization: null, mem_percent: null } : null;
-      return { online: true, cpu: cpuPct, mem: { used: memUsed, total: memLimit, percent: memLimit > 0 ? Math.round((memUsed / memLimit) * 1000) / 10 : 0 }, disks, gpu, temp: maxTemp };
+      return { online: true, cpu: cpuPct, mem: { used: memUsed, total: memLimit, percent: memLimit > 0 ? Math.round((memUsed / memLimit) * 1000) / 10 : 0 }, disks, gpu, temp: cpuTempOhm ?? maxTemp };
     } catch {
       return { online: false };
     }
@@ -1680,6 +1683,146 @@ async function pollTemps() {
   }));
   db.prepare('DELETE FROM temp_history WHERE timestamp < ?').run(now - 180 * 24 * 60 * 60 * 1000);
 }
+
+// ============================================================================
+// SERVER CONTROLS
+// ============================================================================
+
+const SSH_KEY = '/root/.ssh/jojeco_lab_key';
+const SSH_OPTS = ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=6', '-o', 'BatchMode=yes'];
+
+const MACHINES = {
+  server1:  { ip: '192.168.50.10', user: 'jojeco717', os: 'windows', mac: '50:3d:d1:37:6d:bb', label: 'Server 1' },
+  server2:  { ip: '192.168.50.11', user: 'root',      os: 'linux',   mac: '10:5a:95:21:00:82', label: 'Server 2 (Proxmox)' },
+  server3:  { ip: '192.168.50.12', user: 'jojeco',    os: 'linux',   mac: '90:20:3a:1a:37:21', label: 'Server 3' },
+  macmini:  { ip: '192.168.50.30', user: 'jj',        os: 'macos',   mac: '0c:4d:e9:c7:07:69', label: 'Mac Mini' },
+};
+
+async function sshRun(machine, cmd) {
+  const m = MACHINES[machine];
+  if (!m) throw new Error(`Unknown machine: ${machine}`);
+  const { stdout, stderr } = await execFileAsync('ssh', [
+    '-i', SSH_KEY, ...SSH_OPTS, `${m.user}@${m.ip}`, cmd
+  ], { timeout: 15000 });
+  return { stdout: stdout.trim(), stderr: stderr.trim() };
+}
+
+// POST /api/controls/server/:machine/restart
+app.post('/api/controls/server/:machine/restart', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m) return res.status(400).json({ error: 'Unknown machine' });
+  try {
+    const cmd = m.os === 'windows' ? 'shutdown /r /t 5' :
+                m.os === 'macos'   ? 'sudo shutdown -r +0' :
+                                     'sudo reboot';
+    await sshRun(machine, cmd);
+    res.json({ ok: true, message: `Restart command sent to ${m.label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/server/:machine/shutdown
+app.post('/api/controls/server/:machine/shutdown', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m) return res.status(400).json({ error: 'Unknown machine' });
+  try {
+    const cmd = m.os === 'windows' ? 'shutdown /s /t 5' :
+                m.os === 'macos'   ? 'sudo shutdown -h +0' :
+                                     'sudo shutdown -h now';
+    await sshRun(machine, cmd);
+    res.json({ ok: true, message: `Shutdown command sent to ${m.label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/server/:machine/wake
+app.post('/api/controls/server/:machine/wake', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m || !m.mac) return res.status(400).json({ error: 'Unknown machine or no MAC address' });
+  try {
+    await execFileAsync('wakeonlan', [m.mac], { timeout: 5000 });
+    res.json({ ok: true, message: `Wake-on-LAN packet sent to ${m.label} (${m.mac})` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/container/:name/restart
+app.post('/api/controls/container/:name/restart', authMiddleware, async (req, res) => {
+  const { name } = req.params;
+  // Whitelist: don't allow restarting nginx-proxy-manager or portainer from here (too risky)
+  const blocked = ['nginx-proxy-manager', 'portainer', 'cloudflared'];
+  if (blocked.includes(name)) return res.status(403).json({ error: 'This container cannot be restarted from the dashboard' });
+  try {
+    const { stdout } = await execFileAsync('docker', ['restart', name], { timeout: 30000 });
+    res.json({ ok: true, message: `Restarted ${name}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/container/:name/stop
+app.post('/api/controls/container/:name/stop', authMiddleware, async (req, res) => {
+  const { name } = req.params;
+  const blocked = ['nginx-proxy-manager', 'portainer', 'cloudflared', 'jojeco-dashboard-api'];
+  if (blocked.includes(name)) return res.status(403).json({ error: 'This container cannot be stopped from the dashboard' });
+  try {
+    await execFileAsync('docker', ['stop', name], { timeout: 30000 });
+    res.json({ ok: true, message: `Stopped ${name}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/container/:name/start
+app.post('/api/controls/container/:name/start', authMiddleware, async (req, res) => {
+  const { name } = req.params;
+  try {
+    await execFileAsync('docker', ['start', name], { timeout: 30000 });
+    res.json({ ok: true, message: `Started ${name}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/trigger/:action
+app.post('/api/controls/trigger/:action', authMiddleware, async (req, res) => {
+  const { action } = req.params;
+  const scripts = {
+    'health':   '/opt/jojeco-agent/scripts/dep-watcher.sh',
+    'backup':   '/opt/jojeco-agent/scripts/gdrive-backup.sh',
+    'snapshot': '/opt/jojeco-agent/scripts/weekly-update.sh',
+  };
+  if (!scripts[action]) return res.status(400).json({ error: 'Unknown action' });
+
+  // Run fire-and-forget (scripts can be slow), return immediately
+  const { exec } = await import('child_process');
+  exec(`${scripts[action]} &`, (err) => { if (err) console.error('Trigger error:', err); });
+  res.json({ ok: true, message: `Triggered: ${action}. Check ntfy for results.` });
+});
+
+// GET /api/controls/containers - list all containers with status for controls UI
+app.get('/api/controls/containers', authMiddleware, async (req, res) => {
+  try {
+    const { stdout } = await execFileAsync('docker', [
+      'ps', '-a', '--format', '{{.Names}}\t{{.Status}}\t{{.Image}}'
+    ], { timeout: 10000 });
+    const containers = stdout.trim().split('\n').filter(Boolean).map(line => {
+      const [name, status, image] = line.split('\t');
+      const running = status?.startsWith('Up');
+      const healthy = status?.includes('healthy') ? 'healthy' : status?.includes('unhealthy') ? 'unhealthy' : null;
+      return { name, status, running, healthy, image };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    res.json(containers);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 async function startServer() {
   await db.init();

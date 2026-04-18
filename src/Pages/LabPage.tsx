@@ -183,10 +183,15 @@ function MachineCard({ m, history, isMobile }: { m: Machine; history: TempPoint[
           <div style={{ fontSize: 11, color: 'var(--t2)', paddingLeft: 15 }}>{m.role}</div>
           <div style={{ fontSize: 10, color: 'var(--t3)', paddingLeft: 15, fontFamily: 'Geist Mono, monospace', marginTop: 1 }}>{m.host}</div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           {m.temp != null && m.online && (
-            <span style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: tempColor(m.temp), background: 'var(--raised-2)', padding: '3px 7px', borderRadius: 6 }}>
-              {m.temp.toFixed(0)}°C
+            <span style={{ fontSize: 11, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: tempColor(m.temp), background: 'var(--raised-2)', padding: '3px 7px', borderRadius: 6 }}>
+              CPU {m.temp.toFixed(0)}°
+            </span>
+          )}
+          {m.gpu?.temp != null && m.online && !isIntegrated(m.gpu.name ?? '') && (
+            <span style={{ fontSize: 11, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: tempColor(m.gpu.temp), background: 'var(--raised-2)', padding: '3px 7px', borderRadius: 6 }}>
+              GPU {m.gpu.temp}°
             </span>
           )}
           {!m.online && <span className="j-chip">Offline</span>}
