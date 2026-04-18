@@ -56,17 +56,24 @@ const SIM_SCRIPT: SimStep[] = [
   { delay: 10300, log: ml('ok',   'Fix: requirepass in redis.conf on both Redis instances') },
 ];
 
-// ─── Colours ─────────────────────────────────────────────────────────────────
+// ─── Colours (CSS variable mapped) ──────────────────────────────────────────
 
 const STATUS_COLOR: Record<SvcStatus | 'unknown', string> = {
-  healthy:  '#00ff88',
-  degraded: '#f0a500',
-  down:     '#ff3355',
-  unknown:  '#484f58',
+  healthy:  'var(--ok)',
+  degraded: 'var(--warn)',
+  down:     'var(--err)',
+  unknown:  'var(--t3)',
+};
+
+const STATUS_DIM: Record<SvcStatus | 'unknown', string> = {
+  healthy:  'rgba(34,197,94,0.22)',
+  degraded: 'rgba(234,179,8,0.22)',
+  down:     'rgba(239,68,68,0.22)',
+  unknown:  'var(--line)',
 };
 
 const LOG_COLOR: Record<LogEntry['level'], string> = {
-  info: '#8b949e', warn: '#f0a500', crit: '#ff3355', ok: '#00ff88',
+  info: 'var(--t2)', warn: 'var(--warn)', crit: 'var(--err)', ok: 'var(--ok)',
 };
 
 const CATEGORY_ORDER = ['Core', 'Media', 'Storage', 'AI', 'Monitoring', 'Comms'];
@@ -91,23 +98,18 @@ function ServiceCard({ svc }: { svc: LabService }) {
   const color = STATUS_COLOR[svc.status];
   const bad   = svc.status !== 'healthy';
   return (
-    <div style={{
-      background: '#0d1117',
-      border: `1px solid ${bad ? color + '55' : '#21262d'}`,
-      borderRadius: 6,
+    <div className="j-panel" style={{
       padding: '12px 14px',
-      transition: 'border-color 0.4s ease',
+      borderColor: bad ? STATUS_DIM[svc.status] : 'var(--line)',
       display: 'flex',
       flexDirection: 'column',
       gap: 6,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3' }}>{svc.name}</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)' }}>{svc.name}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, marginLeft: 6 }}>
-          <div style={{
-            width: 7, height: 7, borderRadius: '50%', background: color,
-            boxShadow: bad ? `0 0 6px ${color}` : 'none',
-          }} />
+          <span className={`j-dot ${svc.status === 'healthy' ? 'j-dot-ok' : svc.status === 'degraded' ? 'j-dot-warn' : svc.status === 'down' ? 'j-dot-err' : 'j-dot-off'}`}
+            style={bad ? { boxShadow: `0 0 6px ${color}` } : {}} />
           <span style={{ fontSize: 9, color, letterSpacing: '0.06em', fontWeight: 700 }}>
             {svc.status.toUpperCase()}
           </span>
@@ -115,13 +117,13 @@ function ServiceCard({ svc }: { svc: LabService }) {
       </div>
       <div style={{ display: 'flex', gap: 14 }}>
         <div>
-          <div style={{ fontSize: 9, color: '#484f58' }}>LATENCY</div>
-          <div style={{ fontSize: 11, color: svc.latency && svc.latency > 1000 ? '#f0a500' : '#c9d1d9' }}>{fmt(svc.latency)}</div>
+          <div style={{ fontSize: 9, color: 'var(--t3)' }}>LATENCY</div>
+          <div style={{ fontSize: 11, color: svc.latency && svc.latency > 1000 ? 'var(--warn)' : 'var(--t2)' }}>{fmt(svc.latency)}</div>
         </div>
         {svc.dependsOn.length > 0 && (
           <div>
-            <div style={{ fontSize: 9, color: '#484f58' }}>DEPENDS ON</div>
-            <div style={{ fontSize: 9, color: '#6e7681', lineHeight: 1.6 }}>{svc.dependsOn.join(', ')}</div>
+            <div style={{ fontSize: 9, color: 'var(--t3)' }}>DEPENDS ON</div>
+            <div style={{ fontSize: 9, color: 'var(--t3)', lineHeight: 1.6 }}>{svc.dependsOn.join(', ')}</div>
           </div>
         )}
       </div>
@@ -136,10 +138,10 @@ function StatsRow({ services }: { services: LabService[] }) {
   services.forEach(s => { if (s.status in counts) counts[s.status as keyof typeof counts]++; });
   return (
     <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-      {([['HEALTHY', counts.healthy, '#00ff88'], ['DEGRADED', counts.degraded, '#f0a500'], ['DOWN', counts.down, '#ff3355'], ['TOTAL', services.length, '#8b949e']] as [string,number,string][]).map(([label, val, color]) => (
+      {([['HEALTHY', counts.healthy, 'var(--ok)'], ['DEGRADED', counts.degraded, 'var(--warn)'], ['DOWN', counts.down, 'var(--err)'], ['TOTAL', services.length, 'var(--t2)']] as [string,number,string][]).map(([label, val, color]) => (
         <div key={label}>
-          <div style={{ fontSize: 9, color: '#484f58', letterSpacing: '0.1em' }}>{label}</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color }}>{val}</div>
+          <div style={{ fontSize: 9, color: 'var(--t3)', letterSpacing: '0.1em' }}>{label}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Geist Mono', monospace", color }}>{val}</div>
         </div>
       ))}
     </div>
@@ -153,8 +155,8 @@ function DepMap({ services }: { services: LabService[] }) {
   const edges = services.flatMap(s => s.dependsOn.map(d => ({ from: d, to: s.id })));
   if (edges.length === 0) return null;
   return (
-    <div style={{ background: '#0d1117', border: '1px solid #21262d', borderRadius: 6, padding: '14px 18px' }}>
-      <div style={{ fontSize: 10, color: '#484f58', letterSpacing: '0.1em', marginBottom: 12 }}>DEPENDENCY MAP</div>
+    <div className="j-panel" style={{ padding: '14px 18px' }}>
+      <div className="j-panel-title" style={{ marginBottom: 12 }}>DEPENDENCY MAP</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 0' }}>
         {edges.map((e, i) => {
           const f = byId[e.from]; const t = byId[e.to];
@@ -163,7 +165,7 @@ function DepMap({ services }: { services: LabService[] }) {
           return (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 24 }}>
               <span style={{ fontSize: 11, color: STATUS_COLOR[f.status], fontWeight: 600 }}>{f.name}</span>
-              <span style={{ color: bad ? '#ff3355' : '#30363d' }}>──▶</span>
+              <span style={{ color: bad ? 'var(--err)' : 'var(--line-2)' }}>──▶</span>
               <span style={{ fontSize: 11, color: STATUS_COLOR[t.status], fontWeight: 600 }}>{t.name}</span>
             </div>
           );
@@ -192,50 +194,43 @@ interface RealControlsProps {
 function RealControls({ agentStatus, agentOnline, running, module, target, dryRun, onModuleChange, onTargetChange, onDryRunChange, onRun, onAbort }: RealControlsProps) {
   const modules = agentStatus?.modules ?? ['redis-probe', 'port-scan', 'dep-kill'];
   return (
-    <div style={{ background: '#0d1117', border: `1px solid ${agentOnline ? '#ff335533' : '#30363d'}`, borderRadius: 6, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="j-panel" style={{ padding: '16px 18px', borderColor: agentOnline ? 'rgba(239,68,68,0.20)' : 'var(--line)', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 10, color: '#484f58', letterSpacing: '0.1em' }}>CHAOS AGENT</div>
-        <div style={{
-          fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
-          color: agentOnline ? '#00ff88' : '#ff3355',
-          border: `1px solid ${agentOnline ? '#00ff8833' : '#ff335533'}`,
-          borderRadius: 4, padding: '3px 8px',
-        }}>
+        <div className="j-panel-title">CHAOS AGENT</div>
+        <span className={`j-chip ${agentOnline ? 'j-chip-ok' : 'j-chip-err'}`}>
           {agentOnline ? '● ONLINE' : '● OFFLINE'}
-        </div>
-        {agentOnline && <span style={{ fontSize: 9, color: '#484f58' }}>{modules.length} modules available</span>}
+        </span>
+        {agentOnline && <span style={{ fontSize: 9, color: 'var(--t3)' }}>{modules.length} modules available</span>}
       </div>
 
       {!agentOnline && (
-        <div style={{ fontSize: 11, color: '#484f58' }}>Agent unreachable — check jojeco-chaos-agent container</div>
+        <div style={{ fontSize: 11, color: 'var(--t3)' }}>Agent unreachable — check jojeco-chaos-agent container</div>
       )}
 
       {agentOnline && (
         <>
           {/* Module selector */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 9, color: '#484f58', letterSpacing: '0.1em' }}>MODULE</div>
+            <div style={{ fontSize: 9, color: 'var(--t3)', letterSpacing: '0.1em' }}>MODULE</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {modules.map(m => (
                 <button
                   key={m}
                   onClick={() => onModuleChange(m)}
-                  style={{
-                    ...btnStyle(module === m ? '#ff333520' : '#161b22', module === m ? '#ff3355' : '#8b949e', module === m ? '#ff335566' : '#30363d'),
-                    padding: '6px 12px',
-                  }}
+                  className={`j-chip ${module === m ? 'j-chip-err' : ''}`}
+                  style={{ padding: '6px 12px', cursor: 'pointer' }}
                 >
                   {m}
                 </button>
               ))}
             </div>
-            {module && <div style={{ fontSize: 10, color: '#484f58', fontStyle: 'italic' }}>{MODULE_DESC[module] ?? ''}</div>}
+            {module && <div style={{ fontSize: 10, color: 'var(--t3)', fontStyle: 'italic' }}>{MODULE_DESC[module] ?? ''}</div>}
           </div>
 
           {/* Target input */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 9, color: '#484f58', letterSpacing: '0.1em' }}>
-              TARGET <span style={{ color: '#30363d', fontWeight: 400 }}>
+            <div style={{ fontSize: 9, color: 'var(--t3)', letterSpacing: '0.1em' }}>
+              TARGET <span style={{ color: 'var(--t3)', fontWeight: 400 }}>
                 {module === 'redis-probe' ? '(host:port or blank for auto-scan)' :
                  module === 'port-scan'   ? '(IP or CIDR, e.g. 192.168.50.0/24)' :
                  module === 'dep-kill'    ? '(container name, e.g. nextcloud)' : ''}
@@ -251,10 +246,13 @@ function RealControls({ agentStatus, agentOnline, running, module, target, dryRu
                 module === 'dep-kill'    ? 'container-name' : 'target'
               }
               style={{
-                background: '#161b22', border: '1px solid #30363d', borderRadius: 4,
-                color: '#c9d1d9', fontSize: 11, padding: '8px 12px',
-                fontFamily: "'JetBrains Mono', monospace", outline: 'none', width: '100%', boxSizing: 'border-box',
+                background: 'var(--raised)', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)',
+                color: 'var(--t2)', fontSize: 11, padding: '8px 12px',
+                fontFamily: "'Geist Mono', monospace", outline: 'none', width: '100%', boxSizing: 'border-box',
+                transition: 'border-color 120ms',
               }}
+              onFocus={e => (e.currentTarget as HTMLInputElement).style.borderColor = 'var(--accent-border)'}
+              onBlur={e => (e.currentTarget as HTMLInputElement).style.borderColor = 'var(--line)'}
             />
           </div>
 
@@ -262,14 +260,12 @@ function RealControls({ agentStatus, agentOnline, running, module, target, dryRu
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button
               onClick={() => onDryRunChange(!dryRun)}
-              style={{
-                ...btnStyle(dryRun ? '#00ff8820' : '#ff333520', dryRun ? '#00ff88' : '#ff3355', dryRun ? '#00ff8844' : '#ff335544'),
-                padding: '6px 12px', minWidth: 100,
-              }}
+              className={`j-chip ${dryRun ? 'j-chip-ok' : 'j-chip-err'}`}
+              style={{ padding: '6px 12px', minWidth: 100, cursor: 'pointer' }}
             >
               {dryRun ? '✓ DRY RUN' : '⚠ LIVE RUN'}
             </button>
-            <span style={{ fontSize: 10, color: '#484f58' }}>
+            <span style={{ fontSize: 10, color: 'var(--t3)' }}>
               {dryRun ? 'Safe — scan only, no destructive actions' : 'LIVE — will execute destructive actions if applicable'}
             </span>
           </div>
@@ -280,15 +276,15 @@ function RealControls({ agentStatus, agentOnline, running, module, target, dryRu
               onClick={onRun}
               disabled={running || !module}
               style={btnStyle(
-                running || !module ? '#21262d' : '#ff333520',
-                running || !module ? '#484f58' : '#ff3355',
-                running || !module ? '#30363d' : '#ff3355',
+                running || !module ? 'var(--raised)' : 'var(--err-dim)',
+                running || !module ? 'var(--t3)' : 'var(--err)',
+                running || !module ? 'var(--line)' : 'rgba(239,68,68,0.30)',
               )}
             >
               {running ? 'RUNNING...' : `RUN ${module.toUpperCase()}`}
             </button>
             {running && (
-              <button onClick={onAbort} style={btnStyle('#f0a50020', '#f0a500', '#f0a50044')}>
+              <button onClick={onAbort} style={btnStyle('var(--warn-dim)', 'var(--warn)', 'rgba(234,179,8,0.30)')}>
                 ■ ABORT
               </button>
             )}
@@ -505,66 +501,55 @@ export default function ChaosPage() {
     svcs: displayServices.filter(s => s.category === cat),
   })).filter(g => g.svcs.length > 0);
 
-  const modeBadgeColor = mode === 'real' ? '#ff3355' : mode === 'sim' ? '#f0a500' : '#00ff88';
-  const modeBadgeBg    = mode === 'real' ? '#ff335533' : mode === 'sim' ? '#f0a50033' : '#00ff8833';
   const modeLabel = mode === 'real'
     ? (realRunning ? '● REAL RUNNING' : '● REAL MODE')
     : mode === 'sim'
     ? (simRunning ? '● SIMULATION RUNNING' : '● SIMULATION IDLE')
     : '● LIVE';
 
-  return (
-    <div style={{ minHeight: '100vh', background: '#080b0f', fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+  const modeChipClass = mode === 'real' ? 'j-chip-err' : mode === 'sim' ? 'j-chip-warn' : 'j-chip-ok';
 
-      {/* ── Header ── */}
-      <div style={{
-        borderBottom: '1px solid #21262d', padding: '14px 24px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        flexWrap: 'wrap', gap: 12, background: '#0d1117',
-        position: 'sticky', top: 0, zIndex: 5,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 16, fontWeight: 700, color: '#e6edf3', letterSpacing: '0.05em' }}>
-            ☠ CHAOSMONKEY
-          </span>
-          <div style={{
-            fontSize: 9, color: modeBadgeColor,
-            border: `1px solid ${modeBadgeBg}`,
-            borderRadius: 4, padding: '3px 8px', letterSpacing: '0.1em',
-          }}>
-            {modeLabel}
+  return (
+    <div className="j-content" style={{ fontFamily: "'Geist Mono', monospace" }}>
+
+      {/* ── Page Header ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--t1)', letterSpacing: '-0.02em', fontFamily: "'Geist', system-ui, sans-serif", lineHeight: 1 }}>ChaosMonkey</h1>
+            <span className={`j-chip ${modeChipClass}`}>{modeLabel}</span>
           </div>
-          {mode === 'live' && lastPoll && (
-            <span style={{ fontSize: 9, color: '#484f58' }}>polled {lastPoll.toLocaleTimeString()}</span>
-          )}
-          {mode === 'real' && agentOnline && (
-            <span style={{ fontSize: 9, color: '#484f58' }}>agent online</span>
-          )}
+          <p style={{ fontSize: 12, color: 'var(--t3)', fontFamily: "'Geist', system-ui, sans-serif" }}>
+            {mode === 'live' && lastPoll && <>Lab service health · polled {lastPoll.toLocaleTimeString()}</>}
+            {mode === 'real' && agentOnline && <>Live chaos agent · connected</>}
+            {mode === 'real' && !agentOnline && <>Live chaos agent · disconnected</>}
+            {mode === 'sim' && <>Simulated chaos demo</>}
+          </p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {mode === 'live' && (
             <>
-              <button onClick={poll} style={btnStyle('#161b22', '#58a6ff', '#1f6feb')}>↺ REFRESH</button>
-              <button onClick={enterSim} style={btnStyle('#f0a50010', '#f0a500', '#f0a50040')}>SIMULATE</button>
-              <button onClick={enterReal} style={btnStyle('#ff333510', '#ff3355', '#ff335540')}>REAL CHAOS</button>
+              <button onClick={poll} className="j-chip j-chip-accent" style={{ cursor: 'pointer', padding: '5px 12px' }}>↺ REFRESH</button>
+              <button onClick={enterSim} className="j-chip j-chip-warn" style={{ cursor: 'pointer', padding: '5px 12px' }}>SIMULATE</button>
+              <button onClick={enterReal} className="j-chip j-chip-err" style={{ cursor: 'pointer', padding: '5px 12px' }}>REAL CHAOS</button>
             </>
           )}
           {mode === 'sim' && (
             <>
-              <button onClick={resetSim} style={btnStyle('#30363d', '#8b949e')}>RESET</button>
-              <button onClick={launchSim} disabled={simRunning} style={btnStyle(simRunning ? '#21262d' : '#f0a50020', simRunning ? '#484f58' : '#f0a500', simRunning ? '#30363d' : '#f0a500')}>
+              <button onClick={resetSim} className="j-chip" style={{ cursor: 'pointer', padding: '5px 12px' }}>RESET</button>
+              <button onClick={launchSim} disabled={simRunning} className={`j-chip ${simRunning ? '' : 'j-chip-warn'}`} style={{ cursor: simRunning ? 'default' : 'pointer', padding: '5px 12px', opacity: simRunning ? 0.5 : 1 }}>
                 {simRunning ? 'RUNNING...' : 'LAUNCH SIM'}
               </button>
-              <button onClick={exitSim} style={btnStyle('#21262d', '#8b949e')}>EXIT SIM</button>
+              <button onClick={exitSim} className="j-chip" style={{ cursor: 'pointer', padding: '5px 12px' }}>EXIT SIM</button>
             </>
           )}
           {mode === 'real' && (
-            <button onClick={exitReal} style={btnStyle('#21262d', '#8b949e')}>EXIT REAL</button>
+            <button onClick={exitReal} className="j-chip" style={{ cursor: 'pointer', padding: '5px 12px' }}>EXIT REAL</button>
           )}
         </div>
       </div>
 
-      <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
         {/* Real mode controls */}
         {mode === 'real' && (
@@ -587,14 +572,14 @@ export default function ChaosPage() {
         {!loading && <StatsRow services={displayServices} />}
 
         {loading ? (
-          <div style={{ color: '#484f58', fontSize: 12 }}>Polling lab services<span style={{ animation: 'blink 1s step-end infinite' }}>...</span></div>
+          <div style={{ color: 'var(--t3)', fontSize: 12 }}>Polling lab services<span style={{ animation: 'pulse 1s step-end infinite' }}>...</span></div>
         ) : (
           <>
             {/* Service grid by category */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               {grouped.map(({ cat, svcs }) => (
                 <div key={cat}>
-                  <div style={{ fontSize: 9, color: '#484f58', letterSpacing: '0.12em', marginBottom: 10 }}>{cat.toUpperCase()}</div>
+                  <div className="j-section-label">{cat.toUpperCase()}</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
                     {svcs.map(s => <ServiceCard key={s.id} svc={s} />)}
                   </div>
@@ -607,24 +592,24 @@ export default function ChaosPage() {
 
             {/* Log panel — sim or real */}
             {(mode === 'sim' || mode === 'real') && (
-              <div style={{ background: '#0d1117', border: '1px solid #21262d', borderRadius: 6 }}>
-                <div style={{ padding: '10px 14px', borderBottom: '1px solid #21262d', fontSize: 10, color: '#484f58', letterSpacing: '0.1em', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>{mode === 'real' ? 'AGENT LOG' : 'ATTACK LOG'}</span>
-                  <span>{logs.length} entries</span>
+              <div className="j-panel">
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between' }}>
+                  <span className="j-panel-title">{mode === 'real' ? 'AGENT LOG' : 'ATTACK LOG'}</span>
+                  <span style={{ fontSize: 10, color: 'var(--t3)' }}>{logs.length} entries</span>
                 </div>
-                <div style={{ padding: '12px 14px', maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <div style={{ padding: '12px 14px', maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5, background: 'var(--canvas)' }}>
                   {logs.length === 0
-                    ? <span style={{ color: '#484f58', fontSize: 11 }}>
+                    ? <span style={{ color: 'var(--t3)', fontSize: 11 }}>
                         {mode === 'real' ? 'Select a module and run...' : 'Awaiting chaos launch...'}<span style={{ marginLeft: 2 }}>▊</span>
                       </span>
                     : logs.map(e => (
                       <div key={e.id} style={{ display: 'flex', gap: 10, fontSize: 11, lineHeight: 1.5 }}>
-                        <span style={{ color: '#484f58', flexShrink: 0, fontSize: 10 }}>{e.ts}</span>
+                        <span style={{ color: 'var(--t3)', flexShrink: 0, fontSize: 10 }}>{e.ts}</span>
                         <span style={{ color: LOG_COLOR[e.level] }}>{e.msg}</span>
                       </div>
                     ))
                   }
-                  {(simRunning || realRunning) && <span style={{ color: '#484f58', fontSize: 11 }}>▊</span>}
+                  {(simRunning || realRunning) && <span style={{ color: 'var(--t3)', fontSize: 11 }}>▊</span>}
                   <div ref={logEndRef} />
                 </div>
               </div>
@@ -632,8 +617,8 @@ export default function ChaosPage() {
           </>
         )}
 
-        <div style={{ fontSize: 10, color: '#21262d', textAlign: 'center', paddingBottom: 8 }}>
-          CHAOSMONKEY — LIVE: real lab data  •  SIMULATE: chaos demo  •  REAL: live agent
+        <div style={{ fontSize: 10, color: 'var(--t3)', textAlign: 'center', paddingBottom: 8, fontFamily: "'Geist', system-ui, sans-serif" }}>
+          CHAOSMONKEY — LIVE: real lab data  ·  SIMULATE: chaos demo  ·  REAL: live agent
         </div>
       </div>
     </div>
@@ -642,10 +627,10 @@ export default function ChaosPage() {
 
 function btnStyle(bg: string, color: string, border?: string): React.CSSProperties {
   return {
-    background: bg, color, border: `1px solid ${border ?? '#30363d'}`,
-    padding: '7px 14px', borderRadius: 4, fontSize: 10,
+    background: bg, color, border: `1px solid ${border ?? 'var(--line)'}`,
+    padding: '7px 14px', borderRadius: 'var(--r-sm)', fontSize: 10,
     cursor: 'pointer', letterSpacing: '0.08em',
-    fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
+    fontFamily: "'Geist Mono', monospace", fontWeight: 600,
     transition: 'all 0.2s',
   };
 }
