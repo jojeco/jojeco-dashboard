@@ -124,7 +124,7 @@ export default function TorrentsPage() {
   if (error) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--err)', fontSize: 13 }}>{error}</div>;
 
   return (
-    <div className="j-content" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {isGuest && (
         <div style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
           <strong style={{ color: 'var(--t1)' }}>Torrents</strong> — active download queue via qBittorrent. Queue management requires sign-in.

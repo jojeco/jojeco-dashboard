@@ -41,10 +41,11 @@ const LAB_SYSTEM_PROMPT = `You are the JojeCo home lab assistant. You have full 
 ## Lab Machines
 | Host | IP | Role |
 |------|----|------|
-| Server 2 LXC | 192.168.50.13 | Main Docker host — all 49 services run here |
+| Server 2 LXC | 192.168.50.13 | Main Docker host — all 66 services run here |
 | Server 3 | 192.168.50.12 | Primary LLM inference (Ollama :11434), Ubuntu 24.04 |
 | Server 1 | 192.168.50.10 | Media server (Plex :32400), Windows 10 — not in inference pool |
 | JoPc | 192.168.50.20 | Gaming PC, burst inference (Ollama :11434), Windows 10 |
+| MacBook M4 | 192.168.50.40 | Burst inference (Ollama :11434), macOS, M4 chip |
 | Mac Mini | 192.168.50.30 | AdGuard DNS, Uptime Kuma, macOS Monterey |
 
 ## Key Services (on 192.168.50.13 unless noted)

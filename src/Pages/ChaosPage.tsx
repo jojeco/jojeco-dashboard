@@ -510,7 +510,7 @@ export default function ChaosPage() {
   const modeChipClass = mode === 'real' ? 'j-chip-err' : mode === 'sim' ? 'j-chip-warn' : 'j-chip-ok';
 
   return (
-    <div className="j-content" style={{ fontFamily: "'Geist Mono', monospace" }}>
+    <div style={{ fontFamily: "'Geist Mono', monospace" }}>
 
       {/* ── Page Header ── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
