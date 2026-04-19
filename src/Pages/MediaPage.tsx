@@ -228,7 +228,7 @@ export default function MediaPage() {
   if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--t3)', fontSize: 13 }}>Loading...</div>;
 
   return (
-    <div className="j-content" style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       {isGuest && (
         <div style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
           <strong style={{ color: 'var(--t1)' }}>Media</strong> — download queue and upcoming releases from Sonarr and Radarr.

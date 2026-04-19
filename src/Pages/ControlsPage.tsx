@@ -80,7 +80,7 @@ export default function ControlsPage() {
   });
 
   return (
-    <div className="j-content" style={{ maxWidth: 900 }}>
+    <div style={{ maxWidth: 900 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--t1)', marginBottom: 4, letterSpacing: '-0.02em' }}>Controls</h1>
       <p style={{ fontSize: 12, color: 'var(--t3)', marginBottom: 28 }}>Server power, container management, and manual triggers.</p>
 

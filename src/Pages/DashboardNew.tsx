@@ -205,7 +205,7 @@ export default function Dashboard() {
   const totalTracked = Object.keys(onlineCounts).length;
 
   return (
-    <div className="j-content">
+    <div>
       {isGuest && (
         <div style={{ marginBottom: 20, padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
           <strong style={{ color: 'var(--t1)' }}>Services</strong> — all self-hosted services with live health status. URLs hidden in guest view.

@@ -123,7 +123,7 @@ function ContainerRow({ c, isGuest, acting, logsFor, logs, logsLoading, onAction
         </div>
       </div>
       {logsFor === c.id && (
-        <div style={{ borderTop: '1px solid var(--line)', background: '#050505', padding: 12 }}>
+        <div style={{ borderTop: '1px solid var(--line)', background: 'var(--canvas)', padding: 12 }}>
           {logsLoading
             ? <div style={{ fontSize: 11, color: 'var(--t3)', fontStyle: 'italic' }}>Fetching logs…</div>
             : <pre style={{ fontSize: 11, color: '#4ade80', fontFamily: 'Geist Mono, monospace', whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: 256, lineHeight: 1.5, margin: 0 }}>{logs}</pre>
@@ -261,7 +261,7 @@ export default function DockerPage() {
   });
 
   return (
-    <div className="j-content" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {isGuest && (
         <div style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
           <strong style={{ color: 'var(--t1)' }}>Docker</strong> — live view of all containers. Management controls available to signed-in users.
