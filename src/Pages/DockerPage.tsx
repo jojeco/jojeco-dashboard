@@ -78,6 +78,30 @@ interface ContainerRowProps {
   onFetchLogs: (id: string) => void;
 }
 
+function LogPanel({ logs, logsLoading }: { logs: string; logsLoading: boolean }) {
+  const [logSearch, setLogSearch] = useState('');
+  if (logsLoading) return <div style={{ fontSize: 11, color: 'var(--t3)', fontStyle: 'italic' }}>Fetching logs…</div>;
+
+  const lines = logs.split('\n');
+  const q = logSearch.toLowerCase();
+  const filtered = q ? lines.filter(l => l.toLowerCase().includes(q)) : lines;
+  const matchCount = q ? filtered.length : 0;
+
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <div style={{ position: 'relative', flex: 1, maxWidth: 280 }}>
+          <Search size={11} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--t3)' }} />
+          <input value={logSearch} onChange={e => setLogSearch(e.target.value)} placeholder="Filter logs…"
+            style={{ width: '100%', paddingLeft: 24, paddingRight: 8, paddingTop: 4, paddingBottom: 4, background: 'var(--raised)', border: '1px solid var(--line)', borderRadius: 6, fontSize: 11, color: 'var(--t1)', outline: 'none', boxSizing: 'border-box', fontFamily: 'Geist Mono, monospace' }} />
+        </div>
+        {q && <span style={{ fontSize: 10, color: 'var(--t3)' }}>{matchCount} match{matchCount !== 1 ? 'es' : ''}</span>}
+      </div>
+      <pre style={{ fontSize: 11, color: '#4ade80', fontFamily: 'Geist Mono, monospace', whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: 256, lineHeight: 1.5, margin: 0 }}>{filtered.join('\n') || '(no matching lines)'}</pre>
+    </>
+  );
+}
+
 function ContainerRow({ c, isGuest, acting, logsFor, logs, logsLoading, onAction, onFetchLogs }: ContainerRowProps) {
   return (
     <div className="j-panel" style={{ overflow: 'hidden', borderColor: c.health === 'unhealthy' ? 'rgba(244,63,94,0.3)' : 'var(--line)' }}>
@@ -124,10 +148,7 @@ function ContainerRow({ c, isGuest, acting, logsFor, logs, logsLoading, onAction
       </div>
       {logsFor === c.id && (
         <div style={{ borderTop: '1px solid var(--line)', background: 'var(--canvas)', padding: 12 }}>
-          {logsLoading
-            ? <div style={{ fontSize: 11, color: 'var(--t3)', fontStyle: 'italic' }}>Fetching logs…</div>
-            : <pre style={{ fontSize: 11, color: '#4ade80', fontFamily: 'Geist Mono, monospace', whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: 256, lineHeight: 1.5, margin: 0 }}>{logs}</pre>
-          }
+          <LogPanel logs={logs} logsLoading={logsLoading} />
         </div>
       )}
     </div>

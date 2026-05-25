@@ -22,6 +22,20 @@ import {
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+app.set('trust proxy', true);
+
+// LAN bypass middleware: allow unauthenticated read access from LAN + Docker subnets (n8n, scripts, etc.)
+const lanOrAuth = (req, res, next) => {
+  const ip = req.ip || req.connection?.remoteAddress || '';
+  const stripped = ip.replace(/^::ffff:/, '');
+  if (
+    stripped.startsWith('192.168.50.') ||
+    stripped.startsWith('172.') ||
+    stripped === '::1' ||
+    stripped === '127.0.0.1'
+  ) return next();
+  return authMiddleware(req, res, next);
+};
 
 // Middleware
 app.use(cors());
@@ -975,7 +989,7 @@ const DEFAULT_SERVICES = [
   { name: 'Grafana',     description: 'Metrics & monitoring',   url: 'http://192.168.50.13:3002',      icon: 'Activity', color: 'bg-red-500',    tags: ['infra', 'monitoring'] },
   { name: 'LiteLLM',     description: 'AI model gateway',       url: 'http://192.168.50.13:4000/ui',   icon: 'Cpu',      color: 'bg-indigo-500', tags: ['ai'] },
   { name: 'Open WebUI',  description: 'AI chat interface',      url: 'https://ai.jojeco.ca',           icon: 'MessageSquare', color: 'bg-blue-600', tags: ['ai'] },
-  { name: 'Proxmox',     description: 'Hypervisor',             url: 'https://192.168.50.1:8006',      icon: 'Server',   color: 'bg-gray-500',   tags: ['infra'] },
+  { name: 'Proxmox',     description: 'Hypervisor',             url: 'https://192.168.50.11:8006',      icon: 'Server',   color: 'bg-gray-500',   tags: ['infra'] },
 ];
 
 app.post('/api/services/seed', authMiddleware, (req, res) => {
@@ -1018,6 +1032,63 @@ app.get('/api/rip/status', authMiddleware, async (req, res) => {
     res.json(JSON.parse(clean));
   } catch {
     res.json({ status: 'idle', album: '', track: 0, total: 0, percent: 0, trackName: '', updatedAt: '' });
+  }
+});
+
+// ============================================================================
+// TDARR ROUTE
+
+const TDARR_URL = 'http://192.168.50.13:8265';
+
+app.get('/api/tdarr/status', authMiddleware, async (req, res) => {
+  try {
+    const [statsRes, nodesRes] = await Promise.allSettled([
+      fetch(`${TDARR_URL}/api/v2/cruddb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { collection: 'StatisticsJSONDB', mode: 'getAll', docID: 'statistics' } }),
+        signal: AbortSignal.timeout(5000),
+      }),
+      fetch(`${TDARR_URL}/api/v2/get-nodes`, { signal: AbortSignal.timeout(5000) }),
+    ]);
+
+    const stats = statsRes.status === 'fulfilled' && statsRes.value.ok
+      ? (await statsRes.value.json())[0] : null;
+
+    const nodesRaw = nodesRes.status === 'fulfilled' && nodesRes.value.ok
+      ? await nodesRes.value.json() : {};
+
+    const workers = [];
+    for (const node of Object.values(nodesRaw)) {
+      const n = node;
+      for (const w of Object.values(n.workers || {})) {
+        if (w.status !== 'No tasks') {
+          workers.push({
+            node: n.nodeName,
+            type: w.workerType,
+            status: w.status,
+            file: w.file ? w.file.split('/').pop() : '',
+            percentage: Math.round(w.percentage || 0),
+            fps: w.fps || 0,
+          });
+        }
+      }
+    }
+
+    res.json({
+      total: stats?.totalFileCount || 0,
+      transcoded: stats?.totalTranscodeCount || 0,
+      transcodeQueue: stats?.table0Count || 0,
+      noAction: stats?.table2Count || 0,       // table2 = no action needed (already correct format)
+      transcodeErrors: stats?.table3Count || 0, // table3 = transcode errors
+      healthErrors: stats?.table5Count || 0,
+      healthOk: stats?.table6Count || 0,
+      tdarrScore: parseFloat(stats?.tdarrScore || 0),
+      sizeDiffGB: stats ? Math.round((stats.sizeDiff || 0) * 10) / 10 : 0,
+      workers,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to reach Tdarr' });
   }
 });
 
@@ -1133,6 +1204,7 @@ async function fetchLabGlancesDetailed(host) {
     temp: gpuEntry.temperature ?? null,
     utilization: gpuEntry.proc ?? null,
     mem_percent: gpuEntry.mem ?? null,
+    nvenc_util: gpuEntry.encoder_proc ?? null,
   } : null;
 
   // Only include actual temperature sensors (not battery %, fan speed, etc.)
@@ -1153,19 +1225,21 @@ async function fetchLabGlancesDetailed(host) {
 }
 
 async function fetchLabServer1Detailed() {
-  // Try Glances first, then supplement with OhmGraphite for CPU temp (Glances sensors empty on Windows)
+  // Always prefer OhmGraphite for CPU/GPU temp on S1 (Glances sensors return unreliable ACPI thermalzone values on Windows)
   try {
     const data = await fetchLabGlancesDetailed('192.168.50.10');
-    if (data.temp == null) {
-      try {
-        const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
-        if (ohmRes.ok) {
-          const ohmText = await ohmRes.text();
-          const cpuPkg = parsePromValues(ohmText, 'ohm_cpu_celsius').find(m => m.labels.sensor === 'CPU Package');
-          if (cpuPkg) data.temp = Math.round(cpuPkg.value * 10) / 10;
-        }
-      } catch {}
-    }
+    try {
+      const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
+      if (ohmRes.ok) {
+        const ohmText = await ohmRes.text();
+        const cpuPkg = parsePromValues(ohmText, 'ohm_cpu_celsius').find(m => m.labels.sensor === 'CPU Package');
+        if (cpuPkg) data.temp = Math.round(cpuPkg.value * 10) / 10;
+        const gpuCore = parsePromValues(ohmText, 'ohm_gpunvidia_celsius').find(m => m.labels.sensor === 'GPU Core');
+        if (gpuCore && data.gpu) data.gpu.temp = Math.round(gpuCore.value * 10) / 10;
+        const nvencSensor = parsePromValues(ohmText, 'ohm_gpunvidia_load_percent').find(m => m.labels.sensor === 'GPU Video Engine');
+        if (nvencSensor && data.gpu) data.gpu.nvenc_util = Math.round(nvencSensor.value * 10) / 10;
+      }
+    } catch {}
     return data;
   } catch {
     // Fall back to windows_exporter with dynamic drive detection
@@ -1201,6 +1275,7 @@ async function fetchLabServer1Detailed() {
       // GPU + CPU temp from OHM (port 9101) — thermalzone temps are ACPI values (~28°C), not real CPU temps
       let gpuTemp = null;
       let cpuTempOhm = null;
+      let nvencUtil = null;
       try {
         const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
         if (ohmRes.ok) {
@@ -1209,10 +1284,12 @@ async function fetchLabServer1Detailed() {
           if (gpuCoreSensor) gpuTemp = Math.round(gpuCoreSensor.value * 10) / 10;
           const cpuPkg = parsePromValues(ohmText, 'ohm_cpu_celsius').find(m => m.labels.sensor === 'CPU Package');
           if (cpuPkg) cpuTempOhm = Math.round(cpuPkg.value * 10) / 10;
+          const nvencSensor = parsePromValues(ohmText, 'ohm_gpunvidia_load_percent').find(m => m.labels.sensor === 'GPU Video Engine');
+          if (nvencSensor) nvencUtil = Math.round(nvencSensor.value * 10) / 10;
         }
       } catch {}
 
-      const gpu = gpuTemp !== null ? { name: 'GTX 1060 6GB', temp: gpuTemp, utilization: null, mem_percent: null } : null;
+      const gpu = gpuTemp !== null ? { name: 'GTX 1060 6GB', temp: gpuTemp, utilization: null, mem_percent: null, nvenc_util: nvencUtil ?? null } : null;
       return { online: true, cpu: cpuPct, mem: { used: memUsed, total: memLimit, percent: memLimit > 0 ? Math.round((memUsed / memLimit) * 1000) / 10 : 0 }, disks, gpu, temp: cpuTempOhm ?? maxTemp };
     } catch {
       return { online: false };
@@ -1268,33 +1345,59 @@ async function fetchTailscaleStatus() {
   }
 }
 
+async function fetchLVMThinPool() {
+  try {
+    const r = await fetch('http://192.168.50.13:9090/api/v1/query?query=node_lvm_thin_pool_data_percent%7Blv%3D%22data%22%2Cvg%3D%22pve%22%7D', { signal: AbortSignal.timeout(4000) });
+    const d = await r.json();
+    const val = d?.data?.result?.[0]?.value?.[1];
+    return val !== undefined ? parseFloat(val) : null;
+  } catch { return null; }
+}
+
+async function fetchClaudeRunning() {
+  try {
+    // Use 5-minute average to avoid false positives during brief restarts
+    const r = await fetch('http://192.168.50.13:9090/api/v1/query?query=avg_over_time(jojeco_claude_running%5B5m%5D)', { signal: AbortSignal.timeout(4000) });
+    const d = await r.json();
+    const val = d?.data?.result?.[0]?.value?.[1];
+    return val !== undefined ? parseInt(val) === 1 : null;
+  } catch { return null; }
+}
+
 async function fetchLabServer2Detailed() {
-  // Glances on S2 runs in Docker and can't see host filesystem — use Glances for CPU/RAM/GPU/temp
-  // then supplement disk from Netdata (which has host access)
+  // Glances on S2 (CT100 LXC) can't see host filesystem — use Glances for CPU/RAM/temp
+  // Pull real disk info from node_exporter (port 9100) which runs on the host with full fs access
   const glances = await fetchLabGlancesDetailed('192.168.50.13').catch(() => null);
   if (!glances) return { online: false };
 
-  // Glances gives 0 disks on this host — pull root disk from Netdata
-  let disks = glances.disks ?? [];
-  if (disks.length === 0) {
-    try {
-      const nd = await fetchNetdata('/api/v1/data?chart=disk_space./&after=-2&points=1&format=json');
-      const row = nd.data?.[0];
-      if (row) {
-        const used    = netdataValue(nd.labels, row, 'used');
-        const avail   = netdataValue(nd.labels, row, 'avail');
-        const reserved= netdataValue(nd.labels, row, 'reserved_for_root');
-        const total   = used + avail + reserved;
-        if (total > 0) disks = [{ label: '/', used: used * 1024 * 1024 * 1024, size: total * 1024 * 1024 * 1024, percent: Math.round((used / total) * 1000) / 10 }];
-      }
-    } catch {}
-  }
+  let disks = [];
+  try {
+    const neRes = await fetch('http://192.168.50.13:9100/metrics', { signal: AbortSignal.timeout(4000) });
+    if (neRes.ok) {
+      const text = await neRes.text();
+      const SKIP_FSTYPES_S2 = new Set(['tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'sysfs', 'proc', 'cgroup', 'cgroup2', 'pstore', 'efivarfs', 'ramfs']);
+      const sizeEntries = parsePromValues(text, 'node_filesystem_size_bytes')
+        .filter(m => !SKIP_FSTYPES_S2.has(m.labels.fstype) && m.value > 5368709120 && isRealMount(m.labels.mountpoint));
+      const availEntries = parsePromValues(text, 'node_filesystem_avail_bytes');
+      const seen = new Set();
+      disks = sizeEntries.filter(m => {
+        const key = Math.round(m.value / 1e9);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).map(m => {
+        const avail = availEntries.find(a => a.labels.mountpoint === m.labels.mountpoint)?.value ?? 0;
+        const used = m.value - avail;
+        return { label: m.labels.mountpoint, used, size: m.value, percent: Math.round((used / m.value) * 1000) / 10 };
+      });
+    }
+  } catch {}
 
   return { ...glances, disks };
 }
 
 app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
-  const [s1, s2, s3, mini, jopc, macbook, services, tailscale] = await Promise.all([
+  const [s1, s2, s3, mini, jopc, macbook, services, tailscale, lvmThinPool, claudeRunning] = await Promise.all([
     fetchLabServer1Detailed(),
     fetchLabServer2Detailed(),
     fetchLabGlancesDetailed('192.168.50.12').catch(() => ({ online: false })),
@@ -1308,6 +1411,8 @@ app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
       } catch { return { ...s, online: false }; }
     })),
     fetchTailscaleStatus(),
+    fetchLVMThinPool(),
+    fetchClaudeRunning(),
   ]);
 
   const machineData = [s1, s3, s2, mini, jopc, macbook];
@@ -1324,14 +1429,30 @@ app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
   if (!tailscale.online) issues.push({ severity: 'critical', message: 'Tailscale is down' });
   machines.filter(m => m.online).forEach(m => {
     (m.disks ?? []).forEach(d => {
-      const freeGB = (d.total ?? 0) - (d.used ?? 0);
+      const sizeBytes = d.size ?? d.total ?? 0;
+      const freeBytes = sizeBytes - (d.used ?? 0);
+      const freeGB = freeBytes / 1e9;
+      const freePct = sizeBytes > 0 ? (freeBytes / sizeBytes) * 100 : 100;
       const diskName = d.label ?? d.drive ?? 'disk';
-      if (freeGB < 50 && (d.total ?? 0) > 0) issues.push({ severity: 'degraded', message: `${m.name} ${diskName} low: ${freeGB.toFixed(0)}GB free` });
+      // Large drives (>2TB): alert on absolute free space (<200GB warn, <50GB critical)
+      // Smaller drives: alert on percentage (<15% warn, <5% critical)
+      const isLarge = sizeBytes > 2e12;
+      const warn = isLarge ? freeGB < 200 : freePct < 15;
+      const crit = isLarge ? freeGB < 50  : freePct < 5;
+      if (sizeBytes > 0 && warn) {
+        const detail = isLarge ? `${freeGB.toFixed(0)}GB free` : `${freePct.toFixed(0)}% free`;
+        issues.push({ severity: crit ? 'critical' : 'degraded', message: `${m.name} ${diskName} low: ${detail}` });
+      }
     });
     if (m.cpu > 90) issues.push({ severity: 'degraded', message: `${m.name} CPU at ${m.cpu.toFixed(0)}%` });
     if (m.gpu?.temp > 80) issues.push({ severity: 'degraded', message: `${m.name} GPU temp ${m.gpu.temp}°C` });
     if (m.temp > 85) issues.push({ severity: 'degraded', message: `${m.name} CPU temp ${m.temp}°C` });
   });
+  if (lvmThinPool !== null) {
+    if (lvmThinPool > 85) issues.push({ severity: 'critical', message: `LVM thin pool CRITICAL: ${lvmThinPool.toFixed(1)}% — run docker system prune NOW` });
+    else if (lvmThinPool > 70) issues.push({ severity: 'degraded', message: `LVM thin pool high: ${lvmThinPool.toFixed(1)}%` });
+  }
+  if (claudeRunning === false) issues.push({ severity: 'critical', message: 'Claude Code agent is NOT running — check jojeco-agent service' });
 
   const status = issues.some(i => i.severity === 'critical') ? 'critical'
                : issues.length > 0 ? 'degraded'
@@ -1341,7 +1462,35 @@ app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
   serviceMap.tailscale = tailscale.online;
 
   const safeMachines = req.isGuest ? machines.map(({ host, ...rest }) => rest) : machines;
-  res.json({ machines: safeMachines, status, issues, services: serviceMap, tailscale });
+  res.json({ machines: safeMachines, status, issues, services: serviceMap, tailscale, lvmThinPool, claudeRunning });
+});
+
+const LAB_PROCESS_HOSTS = {
+  server1: { host: '192.168.50.10', os: 'windows' },
+  server2: { host: '192.168.50.13', os: 'linux' },
+  server3: { host: '192.168.50.12', os: 'linux' },
+  macmini: { host: '192.168.50.30', os: 'linux' },
+  jopc:    { host: '192.168.50.20', os: 'windows' },
+  macbook: { host: '192.168.50.40', os: 'linux' },
+};
+
+app.get('/api/lab/processes/:machineId', optionalAuthMiddleware, async (req, res) => {
+  const entry = LAB_PROCESS_HOSTS[req.params.machineId];
+  if (!entry) return res.status(404).json({ error: 'unknown machine' });
+
+  try {
+    const base = `http://${entry.host}:61208/api/4`;
+    const r = await fetch(`${base}/processlist`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error('glances offline');
+    const list = await r.json();
+    const processes = (Array.isArray(list) ? list : [])
+      .map(p => ({ pid: p.pid, name: p.name, cpu: p.cpu_percent ?? 0, mem: p.memory_percent ?? 0 }))
+      .sort((a, b) => b.cpu - a.cpu)
+      .slice(0, 15);
+    return res.json({ machine_id: req.params.machineId, processes });
+  } catch {
+    return res.json({ machine_id: req.params.machineId, processes: [] });
+  }
 });
 
 // ============================================================================
@@ -1414,7 +1563,7 @@ app.get('/api/ops/fleet', optionalAuthMiddleware, async (req, res) => {
     ]);
     const health = await healthRes.json().catch(() => ({}));
     const spend = spendRes.ok ? await spendRes.json().catch(() => ({})) : {};
-    litellm = { online: health.status === 'connected', spend: spend.spend ?? null };
+    litellm = { online: health.status === 'connected' || health.status === 'healthy', spend: spend.spend ?? null };
   } catch {}
 
   res.json({ nodes, litellm });
@@ -1696,6 +1845,8 @@ const MACHINES = {
   server2:  { ip: '192.168.50.11', user: 'root',      os: 'linux',   mac: '10:5a:95:21:00:82', label: 'Server 2 (Proxmox)' },
   server3:  { ip: '192.168.50.12', user: 'jojeco',    os: 'linux',   mac: '90:20:3a:1a:37:21', label: 'Server 3' },
   macmini:  { ip: '192.168.50.30', user: 'jj',        os: 'macos',   mac: '0c:4d:e9:c7:07:69', label: 'Mac Mini' },
+  jopc:     { ip: '192.168.50.20', user: 'sshuser',   os: 'windows', mac: process.env.JOPC_MAC  || '',                   label: 'JoPc' },
+  macbook:  { ip: '192.168.50.40', user: 'jojeco',   os: 'macos',   mac: process.env.JOMAC_MAC || '76:86:2B:1E:45:C6', label: 'JoMac' },
 };
 
 async function sshRun(machine, cmd) {
@@ -1715,7 +1866,7 @@ app.post('/api/controls/server/:machine/restart', authMiddleware, async (req, re
   try {
     const cmd = m.os === 'windows' ? 'shutdown /r /t 5' :
                 m.os === 'macos'   ? 'sudo shutdown -r +0' :
-                                     'sudo reboot';
+                                     'reboot';
     await sshRun(machine, cmd);
     res.json({ ok: true, message: `Restart command sent to ${m.label}` });
   } catch (e) {
@@ -1731,7 +1882,7 @@ app.post('/api/controls/server/:machine/shutdown', authMiddleware, async (req, r
   try {
     const cmd = m.os === 'windows' ? 'shutdown /s /t 5' :
                 m.os === 'macos'   ? 'sudo shutdown -h +0' :
-                                     'sudo shutdown -h now';
+                                     'shutdown -h now';
     await sshRun(machine, cmd);
     res.json({ ok: true, message: `Shutdown command sent to ${m.label}` });
   } catch (e) {
@@ -1790,20 +1941,150 @@ app.post('/api/controls/container/:name/start', authMiddleware, async (req, res)
   }
 });
 
+// In-memory job tracker for trigger status
+const triggerJobs = {};
+const triggerProcesses = {}; // track child processes so we can kill them
+
 // POST /api/controls/trigger/:action
 app.post('/api/controls/trigger/:action', authMiddleware, async (req, res) => {
   const { action } = req.params;
   const scripts = {
-    'health':   '/opt/jojeco-agent/scripts/dep-watcher.sh',
-    'backup':   '/opt/jojeco-agent/scripts/gdrive-backup.sh',
-    'snapshot': '/opt/jojeco-agent/scripts/weekly-update.sh',
+    'health':        '/opt/jojeco-agent/scripts/dep-watcher.sh',
+    'backup':        '/opt/jojeco-agent/scripts/gdrive-backup.sh',
+    'snapshot':      '/opt/jojeco-agent/scripts/weekly-update.sh',
+    'claude-server3': '/opt/jojeco-agent/scripts/start-claude-fallback.sh server3',
+    'claude-server1': '/opt/jojeco-agent/scripts/start-claude-fallback.sh server1',
+    'sync-context':  '/opt/jojeco-agent/scripts/sync-context.sh',
   };
   if (!scripts[action]) return res.status(400).json({ error: 'Unknown action' });
 
-  // Run fire-and-forget (scripts can be slow), return immediately
+  // Kill any already-running instance of this action
+  if (triggerProcesses[action]) {
+    try { triggerProcesses[action].kill('SIGTERM'); } catch (_) {}
+    delete triggerProcesses[action];
+  }
+
+  const startedAt = Date.now();
+  triggerJobs[action] = { status: 'running', startedAt, finishedAt: null, output: null, error: null };
+
   const { exec } = await import('child_process');
-  exec(`${scripts[action]} &`, (err) => { if (err) console.error('Trigger error:', err); });
-  res.json({ ok: true, message: `Triggered: ${action}. Check ntfy for results.` });
+  const child = exec(scripts[action], { timeout: 300000 }, (err, stdout, stderr) => {
+    delete triggerProcesses[action];
+    const out = (stdout || '').trim().split('\n').slice(-8).join('\n');
+    if (err && err.signal === 'SIGTERM') {
+      triggerJobs[action] = { status: 'aborted', startedAt, finishedAt: Date.now(), output: 'Aborted by user', error: null };
+    } else if (err) {
+      triggerJobs[action] = { status: 'error', startedAt, finishedAt: Date.now(), output: out || stderr?.trim() || err.message, error: err.message };
+    } else {
+      triggerJobs[action] = { status: 'done', startedAt, finishedAt: Date.now(), output: out, error: null };
+    }
+  });
+  triggerProcesses[action] = child;
+
+  res.json({ ok: true, message: `Triggered: ${action}` });
+});
+
+// POST /api/controls/trigger/:action/abort — kill a running trigger
+app.post('/api/controls/trigger/:action/abort', authMiddleware, (req, res) => {
+  const { action } = req.params;
+  const child = triggerProcesses[action];
+  if (!child) return res.status(404).json({ error: 'No running job for this action' });
+  try {
+    child.kill('SIGTERM');
+    delete triggerProcesses[action];
+    triggerJobs[action] = { ...triggerJobs[action], status: 'aborted', finishedAt: Date.now(), output: 'Aborted by user' };
+    res.json({ ok: true, message: `Aborted: ${action}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/claude/ct100/restart — restart Claude on this machine (CT100)
+// SSHes to the host to send SIGTERM — wrapper catches it and relaunches
+app.post('/api/controls/claude/ct100/restart', authMiddleware, async (req, res) => {
+  const { execFile } = await import('child_process');
+  execFile('ssh', [
+    '-i', '/root/.ssh/jojeco_lab_key',
+    '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes',
+    'jobot@192.168.50.13',
+    'pkill -SIGTERM -f "claude --dangerously" 2>/dev/null; true'
+  ], { timeout: 10000 }, (err) => {
+    res.json({ ok: true, message: 'Restart signal sent to Claude (CT100) — will resume in ~5s' });
+  });
+});
+
+// POST /api/controls/claude/ct100/stop — stop Claude on CT100 entirely
+app.post('/api/controls/claude/ct100/stop', authMiddleware, async (req, res) => {
+  const { execFile } = await import('child_process');
+  execFile('ssh', [
+    '-i', '/root/.ssh/jojeco_lab_key',
+    '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes',
+    'jobot@192.168.50.13',
+    'pkill -SIGTERM -f "claude-wrapper.sh" 2>/dev/null; pkill -9 -f "claude --dangerously" 2>/dev/null; true'
+  ], { timeout: 10000 }, (err) => {
+    res.json({ ok: true, message: 'Claude stopped on CT100' });
+  });
+});
+
+// POST /api/controls/claude/:machine/stop — kill Claude on a remote machine
+app.post('/api/controls/claude/:machine/stop', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m) return res.status(400).json({ error: 'Unknown machine' });
+  try {
+    const cmd = m.os === 'windows'
+      ? 'powershell -Command \"Stop-Process -Name claude -Force -ErrorAction SilentlyContinue; Write-Output done\"'
+      : 'pkill -f claude 2>/dev/null; pkill -f claude-code 2>/dev/null; echo done';
+    await sshRun(machine, cmd);
+    res.json({ ok: true, message: `Claude stopped on ${m.label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/claude/:machine/restart — restart Claude on a remote machine
+app.post('/api/controls/claude/:machine/restart', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m) return res.status(400).json({ error: 'Unknown machine' });
+  try {
+    await sshRun(machine, 'pkill -f claude 2>/dev/null; sleep 2; nohup /opt/jojeco-agent/scripts/start-claude-fallback.sh > /tmp/claude-restart.log 2>&1 &');
+    res.json({ ok: true, message: `Claude restarting on ${m.label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/controls/trigger-status — returns status of all tracked trigger jobs
+app.get('/api/controls/trigger-status', authMiddleware, (req, res) => {
+  const result = {};
+  for (const [k, v] of Object.entries(triggerJobs)) {
+    result[k] = { ...v, canAbort: !!triggerProcesses[k] };
+  }
+  res.json(result);
+});
+
+// GET /api/controls/server-status — pings all machines via TCP
+app.get('/api/controls/server-status', authMiddleware, async (req, res) => {
+  const net = await import('net');
+  const targets = [
+    { id: 'server1', host: '192.168.50.10', port: 22 },
+    { id: 'server2', host: '192.168.50.11', port: 22 },
+    { id: 'server3', host: '192.168.50.12', port: 22 },
+    { id: 'macmini', host: '192.168.50.30', port: 22 },
+    { id: 'jopc',    host: '192.168.50.20', port: 22 },
+  ];
+  const results = await Promise.all(targets.map(t => new Promise(resolve => {
+    const sock = new net.default.Socket();
+    const done = (online) => { sock.destroy(); resolve({ id: t.id, online }); };
+    sock.setTimeout(1500);
+    sock.connect(t.port, t.host, () => done(true));
+    sock.on('error', () => done(false));
+    sock.on('timeout', () => done(false));
+  })));
+  const status = {};
+  results.forEach(r => { status[r.id] = r.online; });
+  res.json(status);
 });
 
 // GET /api/controls/containers - list all containers with status for controls UI
@@ -1824,11 +2105,533 @@ app.get('/api/controls/containers', authMiddleware, async (req, res) => {
   }
 });
 
+// ============================================================================
+// NTFY ALERT FEED
+// ============================================================================
+
+const NTFY_BASE = process.env.NTFY_URL || 'http://192.168.50.13:8080';
+const NTFY_TOPIC = 'jojeco-alerts';
+
+app.get('/api/alerts/recent', authMiddleware, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+  try {
+    const r = await fetch(`${NTFY_BASE}/${NTFY_TOPIC}/json?poll=1&since=48h`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return res.status(502).json({ error: 'ntfy unreachable' });
+    const text = await r.text();
+    const messages = text.trim().split('\n').filter(Boolean).map(line => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).filter(m => m && m.event === 'message').reverse().slice(0, limit).map(m => ({
+      id: m.id,
+      time: m.time,
+      title: m.title || null,
+      message: m.message,
+      priority: m.priority || 3,
+      tags: m.tags || [],
+    }));
+    res.json(messages);
+  } catch (e) {
+    res.status(502).json({ error: 'Failed to fetch alerts', detail: e.message });
+  }
+});
+
+// ============================================================================
+// AUTOMATION STATUS
+// ============================================================================
+
+app.get('/api/automation/status', authMiddleware, async (req, res) => {
+  const jobs = [
+    { id: 'backup',    label: 'GDrive Backup',    logFile: '/host/log/jojeco-gdrive-backup.log',  schedule: 'Daily 2:00 AM',   maxAgeHours: 26 },
+    { id: 'depwatch',  label: 'Dependency Watcher', logFile: '/host/log/jojeco-dep-watcher.log',   schedule: 'Every 5 min',     maxAgeHours: 0.2 },
+    { id: 'update',    label: 'Weekly Update',     logFile: '/host/log/jojeco-weekly-update.log',  schedule: 'Sunday 3:00 AM',  maxAgeHours: 200 },
+  ];
+
+  const results = await Promise.all(jobs.map(async (job) => {
+    try {
+      const { stdout } = await execFileAsync('tail', ['-n', '30', job.logFile], { timeout: 3000 });
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      // Find last timestamp anywhere in log
+      let lastRunTs = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const m = lines[i].match(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/);
+        if (m) { lastRunTs = new Date(m[1]).getTime(); break; }
+        const m2 = lines[i].match(/(\w{3} \w{3} +\d+ \d{2}:\d{2}:\d{2} \w+ \d{4})/); // "Mon Apr 20 10:08:08 UTC 2026"
+        if (m2) { lastRunTs = new Date(m2[1]).getTime(); break; }
+      }
+      const lastRun = lastRunTs ? new Date(lastRunTs).toISOString() : null;
+      const stale = lastRunTs ? (Date.now() - lastRunTs) > job.maxAgeHours * 3600000 : true;
+      const hasError = lines.some(l => /error|fail|fatal/i.test(l) && !/0 errors|attempt \d+\/\d+ succeeded/i.test(l));
+      const healthy = !stale && !hasError;
+      return { ...job, status: hasError ? 'error' : stale ? 'stale' : 'ok', healthy, lastRun, lastRunTs, lastLines: lines.slice(-5) };
+    } catch {
+      return { ...job, status: 'unknown', healthy: false, lastRun: null, lastRunTs: null, lastLines: [] };
+    }
+  }));
+
+  res.json(results);
+});
+
+// ============================================================================
+// UPDATE CHECKER
+// ============================================================================
+
+// Cache update check results in memory (expensive to fetch from registry)
+let updateCache = { checked: null, results: [] };
+
+async function getRemoteDigest(imageRef) {
+  // Parse registry/repo/tag from imageRef
+  let registry = 'registry-1.docker.io';
+  let repo = imageRef.split('@')[0]; // strip any existing digest
+  let tag = 'latest';
+
+  // Split tag
+  const lastColon = repo.lastIndexOf(':');
+  const lastSlash = repo.lastIndexOf('/');
+  if (lastColon > lastSlash) {
+    tag = repo.slice(lastColon + 1);
+    repo = repo.slice(0, lastColon);
+  }
+
+  // Handle non-Docker Hub registries
+  if (repo.includes('.') && repo.indexOf('.') < (repo.indexOf('/') > -1 ? repo.indexOf('/') : Infinity)) {
+    const slashIdx = repo.indexOf('/');
+    registry = repo.slice(0, slashIdx);
+    repo = repo.slice(slashIdx + 1);
+  } else if (!repo.includes('/')) {
+    repo = `library/${repo}`; // Docker Hub official images
+  }
+
+  const headers = { Accept: 'application/vnd.docker.distribution.manifest.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' };
+
+  if (registry === 'registry-1.docker.io') {
+    try {
+      const authRes = await fetch(`https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull`, { signal: AbortSignal.timeout(8000) });
+      if (authRes.ok) {
+        const { token } = await authRes.json();
+        headers.Authorization = `Bearer ${token}`;
+      }
+    } catch { /* proceed without auth */ }
+  }
+
+  const manifestRes = await fetch(`https://${registry}/v2/${repo}/manifests/${tag}`, { headers, signal: AbortSignal.timeout(10000) });
+  if (!manifestRes.ok) return null;
+  return manifestRes.headers.get('docker-content-digest');
+}
+
+async function checkContainerUpdates() {
+  const r = await dockerRequest('/containers/json?all=0');
+  const containers = r.body || [];
+
+  const results = await Promise.allSettled(containers.map(async (c) => {
+    const name = c.Names[0]?.replace('/', '') || c.Id.slice(0, 12);
+    const image = c.Image;
+
+    // Skip containers without a proper image tag (sha256 refs)
+    if (image.startsWith('sha256:') || !image) return null;
+
+    // Get local image digest
+    const imgR = await dockerRequest(`/images/${encodeURIComponent(image)}/json`);
+    const localDigests = imgR.body?.RepoDigests || [];
+    const localDigest = localDigests[0]?.split('@')[1] || null;
+
+    // Get remote digest
+    let remoteDigest = null;
+    try { remoteDigest = await getRemoteDigest(image); } catch { /* ignore */ }
+
+    const updateAvailable = localDigest && remoteDigest && localDigest !== remoteDigest;
+
+    return {
+      id: c.Id.slice(0, 12),
+      name,
+      image,
+      localDigest: localDigest ? localDigest.slice(0, 19) : null,
+      remoteDigest: remoteDigest ? remoteDigest.slice(0, 19) : null,
+      updateAvailable: updateAvailable || false,
+      canCheck: !!(localDigest && remoteDigest),
+    };
+  }));
+
+  return results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean);
+}
+
+app.get('/api/updates/available', authMiddleware, async (req, res) => {
+  const force = req.query.force === '1';
+  const cacheAgeMs = 30 * 60 * 1000; // 30 min cache
+  if (!force && updateCache.checked && (Date.now() - updateCache.checked) < cacheAgeMs) {
+    return res.json({ checked: updateCache.checked, results: updateCache.results, cached: true });
+  }
+  try {
+    const results = await checkContainerUpdates();
+    updateCache = { checked: Date.now(), results };
+    res.json({ checked: updateCache.checked, results, cached: false });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/updates/apply', authMiddleware, async (req, res) => {
+  const { containers: names } = req.body;
+  if (!Array.isArray(names) || names.length === 0) return res.status(400).json({ error: 'containers array required' });
+
+  // Start async job
+  const jobId = `update-${Date.now()}`;
+  triggerJobs[jobId] = { status: 'running', startedAt: Date.now(), finishedAt: null, output: null, error: null };
+  res.json({ jobId, message: 'Update started' });
+
+  (async () => {
+    const lines = [];
+    for (const name of names) {
+      try {
+        // Get image for this container
+        const cR = await dockerRequest(`/containers/${name}/json`);
+        const image = cR.body?.Config?.Image;
+        if (!image) { lines.push(`${name}: could not find image`); continue; }
+
+        lines.push(`Pulling ${image}...`);
+        // Pull new image
+        await new Promise((resolve, reject) => {
+          const opts = { socketPath: '/var/run/docker.sock', path: `/images/create?fromImage=${encodeURIComponent(image)}`, method: 'POST' };
+          const req2 = http.request(opts, dres => { dres.resume(); dres.on('end', resolve); });
+          req2.on('error', reject);
+          req2.end();
+        });
+
+        // Restart container to pick up new image
+        await dockerRequest(`/containers/${name}/restart`, 'POST');
+        lines.push(`${name}: updated and restarted`);
+      } catch (e) {
+        lines.push(`${name}: failed — ${e.message}`);
+      }
+    }
+    updateCache = { checked: null, results: [] }; // invalidate cache
+    triggerJobs[jobId] = { status: 'done', startedAt: triggerJobs[jobId].startedAt, finishedAt: Date.now(), output: lines.join('\n'), error: null };
+  })().catch(e => {
+    triggerJobs[jobId] = { ...triggerJobs[jobId], status: 'error', finishedAt: Date.now(), error: e.message };
+  });
+});
+
+// ============================================================================
+// SERVER-SIDE SERVICE HEALTH POLLER
+// ============================================================================
+
+// Cache of latest health result per serviceId
+const serviceHealthCache = new Map();
+
+async function runServiceHealthPoller() {
+  try {
+    // Fetch all services across all users
+    const services = db.prepare('SELECT id, name, url, health_check_url, health_check_interval FROM services').all();
+    await Promise.allSettled(services.map(async (svc) => {
+      const checkUrl = svc.health_check_url || svc.url;
+      if (!checkUrl) return;
+      const startTime = Date.now();
+      let status = 'offline';
+      let statusCode = null;
+      let responseTime = null;
+      let error = null;
+      try {
+        const isPrivateHttps = checkUrl.startsWith('https://') && /https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(checkUrl);
+        if (isPrivateHttps) {
+          // Use https module with rejectUnauthorized:false for internal self-signed certs
+          await new Promise((resolve, reject) => {
+            const req = https.request(checkUrl, { method: 'HEAD', rejectUnauthorized: false, timeout: 8000 }, (res) => {
+              statusCode = res.statusCode;
+              // 401/403/405/501 mean the service IS running but rejected our unauthed HEAD
+              status = (res.statusCode < 500 || res.statusCode === 501) ? 'online' : 'offline';
+              resolve();
+            });
+            req.on('error', (e) => { error = e.message?.slice(0, 100); reject(e); });
+            req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+            req.end();
+          });
+        } else {
+          const r = await fetch(checkUrl, { method: 'HEAD', signal: AbortSignal.timeout(8000) });
+          statusCode = r.status;
+          // 401/403/405/501 mean the service IS running but rejected our unauthed HEAD
+          status = (r.status < 500 || r.status === 501) ? 'online' : 'offline';
+        }
+        responseTime = Date.now() - startTime;
+      } catch (e) {
+        responseTime = Date.now() - startTime;
+        error = e.message?.slice(0, 100);
+        status = 'offline';
+      }
+      const ts = Date.now();
+      serviceHealthCache.set(svc.id, { serviceId: svc.id, name: svc.name, status, statusCode, responseTime, error, checkedAt: ts });
+      // Persist to health_checks table (keep last 288 per service = 24h at 5min intervals)
+      db.prepare('INSERT INTO health_checks (service_id, status, response_time, status_code, timestamp, error) VALUES (?,?,?,?,?,?)').run(svc.id, status, responseTime, statusCode, ts, error);
+      db.prepare('DELETE FROM health_checks WHERE service_id = ? AND timestamp < ?').run(svc.id, Date.now() - 7 * 24 * 3600000);
+    }));
+  } catch { /* don't crash the server */ }
+}
+
+app.get('/api/health/services', authMiddleware, (req, res) => {
+  const results = Array.from(serviceHealthCache.values());
+  res.json({ checkedAt: Date.now(), services: results });
+});
+
+app.get('/api/health/services/:serviceId/history', authMiddleware, (req, res) => {
+  const { serviceId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit) || 288, 1000);
+  const rows = db.prepare('SELECT status, response_time, status_code, timestamp, error FROM health_checks WHERE service_id = ? ORDER BY timestamp DESC LIMIT ?').all(serviceId, limit);
+  const total = rows.length;
+  const online = rows.filter(r => r.status === 'online').length;
+  const uptimePct = total > 0 ? Math.round((online / total) * 1000) / 10 : null;
+  const avgResponseTime = rows.filter(r => r.response_time).length > 0
+    ? Math.round(rows.filter(r => r.response_time).reduce((s, r) => s + r.response_time, 0) / rows.filter(r => r.response_time).length)
+    : null;
+  res.json({ serviceId, uptimePct, avgResponseTime, history: rows });
+});
+
+// ============================================================================
+// FAILOVER / HA ROUTES
+// ============================================================================
+
+const S2_HOST = '192.168.50.11';
+const S3_HOST = '192.168.50.12';
+const SYNC_LOG_PATH = '/var/log/s3-volume-sync.log';
+const FAILOVER_ACTIVE_FILE = '/mnt/data/lab/failover/.active';
+
+async function tcpCheck(host, port, timeoutMs = 3000) {
+  const net = await import('net');
+  return new Promise(resolve => {
+    const sock = new net.default.Socket();
+    const done = (ok) => { sock.destroy(); resolve(ok); };
+    sock.setTimeout(timeoutMs);
+    sock.connect(port, host, () => done(true));
+    sock.on('error', () => done(false));
+    sock.on('timeout', () => done(false));
+  });
+}
+
+// GET /api/failover/status
+app.get('/api/failover/status', lanOrAuth, async (req, res) => {
+  try {
+    const [s2_online, s3_online] = await Promise.all([
+      tcpCheck(S2_HOST, 22),
+      tcpCheck(S3_HOST, 22),
+    ]);
+
+    // Check failover active: look for state file on S3 or docker ps grep
+    let failover_active = false;
+    let watchdog_status = 'unknown';
+    let last_sync = null;
+
+    // SSH to S3 for watchdog + failover state (only if S3 is online)
+    if (s3_online) {
+      try {
+        const { stdout: wdOut } = await execFileAsync('ssh', [
+          '-i', SSH_KEY, ...SSH_OPTS, `jojeco@${S3_HOST}`,
+          'systemctl is-active jojeco-watchdog 2>/dev/null || echo inactive'
+        ], { timeout: 10000 });
+        watchdog_status = wdOut.trim();
+      } catch { watchdog_status = 'unreachable'; }
+
+      try {
+        const { stdout: foOut } = await execFileAsync('ssh', [
+          '-i', SSH_KEY, ...SSH_OPTS, `jojeco@${S3_HOST}`,
+          `test -f ${FAILOVER_ACTIVE_FILE} && echo yes || docker ps 2>/dev/null | grep -q failover && echo yes || echo no`
+        ], { timeout: 10000 });
+        failover_active = foOut.trim() === 'yes';
+      } catch { failover_active = false; }
+    }
+
+    // Read last sync log line (local file, mounted into container)
+    try {
+      const { stdout: logOut } = await execFileAsync('tail', ['-n', '1', SYNC_LOG_PATH], { timeout: 3000 });
+      last_sync = logOut.trim() || null;
+    } catch { last_sync = null; }
+
+    res.json({ s2_online, s3_online, failover_active, watchdog_status, last_sync });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/failover/activate
+app.post('/api/failover/activate', authMiddleware, async (req, res) => {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      '/opt/jojeco-agent/scripts/lab-failover.sh', ['activate'],
+      { timeout: 120000 }
+    );
+    res.json({ success: true, output: (stdout + stderr).trim() });
+  } catch (e) {
+    res.status(500).json({ success: false, output: (e.stdout || '') + (e.stderr || ''), error: e.message });
+  }
+});
+
+// POST /api/failover/deactivate
+app.post('/api/failover/deactivate', authMiddleware, async (req, res) => {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      '/opt/jojeco-agent/scripts/lab-failover.sh', ['deactivate'],
+      { timeout: 120000 }
+    );
+    res.json({ success: true, output: (stdout + stderr).trim() });
+  } catch (e) {
+    res.status(500).json({ success: false, output: (e.stdout || '') + (e.stderr || ''), error: e.message });
+  }
+});
+
+// POST /api/failover/sync-now — fire and forget
+app.post('/api/failover/sync-now', authMiddleware, async (req, res) => {
+  const { exec } = await import('child_process');
+  exec('/opt/jojeco-agent/scripts/s3-volume-sync.sh >> /var/log/s3-volume-sync.log 2>&1 &');
+  res.json({ success: true, message: 'Volume sync started' });
+});
+
+// ============================================================================
+// BACKUP STATUS ROUTE
+// ============================================================================
+
+const BACKUP_LOG_PATH = '/host/log/jojeco-gdrive-backup.log';
+
+app.get('/api/backup-status', lanOrAuth, async (req, res) => {
+  try {
+    const { stdout } = await execFileAsync('tail', ['-n', '40', BACKUP_LOG_PATH], { timeout: 3000 });
+    const lines = stdout.trim().split('\n').filter(Boolean);
+
+    // Find last run timestamp
+    let lastRun = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = lines[i].match(/=== Backup (started|complete) (\d{4}-\d{2}-\d{2})/);
+      if (m) { lastRun = m[2]; break; }
+    }
+
+    // Find time from last session header
+    let lastRunTime = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = lines[i].match(/\[(\d{2}:\d{2}:\d{2})\] === Backup started/);
+      if (m) { lastRunTime = m[1]; break; }
+    }
+
+    // Check for errors in last session (lines after last "Backup started")
+    let sessionStart = 0;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/=== Backup started/.test(lines[i])) { sessionStart = i; break; }
+    }
+    const sessionLines = lines.slice(sessionStart);
+    const hasError = sessionLines.some(l => /error|fail|FAILED/i.test(l) && !/0 errors/i.test(l));
+    const completed = sessionLines.some(l => /=== Backup complete|✅ Backup complete/i.test(l));
+
+    const status = hasError ? 'error' : completed ? 'ok' : lastRun ? 'unknown' : 'never';
+    const lastRunFull = lastRun && lastRunTime ? `${lastRun} ${lastRunTime}` : lastRun || null;
+
+    // Get last few meaningful lines
+    const message = sessionLines.filter(l => l.trim() && !/^$/.test(l)).slice(-6).join('\n');
+
+    res.json({ lastRun: lastRunFull, status, message });
+  } catch (e) {
+    res.json({ lastRun: null, status: 'unknown', message: 'Log not found or unreadable' });
+  }
+});
+
+// ============================================================================
+// 7-DAY SPARKLINE DATA
+// ============================================================================
+
+app.get('/api/health/sparklines', authMiddleware, (req, res) => {
+  try {
+    const since7d = Date.now() - 7 * 24 * 3600000;
+    const services = db.prepare('SELECT id, name FROM services').all();
+    const result = {};
+    for (const svc of services) {
+      // Get hourly buckets of uptime % over last 7 days
+      const rows = db.prepare(
+        'SELECT timestamp, status FROM health_checks WHERE service_id = ? AND timestamp > ? ORDER BY timestamp ASC'
+      ).all(svc.id, since7d);
+
+      if (rows.length === 0) { result[svc.id] = []; continue; }
+
+      // Group into 24 buckets (one per 7h period = 7 days)
+      const bucketMs = 7 * 24 * 3600000 / 24;
+      const now = Date.now();
+      const buckets = Array.from({ length: 24 }, (_, i) => {
+        const bucketEnd = now - (23 - i) * bucketMs;
+        const bucketStart = bucketEnd - bucketMs;
+        const inBucket = rows.filter(r => r.timestamp >= bucketStart && r.timestamp < bucketEnd);
+        if (inBucket.length === 0) return null;
+        const online = inBucket.filter(r => r.status === 'online').length;
+        return Math.round((online / inBucket.length) * 100);
+      });
+      result[svc.id] = buckets;
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch sparkline data' });
+  }
+});
+
+// ============================================================================
+// ADGUARD STATS PROXY
+// ============================================================================
+
+const ADGUARD_URL = process.env.ADGUARD_URL || 'http://192.168.50.30:3000';
+const ADGUARD_USER = process.env.ADGUARD_USER || '';
+const ADGUARD_PASS = process.env.ADGUARD_PASS || '';
+
+async function adguardFetch(path) {
+  const auth = Buffer.from(`${ADGUARD_USER}:${ADGUARD_PASS}`).toString('base64');
+  const r = await fetch(`${ADGUARD_URL}${path}`, {
+    headers: { Authorization: `Basic ${auth}` },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!r.ok) throw new Error(`AdGuard API ${r.status}`);
+  return r.json();
+}
+
+app.get('/api/adguard/stats', authMiddleware, async (req, res) => {
+  try {
+    const stats = await adguardFetch('/control/stats');
+    res.json({
+      totalQueries: stats.num_dns_queries,
+      blockedQueries: stats.num_blocked_filtering,
+      blockedPercent: stats.num_dns_queries > 0
+        ? ((stats.num_blocked_filtering / stats.num_dns_queries) * 100).toFixed(1)
+        : '0',
+      avgProcessingTime: stats.avg_processing_time
+        ? (stats.avg_processing_time * 1000).toFixed(1)
+        : null,
+      topBlocked: (stats.top_blocked_domains || []).slice(0, 5),
+      topClients: (stats.top_clients || []).slice(0, 5),
+    });
+  } catch (e) {
+    res.status(502).json({ error: 'AdGuard unreachable', detail: e.message });
+  }
+});
+
+app.get('/api/adguard/status', authMiddleware, async (req, res) => {
+  try {
+    const status = await adguardFetch('/control/status');
+    res.json({
+      running: status.running,
+      protectionEnabled: status.protection_enabled,
+      version: status.version,
+    });
+  } catch (e) {
+    res.status(502).json({ error: 'AdGuard unreachable', detail: e.message });
+  }
+});
+
 async function startServer() {
   await db.init();
 
   // Migrate: ensure temp_history table exists
   db.prepare('CREATE TABLE IF NOT EXISTS temp_history (id INTEGER PRIMARY KEY AUTOINCREMENT, machine_id TEXT NOT NULL, timestamp INTEGER NOT NULL, cpu_temp REAL, gpu_temp REAL)').run();
+
+  // Seed default admin user if users table is empty
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  const adminUserId = process.env.ADMIN_USER_ID;
+  if (adminEmail && adminPassword && adminUserId) {
+    const existing = db.prepare('SELECT COUNT(*) as count FROM users').get();
+    if (existing.count === 0) {
+      const hash = await hashPassword(adminPassword);
+      const now = Date.now();
+      db.prepare('INSERT INTO users (id, email, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(adminUserId, adminEmail, hash, 'Jordan', now, now);
+      console.log(`✅ Admin user seeded: ${adminEmail} (id: ${adminUserId})`);
+    }
+  }
 
   app.listen(PORT, () => {
     console.log(`🚀 JojeCo Dashboard API running on port ${PORT}`);
@@ -1840,10 +2643,15 @@ async function startServer() {
   setInterval(runHealthMonitor, 2 * 60 * 1000);
   console.log('🔍 Health monitor started (2min interval)');
 
-  // Start temp polling every 5 minutes
+  // Service health poller — checks all user-registered services every 5 min
+  runServiceHealthPoller().catch(() => {});
+  setInterval(() => runServiceHealthPoller().catch(() => {}), 5 * 60 * 1000);
+  console.log('🩺 Service health poller started (5min interval)');
+
+  // Start temp polling every 30 seconds
   pollTemps().catch(() => {});
-  setInterval(() => pollTemps().catch(() => {}), 5 * 60 * 1000);
-  console.log('🌡️  Temp poller started (5min interval)');
+  setInterval(() => pollTemps().catch(() => {}), 30 * 1000);
+  console.log('🌡️  Temp poller started (30sec interval)');
 }
 
 startServer().catch(console.error);

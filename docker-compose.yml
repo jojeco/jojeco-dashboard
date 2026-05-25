@@ -10,6 +10,8 @@
       - ./server/data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /home/jobot/.ssh/jojeco_lab_key:/root/.ssh/jojeco_lab_key:ro
+      - /var/log:/host/log:ro
+      - /opt/jojeco-agent/scripts:/opt/jojeco-agent/scripts:ro
     environment:
       - NODE_ENV=production
       - PORT=3001
@@ -23,6 +25,13 @@
       - RADARR_URL=${RADARR_URL}
       - RADARR_KEY=${RADARR_KEY}
       - CHAOS_SECRET=${CHAOS_SECRET}
+      - ADGUARD_URL=${ADGUARD_URL:-http://192.168.50.30:3000}
+      - ADGUARD_USER=${ADGUARD_USER:-}
+      - ADGUARD_PASS=${ADGUARD_PASS:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ADMIN_USER_ID=${ADMIN_USER_ID:-}
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
     restart: unless-stopped
     networks:
       - jojeco-network

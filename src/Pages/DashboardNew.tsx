@@ -15,6 +15,24 @@ import { type HealthStatus } from '../hooks/useServiceHealth';
 import { api } from '../services/api';
 import { ICON_MAP } from '../utils/constants';
 
+// ── Uptime Sparkline (7-day, 24 buckets) ────────────────────────────────────
+function UptimeSparkline({ data }: { data: (number | null)[] }) {
+  const valid = data.filter(v => v !== null) as number[];
+  if (valid.length < 3) return null;
+  const W = 60, H = 18;
+  const n = data.length;
+  const toX = (i: number) => (i / (n - 1)) * W;
+  const toY = (v: number) => H - (v / 100) * H;
+  const points = data.map((v, i) => v !== null ? `${toX(i).toFixed(1)},${toY(v).toFixed(1)}` : null).filter(Boolean).join(' ');
+  const avg = valid.reduce((s, v) => s + v, 0) / valid.length;
+  const color = avg >= 95 ? 'var(--ok)' : avg >= 80 ? 'var(--warn)' : 'var(--err)';
+  return (
+    <svg width={W} height={H} style={{ display: 'block', flexShrink: 0 }}>
+      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" opacity={0.7} />
+    </svg>
+  );
+}
+
 function TagChip({ tag, active, onClick }: { tag: string; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick}
@@ -29,7 +47,7 @@ function TagChip({ tag, active, onClick }: { tag: string; active: boolean; onCli
   );
 }
 
-function ServiceCard({ service, onEdit, health, isGuest }: { service: Service; onEdit: (service: Service) => void; health: HealthStatus; isGuest?: boolean }) {
+function ServiceCard({ service, onEdit, health, isGuest, sparkline }: { service: Service; onEdit: (service: Service) => void; health: HealthStatus; isGuest?: boolean; sparkline?: (number | null)[] }) {
   const Icon = service.icon ? (ICON_MAP[service.icon] ?? Server) : Server;
   const bestUrl = isGuest ? null : (service.url || service.lanUrl);
 
@@ -67,6 +85,9 @@ function ServiceCard({ service, onEdit, health, isGuest }: { service: Service; o
           </span>
         ))}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+          {sparkline && sparkline.filter(v => v !== null).length >= 3 && (
+            <UptimeSparkline data={sparkline} />
+          )}
           <span style={{ fontSize: 11, fontWeight: 700, color: statusColor }}>
             {health.status === 'online' ? 'Up' : health.status === 'offline' ? 'Down' : '—'}
           </span>
@@ -135,6 +156,7 @@ export default function Dashboard() {
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [onlineCounts, setOnlineCounts] = useState<Record<string, boolean>>({});
   const [healthMap, setHealthMap] = useState<Record<string, HealthStatus>>({});
+  const [sparklines, setSparklines] = useState<Record<string, (number | null)[]>>({});
 
   useEffect(() => {
     const unsubscribe = serviceService.subscribeToUserServices(s => {
@@ -161,6 +183,19 @@ export default function Dashboard() {
     };
     fetchHealth();
     const id = setInterval(fetchHealth, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    api.get<Record<string, (number | null)[]>>('/health/sparklines')
+      .then(data => setSparklines(data))
+      .catch(() => {});
+    // Refresh sparklines every 30 min
+    const id = setInterval(() => {
+      api.get<Record<string, (number | null)[]>>('/health/sparklines')
+        .then(data => setSparklines(data))
+        .catch(() => {});
+    }, 30 * 60 * 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -279,7 +314,7 @@ export default function Dashboard() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
               {pinnedServices.map(service => (
-                <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
+                <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} sparkline={sparklines[service.id]} />
               ))}
             </div>
           </section>
@@ -295,7 +330,7 @@ export default function Dashboard() {
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
               {regularServices.map(service => (
-                <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} />
+                <ServiceCard key={service.id} service={service} onEdit={s => { setSelectedService(s); setServiceModalOpen(true); }} health={healthMap[service.id] ?? unknownHealth} isGuest={isGuest} sparkline={sparklines[service.id]} />
               ))}
             </div>
           </section>
