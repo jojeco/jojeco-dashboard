@@ -14,7 +14,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | n
     return this.props.children;
   }
 }
-import { LogOut, LogIn, Server, Download, Container, Film, Bot, Zap, LayoutDashboard, Sliders } from 'lucide-react';
+import { LogOut, LogIn, Server, Film, Zap, LayoutDashboard, Sliders, Sun, Moon, Sword } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
@@ -27,16 +27,43 @@ import AIPage from './Pages/AIPage';
 import LabPage from './Pages/LabPage';
 import ChaosPage from './Pages/ChaosPage';
 import ControlsPage from './Pages/ControlsPage';
+import MinecraftPage from './Pages/MinecraftPage';
+
+function MediaAndTorrentsPage() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 36 }}>
+      <div>
+        <div className="j-section-label" style={{ marginBottom: 16 }}>Torrents</div>
+        <TorrentsPage />
+      </div>
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 36 }}>
+        <div className="j-section-label" style={{ marginBottom: 16 }}>Media Queue & Upcoming</div>
+        <MediaPage />
+      </div>
+    </div>
+  );
+}
+
+function useTheme() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    return (localStorage.getItem('jojeco_theme') as 'dark' | 'light') || 'dark';
+  });
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('jojeco_theme', theme);
+  }, [theme]);
+  const toggle = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+  return { theme, toggle };
+}
 
 const NAV = [
-  { id: 'lab',      label: 'Lab',      href: '/',         icon: LayoutDashboard },
-  { id: 'services', label: 'Services', href: '/services', icon: Server },
-  { id: 'torrents', label: 'Torrents', href: '/torrents', icon: Download },
-  { id: 'docker',   label: 'Docker',   href: '/docker',   icon: Container },
-  { id: 'media',    label: 'Media',    href: '/media',    icon: Film },
-  { id: 'ai',       label: 'AI',       href: '/ai',       icon: Bot },
-  { id: 'chaos',    label: 'Chaos',    href: '/chaos',    icon: Zap },
-  { id: 'controls', label: 'Controls', href: '/controls', icon: Sliders },
+  { id: 'lab',       label: 'Lab',       href: '/',          icon: LayoutDashboard },
+  { id: 'services',  label: 'Services',  href: '/services',  icon: Server },
+  { id: 'media',     label: 'Media',     href: '/media',     icon: Film },
+  { id: 'controls',  label: 'Controls',  href: '/controls',  icon: Sliders },
+  { id: 'minecraft', label: 'Minecraft', href: '/minecraft', icon: Sword },
+  { id: 'chaos',     label: 'Chaos',     href: '/chaos',     icon: Zap },
 ];
 
 
@@ -51,7 +78,7 @@ function useMediaQuery(query: string) {
   return matches;
 }
 
-function IconNav() {
+function IconNav({ theme, onToggleTheme }: { theme: string; onToggleTheme: () => void }) {
   const { currentUser, logout } = useAuth();
   const location = useLocation();
   const activeId = NAV.find(n => n.href === location.pathname)?.id ?? 'lab';
@@ -79,6 +106,15 @@ function IconNav() {
 
       <div className="j-icon-nav-spacer" />
 
+      {/* Theme toggle */}
+      <button
+        onClick={onToggleTheme}
+        className="j-icon-btn"
+        data-label={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+      >
+        {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+      </button>
+
       {/* Auth */}
       {currentUser ? (
         <button
@@ -100,7 +136,7 @@ function IconNav() {
   );
 }
 
-function MobileHeader() {
+function MobileHeader({ theme, onToggleTheme }: { theme: string; onToggleTheme: () => void }) {
   const location = useLocation();
   const activeLabel = NAV.find(n => n.href === location.pathname)?.label ?? 'Lab';
   return (
@@ -110,7 +146,9 @@ function MobileHeader() {
         Joje<span style={{ color: 'var(--accent)' }}>Co</span>
       </div>
       <span className="j-mobile-page-title">{activeLabel}</span>
-      <div style={{ width: 22 }} />
+      <button onClick={onToggleTheme} style={{ background: 'none', border: 'none', color: 'var(--t3)', padding: 4, cursor: 'pointer' }}>
+        {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+      </button>
     </header>
   );
 }
@@ -150,6 +188,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
   const { currentUser } = useAuth();
   const location = useLocation();
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const { theme, toggle: toggleTheme } = useTheme();
 
   if (location.pathname === '/login' || location.pathname === '/birthday') {
     return <>{children}</>;
@@ -158,7 +197,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
   if (isMobile) {
     return (
       <div className="j-shell-mobile">
-        <MobileHeader />
+        <MobileHeader theme={theme} onToggleTheme={toggleTheme} />
         {!currentUser && <GuestBanner />}
         <main className="j-mobile-content">{children}</main>
         <BottomNav />
@@ -168,7 +207,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="j-shell">
-      <IconNav />
+      <IconNav theme={theme} onToggleTheme={toggleTheme} />
       <main className="j-main">
         {!currentUser && <GuestBanner />}
         <div className="j-content">{children}</div>
@@ -187,12 +226,13 @@ function App() {
             <Route path="/birthday" element={<Birthday />} />
             <Route path="/"         element={<ProtectedRoute><ErrorBoundary><LabPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/services" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/torrents" element={<ProtectedRoute><TorrentsPage /></ProtectedRoute>} />
+            <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPage /></ProtectedRoute>} />
             <Route path="/docker"   element={<ProtectedRoute><DockerPage /></ProtectedRoute>} />
-            <Route path="/media"    element={<ProtectedRoute><MediaPage /></ProtectedRoute>} />
+            <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPage /></ProtectedRoute>} />
             <Route path="/ai"       element={<ProtectedRoute><AIPage /></ProtectedRoute>} />
             <Route path="/chaos"    element={<ChaosPage />} />
-            <Route path="/controls" element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/minecraft"  element={<ProtectedRoute><ErrorBoundary><MinecraftPage /></ErrorBoundary></ProtectedRoute>} />
           </Routes>
         </PageShell>
       </AuthProvider>

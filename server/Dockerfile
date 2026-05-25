@@ -2,7 +2,7 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache openssh-client
+RUN apk add --no-cache openssh-client bash curl gzip docker-cli
 
 COPY package*.json ./
 RUN npm ci --only=production

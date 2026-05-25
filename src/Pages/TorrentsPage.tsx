@@ -90,7 +90,7 @@ export default function TorrentsPage() {
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 5000); return () => clearInterval(id); }, [refresh]);
 
-  const switchTab = (t: Tab) => { setTab(t); setSelected(new Set()); };
+  const switchTab = (t: Tab) => { setTab(t); setSelected(new Set()); setPage(1); };
 
   const act = async (action: string, hashes: string[], extra?: Record<string, unknown>) => {
     const h = { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' };
@@ -119,6 +119,11 @@ export default function TorrentsPage() {
   const tabData: Record<Tab, Torrent[]> = { active: activeTorrents, done: doneTorrents, error: errorTorrents };
   const current = tabData[tab];
   const sel = Array.from(selected).filter(h => current.some(t => t.hash === h));
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(5);
+  const pageStart = (page - 1) * perPage;
+  const pageItems = current.slice(pageStart, pageStart + perPage);
+  const pages = Math.ceil(current.length / perPage);
 
   if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--t3)', fontSize: 13 }}>Loading...</div>;
   if (error) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--err)', fontSize: 13 }}>{error}</div>;
@@ -183,6 +188,12 @@ export default function TorrentsPage() {
 
       {/* Toolbar */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        <select value={perPage} onChange={e => { setPerPage(Number(e.target.value)); setPage(1); }}
+          style={{ fontSize: 11, padding: '4px 6px', borderRadius: 5, border: '1px solid var(--line)', background: 'var(--raised)', color: 'var(--t2)', cursor: 'pointer' }}>
+          <option value={5}>5</option>
+          <option value={10}>10</option>
+          <option value={25}>25</option>
+        </select>
         {!isGuest && (
           <button onClick={() => setShowAdd(v => !v)}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'var(--accent)', color: '#fff', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
@@ -239,7 +250,7 @@ export default function TorrentsPage() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {current.map(t => (
+          {pageItems.map(t => (
             <div key={t.hash} onClick={() => toggle(t.hash)} className="j-panel"
               style={{ padding: 14, cursor: 'pointer', transition: 'border-color 120ms',
                 borderColor: selected.has(t.hash) ? 'var(--accent)' : t.state === 'error' ? 'rgba(244,63,94,0.3)' : 'var(--line)' }}>
@@ -279,6 +290,18 @@ export default function TorrentsPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {pages > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center', marginTop: 8 }}>
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+            style={{ padding: '3px 8px', fontSize: 11, borderRadius: 5, border: '1px solid var(--line)', background: 'var(--raised)', color: page === 1 ? 'var(--t3)' : 'var(--t2)', cursor: page === 1 ? 'default' : 'pointer' }}>‹</button>
+          {Array.from({ length: pages }, (_, i) => i + 1).map(p => (
+            <button key={p} onClick={() => setPage(p)}
+              style={{ padding: '3px 8px', fontSize: 11, borderRadius: 5, border: `1px solid ${p === page ? 'var(--accent-border)' : 'var(--line)'}`, background: p === page ? 'var(--accent-dim)' : 'var(--raised)', color: p === page ? 'var(--accent)' : 'var(--t2)', cursor: 'pointer' }}>{p}</button>
+          ))}
+          <button onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page === pages}
+            style={{ padding: '3px 8px', fontSize: 11, borderRadius: 5, border: '1px solid var(--line)', background: 'var(--raised)', color: page === pages ? 'var(--t3)' : 'var(--t2)', cursor: page === pages ? 'default' : 'pointer' }}>›</button>
         </div>
       )}
     </div>

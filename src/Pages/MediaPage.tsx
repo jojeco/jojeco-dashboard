@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Tv, Film, RefreshCw, Clock, CheckCircle, AlertCircle, Disc, Calendar } from 'lucide-react';
+import { Tv, Film, RefreshCw, Clock, CheckCircle, AlertCircle, Disc, Calendar, Cpu, Zap } from 'lucide-react';
 import { getToken } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -56,6 +56,111 @@ function Progress({ item }: { item: QueueItem }) {
       </div>
       <div className="j-bar-track">
         <div className="j-bar-fill" style={{ width: `${pct}%`, background: 'var(--accent)' }} />
+      </div>
+    </div>
+  );
+}
+
+interface TdarrWorker {
+  node: string; type: string; status: string;
+  file: string; percentage: number; fps: number;
+}
+interface TdarrStatus {
+  total: number; transcoded: number; transcodeQueue: number;
+  noAction: number; transcodeErrors: number; healthErrors: number; healthOk: number;
+  tdarrScore: number; sizeDiffGB: number; workers: TdarrWorker[];
+}
+
+function workerTypeLabel(type: string) {
+  if (type === 'transcodegpu') return { label: 'GPU Transcode', color: '#a78bfa' };
+  if (type === 'transcodecpu') return { label: 'CPU Transcode', color: 'var(--warn)' };
+  if (type === 'healthcheckgpu') return { label: 'GPU Health', color: 'var(--accent)' };
+  return { label: 'CPU Health', color: 'var(--t3)' };
+}
+
+function TdarrPanel({ tdarr }: { tdarr: TdarrStatus | null }) {
+  if (!tdarr) return (
+    <div className="j-panel" style={{ padding: 16, opacity: 0.5, fontSize: 12, color: 'var(--t3)', textAlign: 'center' }}>
+      Tdarr unavailable
+    </div>
+  );
+
+  const score = tdarr.tdarrScore ?? 0;
+  const activeWorkers = tdarr.workers.filter(w => w.status === 'Execute' || w.status === 'Processing' || w.status === 'Scanning');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Stats row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+        {[
+          { label: 'Library Score', value: `${score.toFixed(1)}%`, color: score >= 90 ? 'var(--ok)' : score >= 70 ? 'var(--warn)' : 'var(--err)' },
+          { label: 'Transcoded', value: tdarr.transcoded.toLocaleString(), color: 'var(--ok)' },
+          { label: tdarr.transcodeQueue > 0 ? 'In Queue' : 'Errors', value: tdarr.transcodeQueue > 0 ? tdarr.transcodeQueue.toLocaleString() : tdarr.transcodeErrors.toLocaleString(), color: tdarr.transcodeQueue > 0 ? 'var(--accent)' : tdarr.transcodeErrors > 0 ? 'var(--err)' : 'var(--t3)' },
+          { label: 'Space Saved', value: tdarr.sizeDiffGB > 0 ? `${tdarr.sizeDiffGB.toFixed(0)} GB` : '—', color: tdarr.sizeDiffGB > 0 ? 'var(--ok)' : 'var(--t3)' },
+        ].map(s => (
+          <div key={s.label} className="j-panel" style={{ padding: '8px 10px', textAlign: 'center' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: s.color, fontFamily: 'Geist Mono, monospace' }}>{s.value}</div>
+            <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Progress bar */}
+      <div className="j-panel" style={{ padding: '10px 14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--t3)', marginBottom: 6, fontFamily: 'Geist Mono, monospace' }}>
+          <span>HEVC Coverage</span>
+          <span style={{ color: 'var(--t1)', fontWeight: 600 }}>{tdarr.noAction.toLocaleString()} / {tdarr.total.toLocaleString()} — {score.toFixed(1)}%</span>
+        </div>
+        <div className="j-bar-track">
+          <div className="j-bar-fill" style={{ width: `${score}%`, background: score >= 90 ? 'var(--ok)' : 'var(--warn)', transition: 'width 600ms cubic-bezier(0.16,1,0.3,1)' }} />
+        </div>
+        <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+          {[
+            { label: 'Already HEVC', value: tdarr.noAction, color: 'var(--t3)' },
+            { label: 'Transcoded by Tdarr', value: tdarr.transcoded, color: 'var(--ok)' },
+            { label: 'Errors', value: tdarr.transcodeErrors, color: tdarr.transcodeErrors > 0 ? 'var(--err)' : 'var(--t3)' },
+            { label: 'Health errors', value: tdarr.healthErrors, color: tdarr.healthErrors > 0 ? 'var(--warn)' : 'var(--t3)' },
+          ].map(s => (
+            <div key={s.label} style={{ fontSize: 10, color: s.color }}>
+              <span style={{ fontWeight: 600, fontFamily: 'Geist Mono, monospace' }}>{s.value.toLocaleString()}</span>
+              <span style={{ color: 'var(--t3)', marginLeft: 3 }}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Active workers */}
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--t2)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Cpu size={11} style={{ color: 'var(--t3)' }} />
+          Workers
+          <span style={{ fontWeight: 400, color: 'var(--t3)' }}>({activeWorkers.length} active)</span>
+        </div>
+        {activeWorkers.length === 0 ? (
+          <div style={{ fontSize: 11, color: 'var(--t3)', padding: '8px 0' }}>No active workers</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {activeWorkers.map((w, i) => {
+              const { label, color } = workerTypeLabel(w.type);
+              return (
+                <div key={i} className="j-panel" style={{ padding: '8px 12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, color, padding: '1px 6px', borderRadius: 4, background: `${color}18` }}>{label}</span>
+                    <span style={{ fontSize: 10, color: 'var(--t3)' }}>{w.node}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace', display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <Zap size={9} />{w.fps} fps
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--t2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 4 }}>{w.file || '—'}</div>
+                  <div className="j-bar-track" style={{ height: 3 }}>
+                    <div className="j-bar-fill" style={{ width: `${w.percentage}%`, background: color, transition: 'width 1s linear' }} />
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 3, textAlign: 'right', fontFamily: 'Geist Mono, monospace' }}>{w.percentage}%</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -164,6 +269,40 @@ function UpcomingCard({ item }: { item: UpcomingItem }) {
   );
 }
 
+function Paginator({ page, total, perPage, onPage }: { page: number; total: number; perPage: number; onPage: (p: number) => void }) {
+  const pages = Math.ceil(total / perPage);
+  if (pages <= 1) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center', marginTop: 8 }}>
+      <button onClick={() => onPage(page - 1)} disabled={page === 1}
+        style={{ padding: '3px 8px', fontSize: 11, borderRadius: 5, border: '1px solid var(--line)', background: 'var(--raised)', color: page === 1 ? 'var(--t3)' : 'var(--t2)', cursor: page === 1 ? 'default' : 'pointer' }}>
+        ‹
+      </button>
+      {Array.from({ length: pages }, (_, i) => i + 1).map(p => (
+        <button key={p} onClick={() => onPage(p)}
+          style={{ padding: '3px 8px', fontSize: 11, borderRadius: 5, border: `1px solid ${p === page ? 'var(--accent-border)' : 'var(--line)'}`, background: p === page ? 'var(--accent-dim)' : 'var(--raised)', color: p === page ? 'var(--accent)' : 'var(--t2)', cursor: 'pointer' }}>
+          {p}
+        </button>
+      ))}
+      <button onClick={() => onPage(page + 1)} disabled={page === pages}
+        style={{ padding: '3px 8px', fontSize: 11, borderRadius: 5, border: '1px solid var(--line)', background: 'var(--raised)', color: page === pages ? 'var(--t3)' : 'var(--t2)', cursor: page === pages ? 'default' : 'pointer' }}>
+        ›
+      </button>
+    </div>
+  );
+}
+
+function PerPageSelect({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <select value={value} onChange={e => onChange(Number(e.target.value))}
+      style={{ fontSize: 11, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--line)', background: 'var(--raised)', color: 'var(--t2)', cursor: 'pointer' }}>
+      <option value={5}>5</option>
+      <option value={10}>10</option>
+      <option value={25}>25</option>
+    </select>
+  );
+}
+
 export default function MediaPage() {
   const { currentUser } = useAuth();
   const isGuest = !currentUser;
@@ -173,6 +312,11 @@ export default function MediaPage() {
   const [activeTab, setActiveTab] = useState<'all' | 'sonarr' | 'radarr'>('all');
   const [upcomingTab, setUpcomingTab] = useState<'all' | 'episodes' | 'movies'>('all');
   const [rip, setRip] = useState<RipStatus>({ status: 'idle', album: '', track: 0, total: 0, percent: 0, trackName: '', updatedAt: '' });
+  const [tdarr, setTdarr] = useState<TdarrStatus | null>(null);
+  const [queuePage, setQueuePage] = useState(1);
+  const [queuePerPage, setQueuePerPage] = useState(5);
+  const [upcomingPage, setUpcomingPage] = useState(1);
+  const [upcomingPerPage, setUpcomingPerPage] = useState(5);
 
   const refresh = useCallback(async () => {
     const h = { Authorization: `Bearer ${getToken()}` };
@@ -195,18 +339,29 @@ export default function MediaPage() {
     } catch { }
   }, []);
 
+  const pollTdarr = useCallback(async () => {
+    const h = { Authorization: `Bearer ${getToken()}` };
+    try {
+      const r = await fetch(`${API}/tdarr/status`, { headers: h });
+      if (r.ok) setTdarr(await r.json());
+    } catch { }
+  }, []);
+
   useEffect(() => { refresh(); const id = setInterval(refresh, 15000); return () => clearInterval(id); }, [refresh]);
   useEffect(() => { pollRip(); const id = setInterval(pollRip, 3000); return () => clearInterval(id); }, [pollRip]);
+  useEffect(() => { pollTdarr(); const id = setInterval(pollTdarr, 15000); return () => clearInterval(id); }, [pollTdarr]);
 
   const sonarrItems = queue.sonarr.map(item => ({ ...item, _type: 'sonarr' as const }));
   const radarrItems = queue.radarr.map(item => ({ ...item, _type: 'radarr' as const }));
   const allItems = [...sonarrItems, ...radarrItems];
   const rawItems = activeTab === 'sonarr' ? sonarrItems : activeTab === 'radarr' ? radarrItems : allItems;
-  const displayItems = [...rawItems].sort((a, b) => {
+  const sortedItems = [...rawItems].sort((a, b) => {
     const pctA = a.size ? (a.size - a.sizeleft) / a.size : 0;
     const pctB = b.size ? (b.size - b.sizeleft) / b.size : 0;
     return pctB - pctA;
   });
+  const queueStart = (queuePage - 1) * queuePerPage;
+  const displayItems = sortedItems.slice(queueStart, queueStart + queuePerPage);
 
   const sortedEpisodes = [...upcoming.episodes].sort((a, b) => new Date(a.airDate).getTime() - new Date(b.airDate).getTime());
   const sortedMovies = [...upcoming.movies].sort((a, b) => {
@@ -214,7 +369,7 @@ export default function MediaPage() {
     const db = b.digitalRelease || b.physicalRelease || b.inCinemas || '';
     return new Date(da).getTime() - new Date(db).getTime();
   });
-  const upcomingItems: UpcomingItem[] = upcomingTab === 'episodes'
+  const allUpcomingItems: UpcomingItem[] = upcomingTab === 'episodes'
     ? sortedEpisodes
     : upcomingTab === 'movies'
       ? sortedMovies
@@ -224,102 +379,137 @@ export default function MediaPage() {
             const db = b.type === 'episode' ? b.airDate : (b.digitalRelease || b.physicalRelease || b.inCinemas || '');
             return new Date(da).getTime() - new Date(db).getTime();
           });
+  const upcomingStart = (upcomingPage - 1) * upcomingPerPage;
+  const upcomingItems = allUpcomingItems.slice(upcomingStart, upcomingStart + upcomingPerPage);
 
   if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--t3)', fontSize: 13 }}>Loading...</div>;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {isGuest && (
         <div style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
           <strong style={{ color: 'var(--t1)' }}>Media</strong> — download queue and upcoming releases from Sonarr and Radarr.
         </div>
       )}
-      <RipCard rip={rip} />
 
-      {/* Upcoming */}
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Calendar size={13} style={{ color: 'var(--t3)' }} />
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Upcoming</span>
-          <div style={{ marginLeft: 'auto' }}>
-            <TabBar
-              tabs={[
-                { key: 'all' as const,      label: `All (${sortedEpisodes.length + sortedMovies.length})` },
-                { key: 'episodes' as const, label: `📺 ${sortedEpisodes.length}` },
-                { key: 'movies' as const,   label: `🎬 ${sortedMovies.length}` },
-              ]}
-              active={upcomingTab}
-              onChange={setUpcomingTab}
-            />
+      {/* Top row: Rip/Torrents | Transcoder */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            Rip Station
           </div>
+          <RipCard rip={rip} />
         </div>
-        {upcomingItems.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '32px 0', fontSize: 12, color: 'var(--t3)' }}>Nothing upcoming in the next 45 days</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {upcomingItems.map(item => (
-              <UpcomingCard key={`${item.type}-${item.id}`} item={item} />
-            ))}
+
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Cpu size={13} style={{ color: 'var(--t3)' }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Transcoder</span>
+            {tdarr && tdarr.workers.filter(w => w.status === 'Execute' || w.status === 'Processing').length > 0 && (
+              <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(20,184,166,0.12)', color: 'var(--accent)', fontWeight: 600 }}>
+                ACTIVE
+              </span>
+            )}
           </div>
-        )}
+          <TdarrPanel tdarr={tdarr} />
+        </div>
       </div>
 
-      {/* Download queue */}
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Download Queue</span>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <TabBar
-              tabs={[
-                { key: 'all' as const,    label: `All (${allItems.length})` },
-                { key: 'sonarr' as const, label: `📺 ${sonarrItems.length}` },
-                { key: 'radarr' as const, label: `🎬 ${radarrItems.length}` },
-              ]}
-              active={activeTab}
-              onChange={setActiveTab}
-            />
-            <button onClick={refresh} style={{ padding: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)' }}>
-              <RefreshCw size={12} />
-            </button>
+      {/* Bottom row: Download Queue | Upcoming */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+        {/* Download Queue */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Download Queue</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <PerPageSelect value={queuePerPage} onChange={n => { setQueuePerPage(n); setQueuePage(1); }} />
+              <TabBar
+                tabs={[
+                  { key: 'all' as const,    label: `All (${sortedItems.length})` },
+                  { key: 'sonarr' as const, label: `📺 ${sonarrItems.length}` },
+                  { key: 'radarr' as const, label: `🎬 ${radarrItems.length}` },
+                ]}
+                active={activeTab}
+                onChange={t => { setActiveTab(t); setQueuePage(1); }}
+              />
+              <button onClick={refresh} style={{ padding: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)' }}>
+                <RefreshCw size={12} />
+              </button>
+            </div>
           </div>
+          {sortedItems.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--t3)' }}>
+              <CheckCircle size={36} style={{ margin: '0 auto 8px', opacity: 0.2 }} />
+              <p style={{ fontSize: 12 }}>Queue is empty</p>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {displayItems.map(item => {
+                  const isShow = item._type === 'sonarr';
+                  const title = isShow
+                    ? `${item.series?.title || 'Unknown'} — S${String(item.episode?.seasonNumber || 0).padStart(2, '0')}E${String(item.episode?.episodeNumber || 0).padStart(2, '0')} ${item.episode?.title || ''}`
+                    : `${item.movie?.title || item.title}${item.movie?.year ? ` (${item.movie.year})` : ''}`;
+                  return (
+                    <div key={`${item._type}-${item.id}`} className="j-panel" style={{ padding: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          {isShow ? <Tv size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} /> : <Film size={13} style={{ color: '#a78bfa', flexShrink: 0 }} />}
+                          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+                        </div>
+                        <div style={{ flexShrink: 0 }}>{statusBadge(item.status)}</div>
+                      </div>
+                      <Progress item={item} />
+                      {item.timeleft && item.timeleft !== '00:00:00' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, fontSize: 11, color: 'var(--t3)' }}>
+                          <Clock size={11} /><span>{item.timeleft} remaining</span>
+                        </div>
+                      )}
+                      {item.trackedDownloadStatus && item.trackedDownloadStatus !== 'Ok' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: 'var(--warn)' }}>
+                          <AlertCircle size={11} /><span>{item.trackedDownloadStatus}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <Paginator page={queuePage} total={sortedItems.length} perPage={queuePerPage} onPage={setQueuePage} />
+            </>
+          )}
         </div>
-        {displayItems.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--t3)' }}>
-            <CheckCircle size={36} style={{ margin: '0 auto 8px', opacity: 0.2 }} />
-            <p style={{ fontSize: 12 }}>Queue is empty</p>
+
+        {/* Upcoming */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Calendar size={13} style={{ color: 'var(--t3)' }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Upcoming</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <PerPageSelect value={upcomingPerPage} onChange={n => { setUpcomingPerPage(n); setUpcomingPage(1); }} />
+              <TabBar
+                tabs={[
+                  { key: 'all' as const,      label: `All (${sortedEpisodes.length + sortedMovies.length})` },
+                  { key: 'episodes' as const, label: `📺 ${sortedEpisodes.length}` },
+                  { key: 'movies' as const,   label: `🎬 ${sortedMovies.length}` },
+                ]}
+                active={upcomingTab}
+                onChange={t => { setUpcomingTab(t); setUpcomingPage(1); }}
+              />
+            </div>
           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {displayItems.map(item => {
-              const isShow = item._type === 'sonarr';
-              const title = isShow
-                ? `${item.series?.title || 'Unknown'} — S${String(item.episode?.seasonNumber || 0).padStart(2, '0')}E${String(item.episode?.episodeNumber || 0).padStart(2, '0')} ${item.episode?.title || ''}`
-                : `${item.movie?.title || item.title}${item.movie?.year ? ` (${item.movie.year})` : ''}`;
-              return (
-                <div key={`${item._type}-${item.id}`} className="j-panel" style={{ padding: 14 }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                      {isShow ? <Tv size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} /> : <Film size={13} style={{ color: '#a78bfa', flexShrink: 0 }} />}
-                      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
-                    </div>
-                    <div style={{ flexShrink: 0 }}>{statusBadge(item.status)}</div>
-                  </div>
-                  <Progress item={item} />
-                  {item.timeleft && item.timeleft !== '00:00:00' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, fontSize: 11, color: 'var(--t3)' }}>
-                      <Clock size={11} /><span>{item.timeleft} remaining</span>
-                    </div>
-                  )}
-                  {item.trackedDownloadStatus && item.trackedDownloadStatus !== 'Ok' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: 'var(--warn)' }}>
-                      <AlertCircle size={11} /><span>{item.trackedDownloadStatus}</span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+          {allUpcomingItems.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '32px 0', fontSize: 12, color: 'var(--t3)' }}>Nothing upcoming in the next 45 days</div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {upcomingItems.map(item => (
+                  <UpcomingCard key={`${item.type}-${item.id}`} item={item} />
+                ))}
+              </div>
+              <Paginator page={upcomingPage} total={allUpcomingItems.length} perPage={upcomingPerPage} onPage={setUpcomingPage} />
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

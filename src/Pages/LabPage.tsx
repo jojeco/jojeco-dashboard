@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, Bell, CheckCircle, AlertTriangle, XCircle, Shield, HardDrive, Activity } from 'lucide-react';
 import { getToken } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
 interface Disk { label: string; used: number; size: number; percent: number }
-interface Gpu  { name: string; temp: number | null; utilization: number | null; mem_percent: number | null }
+interface Gpu  { name: string; temp: number | null; utilization: number | null; mem_percent: number | null; nvenc_util: number | null }
 interface Machine {
   id: string; name: string; host: string; role: string; os: string;
   always_on: boolean; gpu_label: string | null; online: boolean;
@@ -15,11 +15,15 @@ interface Machine {
   temp: number | null;
 }
 interface TempPoint { timestamp: number; cpu_temp: number | null; gpu_temp: number | null }
+interface Process { pid: number; name: string; cpu: number; mem: number }
+interface ProcessList { machine_id: string; processes: Process[] }
 interface LabOverview {
   machines: Machine[];
   status: 'healthy' | 'degraded' | 'critical';
   issues: Array<{ severity: string; message: string }>;
   services: Record<string, boolean>;
+  lvmThinPool: number | null;
+  claudeRunning: boolean | null;
 }
 interface OllamaNode {
   id: string; name: string; host: string; role: string; online: boolean;
@@ -31,6 +35,11 @@ interface FleetData {
 }
 interface ActiveSession { id: string; active: Array<{ name: string; size_vram?: number }> }
 interface DockerContainer { name: string; state: string; health: string; status: string }
+interface NtfyAlert { id: string; time: number; title: string | null; message: string; priority: number; tags: string[] }
+interface AutomationJob { id: string; label: string; schedule: string; status: string; lastRun: string | null; lastLines: string[] }
+interface AdGuardStats { totalQueries: number; blockedQueries: number; blockedPercent: string; avgProcessingTime: string | null }
+interface BackupStatus { lastRun: string | null; status: 'ok' | 'error' | 'unknown' | 'never'; message: string }
+interface HealthSummary { up: number; down: number; total: number; overallStatus: 'healthy' | 'degraded' | 'critical' }
 
 function fmtBytes(bytes: number) {
   if (bytes >= 1e12) return (bytes / 1e12).toFixed(1) + 'T';
@@ -101,7 +110,7 @@ function RingGauge({ pct, warn = 65, crit = 85, label, sublabel, size = 68 }: {
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
       <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
         <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', display: 'block' }}>
-          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={sw} />
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--line-2)" strokeWidth={sw} />
           <circle
             cx={size/2} cy={size/2} r={r} fill="none"
             stroke={color} strokeWidth={sw}
@@ -163,7 +172,10 @@ function TempSparkline({ history }: { history: TempPoint[] }) {
 }
 
 // ─── Machine Card (ring gauge layout) ────────────────────────────────────────
-function MachineCard({ m, history, isMobile }: { m: Machine; history: TempPoint[]; isMobile: boolean }) {
+function MachineCard({ m, history, isMobile, processes, onExpand }: {
+  m: Machine; history: TempPoint[]; isMobile: boolean;
+  processes: Process[]; onExpand: (id: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const totalDisk = (m.disks ?? []).reduce((s, d) => s + d.size, 0);
   const usedDisk  = (m.disks ?? []).reduce((s, d) => s + d.used, 0);
@@ -196,7 +208,7 @@ function MachineCard({ m, history, isMobile }: { m: Machine; history: TempPoint[
           )}
           {!m.online && <span className="j-chip">Offline</span>}
           {m.online && (
-            <button onClick={() => setOpen(o => !o)}
+            <button onClick={() => { const next = !open; setOpen(next); if (next) onExpand(m.id); }}
               style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--line)', background: 'var(--raised)', color: 'var(--t3)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 120ms' }}
               onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--t1)'; }}
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--t3)'; }}>
@@ -220,6 +232,9 @@ function MachineCard({ m, history, isMobile }: { m: Machine; history: TempPoint[
           )}
           {m.gpu && !isIntegrated(m.gpu.name ?? '') && m.gpu.utilization != null && (
             <RingGauge pct={m.gpu.utilization} label="GPU" warn={80} crit={95} size={isMobile ? 60 : 68} />
+          )}
+          {m.gpu && !isIntegrated(m.gpu.name ?? '') && m.gpu.nvenc_util != null && (
+            <RingGauge pct={m.gpu.nvenc_util} label="NVENC" warn={70} crit={90} size={isMobile ? 60 : 68} />
           )}
         </div>
       )}
@@ -247,8 +262,10 @@ function MachineCard({ m, history, isMobile }: { m: Machine; history: TempPoint[
           {m.gpu && !isIntegrated(m.gpu.name ?? '') && (
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>GPU · {m.gpu.name}</div>
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
                 {m.gpu.mem_percent != null && <RingGauge pct={m.gpu.mem_percent} label="VRAM" warn={80} crit={95} size={56} />}
+                {m.gpu.utilization != null && <RingGauge pct={m.gpu.utilization} label="3D" warn={80} crit={95} size={56} />}
+                {m.gpu.nvenc_util != null && <RingGauge pct={m.gpu.nvenc_util} label="NVENC" warn={70} crit={90} size={56} />}
                 {m.gpu.temp != null && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                     <span style={{ fontSize: 24, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: tempColor(m.gpu.temp) }}>{m.gpu.temp}°</span>
@@ -262,6 +279,23 @@ function MachineCard({ m, history, isMobile }: { m: Machine; history: TempPoint[
             <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Temperature (24h)</div>
             <TempSparkline history={history} />
           </div>
+          {processes && processes.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Top Processes</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 52px 52px', gap: 4, fontSize: 9, color: 'var(--t3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', paddingBottom: 4, borderBottom: '1px solid var(--line)' }}>
+                  <span>Process</span><span style={{ textAlign: 'right' }}>CPU%</span><span style={{ textAlign: 'right' }}>MEM%</span>
+                </div>
+                {processes.slice(0, 8).map(p => (
+                  <div key={p.pid} style={{ display: 'grid', gridTemplateColumns: '1fr 52px 52px', gap: 4, fontSize: 10 }}>
+                    <span style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--t2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                    <span style={{ fontFamily: 'Geist Mono, monospace', textAlign: 'right', color: p.cpu > 20 ? 'var(--warn)' : 'var(--t2)' }}>{p.cpu.toFixed(1)}</span>
+                    <span style={{ fontFamily: 'Geist Mono, monospace', textAlign: 'right', color: p.mem > 20 ? 'var(--warn)' : 'var(--t2)' }}>{p.mem.toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -329,6 +363,13 @@ function AINodeCard({ node, sessions }: { node: OllamaNode; sessions: ActiveSess
 function rc<T>(k: string): T | null { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
 function wc(k: string, v: unknown)  { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 
+// ─── LAN/WAN detection ───────────────────────────────────────────────────────
+function isLan(): boolean {
+  const h = window.location.hostname;
+  return h === 'localhost' || h.startsWith('192.168.') || h.startsWith('10.') || h.startsWith('172.');
+}
+const POLL_MS = isLan() ? 5000 : 20000;
+
 // ─── LabPage ──────────────────────────────────────────────────────────────────
 export default function LabPage() {
   const [data, setData]       = useState<LabOverview | null>(() => rc('cache_lab_overview'));
@@ -337,8 +378,15 @@ export default function LabPage() {
   const [, setCont] = useState<DockerContainer[]>(() => rc<DockerContainer[]>('cache_lab_containers') ?? []);
   const [history, setHistory] = useState<Record<string, TempPoint[]>>({});
   const [sessions, setSess]   = useState<ActiveSession[]>([]);
+  const [alerts, setAlerts]   = useState<NtfyAlert[]>(() => rc<NtfyAlert[]>('cache_lab_alerts') ?? []);
+  const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
+  const [automation, setAutomation] = useState<AutomationJob[]>([]);
+  const [adguard, setAdguard] = useState<AdGuardStats | null>(null);
+  const [backup, setBackup] = useState<BackupStatus | null>(null);
+  const [healthSummary, setHealthSummary] = useState<HealthSummary | null>(null);
   const [loading, setLoading] = useState(() => !rc('cache_lab_overview'));
   const [lastRefresh, setLR]  = useState(new Date());
+  const [processes, setProcesses] = useState<Record<string, Process[]>>({});
   const isMobileRef = useRef(typeof window !== 'undefined' && window.innerWidth < 768);
 
   const fetchAll = useCallback(async () => {
@@ -347,12 +395,24 @@ export default function LabPage() {
     isMobileRef.current = window.innerWidth < 768;
     const hrs = isMobileRef.current ? '3' : '24';
 
-    const [a, b, c, d, e] = await Promise.allSettled([
-      fetch('/api/lab/overview',    { headers: h }).then(r => r.ok ? r.json() : null),
-      fetch('/api/ops/fleet',       { headers: h }).then(r => r.ok ? r.json() : null),
-      fetch('/api/docker/containers?all=1', { headers: h }).then(r => r.ok ? r.json() : null),
-      fetch(`/api/lab/temps/history?hours=${hrs}`, { headers: h }).then(r => r.ok ? r.json() : null),
-      fetch('/api/lab/ollama/ps',   { headers: h }).then(r => r.ok ? r.json() : null),
+    function af(url: string) {
+      return fetch(url, { headers: h }).then(r => {
+        if (r.status === 401) { localStorage.removeItem('auth_token'); window.location.href = '/login'; }
+        return r.ok ? r.json() : null;
+      });
+    }
+
+    const [a, b, c, d, e, f, g, ag, bk, hs] = await Promise.allSettled([
+      af('/api/lab/overview'),
+      af('/api/ops/fleet'),
+      af('/api/docker/containers?all=1'),
+      af(`/api/lab/temps/history?hours=${hrs}`),
+      af('/api/lab/ollama/ps'),
+      af('/api/alerts/recent?limit=10'),
+      af('/api/automation/status'),
+      af('/api/adguard/stats'),
+      af('/api/backup-status'),
+      af('/api/health/services'),
     ]);
 
     if (a.status === 'fulfilled' && a.value) { setData(a.value); wc('cache_lab_overview', a.value); }
@@ -365,11 +425,40 @@ export default function LabPage() {
     }
     if (d.status === 'fulfilled' && d.value) setHistory(d.value);
     if (e.status === 'fulfilled' && Array.isArray(e.value)) setSess(e.value);
+    if (f.status === 'fulfilled' && Array.isArray(f.value)) { setAlerts(f.value); wc('cache_lab_alerts', f.value); }
+    if (g.status === 'fulfilled' && Array.isArray(g.value)) setAutomation(g.value);
+    if (ag.status === 'fulfilled' && ag.value) setAdguard(ag.value);
+    if (bk.status === 'fulfilled' && bk.value) setBackup(bk.value);
+    if (hs.status === 'fulfilled' && hs.value) {
+      // API returns either {services:[]} or {serviceId: {status,...}} object map
+      const raw = hs.value;
+      const svcs: Array<{ status: string }> = Array.isArray(raw.services)
+        ? raw.services
+        : Object.values(raw as Record<string, { status: string }>);
+      const up = svcs.filter(s => s.status === 'online').length;
+      const total = svcs.length;
+      const down = total - up;
+      const overallStatus = down === 0 ? 'healthy' : down < Math.ceil(total / 2) ? 'degraded' : 'critical';
+      setHealthSummary({ up, down, total, overallStatus });
+    }
     setLR(new Date());
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchAll(); const id = setInterval(fetchAll, 10000); return () => clearInterval(id); }, [fetchAll]);
+  useEffect(() => { fetchAll(); const id = setInterval(fetchAll, POLL_MS); return () => clearInterval(id); }, [fetchAll]);
+
+  // Process list — separate slower poll (30s), only runs when a card is expanded
+  const fetchProcesses = useCallback(async (machineId: string) => {
+    const h = { Authorization: `Bearer ${getToken()}` };
+    try {
+      const r = await fetch(`/api/lab/processes/${machineId}`, { headers: h });
+      if (r.status === 401) { localStorage.removeItem('auth_token'); window.location.href = '/login'; return; }
+      if (r.ok) {
+        const d: ProcessList = await r.json();
+        setProcesses(prev => ({ ...prev, [machineId]: d.processes }));
+      }
+    } catch {}
+  }, []);
 
   useAuth();
   const ORDER = ['server1','server2','server3','macmini'];
@@ -400,7 +489,7 @@ export default function LabPage() {
       </div>
 
       {/* ── Hero stat row ── */}
-      <div className="j-grid-4 stagger" style={{ marginBottom: 24 }}>
+      <div className="j-grid-5 stagger" style={{ marginBottom: 24 }}>
         {/* Health */}
         <div className="j-stat-tile">
           <div className="j-panel-title" style={{ marginBottom: 8 }}>Status</div>
@@ -422,6 +511,40 @@ export default function LabPage() {
               ))}
             </>
           ) : <div className="j-skeleton" style={{ height: 24, width: 80 }} />}
+        </div>
+
+        {/* LVM Thin Pool */}
+        <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div className="j-panel-title">LVM Thin Pool</div>
+          {data?.lvmThinPool !== undefined ? (
+            <>
+              <div className="j-stat-num" style={{ color: (data.lvmThinPool ?? 0) > 85 ? 'var(--err)' : (data.lvmThinPool ?? 0) > 70 ? 'var(--warn)' : 'var(--ok)' }}>
+                {data.lvmThinPool !== null ? `${data.lvmThinPool.toFixed(1)}%` : '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--t3)' }}>pve/data pool</div>
+              {data.lvmThinPool !== null && (
+                <div style={{ marginTop: 6, background: 'var(--canvas)', borderRadius: 3, height: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.min(data.lvmThinPool, 100)}%`, background: (data.lvmThinPool > 85) ? 'var(--err)' : (data.lvmThinPool > 70) ? 'var(--warn)' : 'var(--ok)', transition: 'width 0.5s' }} />
+                </div>
+              )}
+            </>
+          ) : <div className="j-skeleton" style={{ height: 24, width: 60 }} />}
+        </div>
+
+        {/* Claude Agent */}
+        <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div className="j-panel-title">Claude Agent</div>
+          {data?.claudeRunning !== undefined ? (
+            <>
+              <div className="j-stat-num" style={{ fontSize: 20, color: data.claudeRunning === true ? 'var(--ok)' : data.claudeRunning === false ? 'var(--err)' : 'var(--t3)' }}>
+                {data.claudeRunning === true ? 'Running' : data.claudeRunning === false ? 'Down' : '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--t3)' }}>jojeco-agent service</div>
+              {data.claudeRunning === false && (
+                <div style={{ fontSize: 11, color: 'var(--err)', marginTop: 4 }}>⚠ Grafana alert active</div>
+              )}
+            </>
+          ) : <div className="j-skeleton" style={{ height: 40, width: 60 }} />}
         </div>
 
         {/* Docker */}
@@ -485,6 +608,118 @@ export default function LabPage() {
             </>
           ) : <div className="j-skeleton" style={{ height: 40, width: 60 }} />}
         </div>
+
+      </div>
+
+      {/* ── Alerts / Automation / AdGuard row ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10, marginBottom: 24 }}>
+        {/* Recent Alerts */}
+        <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Bell size={13} style={{ color: 'var(--accent)' }} />
+            <span className="j-panel-title">Recent Alerts</span>
+            <span style={{ fontSize: 10, color: 'var(--t3)', marginLeft: 'auto' }}>{alerts.length}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 180, overflowY: 'auto' }}>
+            {alerts.length === 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--t3)', padding: '4px 0' }}>No recent alerts</div>
+            ) : alerts.slice(0, 8).map(a => {
+              const ago = Math.floor((Date.now() / 1000 - a.time) / 60);
+              const agoStr = ago < 60 ? `${ago}m` : ago < 1440 ? `${Math.floor(ago / 60)}h` : `${Math.floor(ago / 1440)}d`;
+              const prioColor = a.priority >= 4 ? 'var(--err)' : a.priority >= 3 ? 'var(--warn)' : 'var(--t3)';
+              const isExpanded = expandedAlert === a.id;
+              return (
+                <div key={a.id} style={{ borderBottom: '1px solid var(--line)' }}>
+                  <div
+                    onClick={() => setExpandedAlert(isExpanded ? null : a.id)}
+                    style={{ display: 'flex', gap: 6, fontSize: 11, lineHeight: 1.5, padding: '3px 0', cursor: 'pointer', alignItems: 'flex-start' }}
+                  >
+                    <span style={{ color: prioColor, flexShrink: 0, marginTop: 3, fontSize: 8 }}>●</span>
+                    <span style={{ color: 'var(--t2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: isExpanded ? 'normal' : 'nowrap' }}>{a.message}</span>
+                    <span style={{ color: 'var(--t3)', flexShrink: 0, fontSize: 10, fontFamily: 'Geist Mono, monospace', marginLeft: 4 }}>{agoStr}</span>
+                    {isExpanded ? <ChevronDown size={10} style={{ color: 'var(--t3)', flexShrink: 0, marginTop: 2 }} /> : <ChevronRight size={10} style={{ color: 'var(--t3)', flexShrink: 0, marginTop: 2 }} />}
+                  </div>
+                  {isExpanded && (
+                    <div style={{ fontSize: 10, color: 'var(--t2)', background: 'var(--canvas)', borderRadius: 5, padding: '6px 8px', marginBottom: 4, wordBreak: 'break-word', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                      {a.title && <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 3 }}>{a.title}</div>}
+                      {a.message}
+                      {a.tags.length > 0 && (
+                        <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                          {a.tags.map(tag => <span key={tag} style={{ fontSize: 9, background: 'var(--raised)', padding: '1px 5px', borderRadius: 3, color: 'var(--t3)' }}>{tag}</span>)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Automation */}
+        <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CheckCircle size={13} style={{ color: 'var(--ok)' }} />
+            <span className="j-panel-title">Automation</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {automation.length === 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--t3)', padding: '4px 0' }}>Loading...</div>
+            ) : automation.map(job => (
+              <div key={job.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                {job.status === 'ok' ? <CheckCircle size={11} style={{ color: 'var(--ok)', flexShrink: 0 }} />
+                  : job.status === 'error' ? <XCircle size={11} style={{ color: 'var(--err)', flexShrink: 0 }} />
+                  : <AlertTriangle size={11} style={{ color: 'var(--t3)', flexShrink: 0 }} />}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: 'var(--t1)', fontWeight: 500 }}>{job.label}</div>
+                  <div style={{ fontSize: 10, color: 'var(--t3)' }}>{job.schedule}</div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  {job.lastRun ? (
+                    <span style={{ fontSize: 10, fontFamily: 'Geist Mono, monospace', color: job.status === 'error' ? 'var(--err)' : 'var(--t3)' }}>
+                      {new Date(job.lastRun).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 10, color: 'var(--t3)' }}>—</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* AdGuard */}
+        <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Shield size={13} style={{ color: 'var(--accent)' }} />
+            <span className="j-panel-title">AdGuard DNS</span>
+          </div>
+          {adguard ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: 'var(--t1)', lineHeight: 1 }}>
+                    {adguard.totalQueries >= 1000 ? `${(adguard.totalQueries / 1000).toFixed(1)}k` : adguard.totalQueries}
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2 }}>queries (24h)</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: 'var(--err)', lineHeight: 1 }}>
+                    {adguard.blockedPercent}%
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2 }}>blocked</div>
+                </div>
+              </div>
+              {adguard.avgProcessingTime && (
+                <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace' }}>
+                  avg {adguard.avgProcessingTime}ms response
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--t3)', padding: '4px 0' }}>Connecting...</div>
+          )}
+        </div>
       </div>
 
       {/* ── Hardware + AI side by side ── */}
@@ -495,7 +730,7 @@ export default function LabPage() {
             <div>
               <div className="j-section-label">Always-On</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} className="stagger">
-                {alwaysOn.map(m => <MachineCard key={m.id} m={m} history={history[m.id] ?? []} isMobile={isMobile} />)}
+                {alwaysOn.map(m => <MachineCard key={m.id} m={m} history={history[m.id] ?? []} isMobile={isMobile} processes={processes[m.id] ?? []} onExpand={fetchProcesses} />)}
               </div>
             </div>
           )}
@@ -504,7 +739,7 @@ export default function LabPage() {
               <div className="j-section-label">Burst Nodes</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} className="stagger">
                 {burst.length > 0
-                  ? burst.map(m => <MachineCard key={m.id} m={m} history={history[m.id] ?? []} isMobile={isMobile} />)
+                  ? burst.map(m => <MachineCard key={m.id} m={m} history={history[m.id] ?? []} isMobile={isMobile} processes={processes[m.id] ?? []} onExpand={fetchProcesses} />)
                   : loading ? [1, 2].map(i => <div key={i} className="j-skeleton" style={{ height: 140 }} />) : null}
               </div>
             </div>
@@ -528,6 +763,82 @@ export default function LabPage() {
                   : [1,2,3,4].map(i => <div key={i} className="j-skeleton" style={{ height: 120, borderRadius: 14 }} />)}
               </div>
             </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Backup Status + Health Summary ── */}
+      <div className="j-grid-half" style={{ marginBottom: 28 }}>
+        {/* Backup Status */}
+        <div className="j-card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <HardDrive size={13} style={{ color: 'var(--accent)' }} />
+            <span className="j-panel-title">GDrive Backup</span>
+            {backup && (
+              <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 7px', borderRadius: 4,
+                background: backup.status === 'ok' ? 'var(--ok-dim)' : backup.status === 'error' ? 'rgba(244,63,94,0.1)' : 'var(--raised)',
+                color: backup.status === 'ok' ? 'var(--ok)' : backup.status === 'error' ? 'var(--err)' : 'var(--t3)',
+              }}>
+                {backup.status === 'ok' ? '● OK' : backup.status === 'error' ? '✕ Error' : '— Unknown'}
+              </span>
+            )}
+          </div>
+          {backup ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 11, color: 'var(--t2)' }}>
+                Last run: <span style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--t1)' }}>{backup.lastRun ?? '—'}</span>
+              </div>
+              {backup.message && (
+                <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace', background: 'var(--canvas)', borderRadius: 6, padding: '6px 8px', maxHeight: 80, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {backup.message.split('\n').slice(-4).join('\n')}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="j-skeleton" style={{ height: 40 }} />
+          )}
+        </div>
+
+        {/* System Health Summary */}
+        <div className="j-card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Activity size={13} style={{ color: healthSummary?.overallStatus === 'healthy' ? 'var(--ok)' : healthSummary?.overallStatus === 'critical' ? 'var(--err)' : 'var(--warn)' }} />
+            <span className="j-panel-title">Service Health</span>
+          </div>
+          {healthSummary ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 20 }}>
+                <div>
+                  <div style={{ fontSize: 28, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--ok)', lineHeight: 1 }}>{healthSummary.up}</div>
+                  <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>up</div>
+                </div>
+                {healthSummary.down > 0 && (
+                  <div>
+                    <div style={{ fontSize: 28, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--err)', lineHeight: 1 }}>{healthSummary.down}</div>
+                    <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>down</div>
+                  </div>
+                )}
+                <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700,
+                    color: healthSummary.overallStatus === 'healthy' ? 'var(--ok)' : healthSummary.overallStatus === 'critical' ? 'var(--err)' : 'var(--warn)',
+                  }}>
+                    {healthSummary.overallStatus === 'healthy' ? '● All Green' : healthSummary.overallStatus === 'critical' ? '✕ Critical' : '⚠ Degraded'}
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>{healthSummary.total} services tracked</span>
+                </div>
+              </div>
+              {/* Uptime bar */}
+              <div style={{ background: 'var(--canvas)', borderRadius: 3, height: 5, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${healthSummary.total > 0 ? (healthSummary.up / healthSummary.total) * 100 : 0}%`,
+                  background: healthSummary.overallStatus === 'healthy' ? 'var(--ok)' : healthSummary.overallStatus === 'critical' ? 'var(--err)' : 'var(--warn)',
+                  transition: 'width 0.5s' }} />
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--t3)' }}>
+                {healthSummary.total > 0 ? `${Math.round((healthSummary.up / healthSummary.total) * 100)}% availability` : '—'}
+              </div>
+            </div>
+          ) : (
+            <div className="j-skeleton" style={{ height: 60 }} />
           )}
         </div>
       </div>
