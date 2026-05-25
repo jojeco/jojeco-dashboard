@@ -2613,6 +2613,20 @@ app.get('/api/adguard/status', authMiddleware, async (req, res) => {
   }
 });
 
+// ============================================================================
+// MINECRAFT PROXY
+// ============================================================================
+
+app.get('/api/minecraft/status', lanOrAuth, async (req, res) => {
+  try {
+    const r = await fetch('http://192.168.50.10:8765/status', { signal: AbortSignal.timeout(4000) });
+    const data = await r.json();
+    res.json(data);
+  } catch {
+    res.status(502).json({ error: 'MC API unreachable' });
+  }
+});
+
 async function startServer() {
   await db.init();
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw, Bell, CheckCircle, AlertTriangle, XCircle, Shield, HardDrive, Activity } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, Bell, CheckCircle, AlertTriangle, XCircle, Shield, HardDrive, Activity, X, Sword } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { getToken } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -40,6 +41,8 @@ interface AutomationJob { id: string; label: string; schedule: string; status: s
 interface AdGuardStats { totalQueries: number; blockedQueries: number; blockedPercent: string; avgProcessingTime: string | null }
 interface BackupStatus { lastRun: string | null; status: 'ok' | 'error' | 'unknown' | 'never'; message: string }
 interface HealthSummary { up: number; down: number; total: number; overallStatus: 'healthy' | 'degraded' | 'critical' }
+interface ServiceHealth { id: string; name: string; status: 'online' | 'offline' | 'unknown'; url?: string; response_time?: number; last_checked?: number }
+interface McServer { id: string; name: string; port: number; status: 'running' | 'starting' | 'stopped'; players?: string[] }
 
 function fmtBytes(bytes: number) {
   if (bytes >= 1e12) return (bytes / 1e12).toFixed(1) + 'T';
@@ -171,7 +174,7 @@ function TempSparkline({ history }: { history: TempPoint[] }) {
   );
 }
 
-// ─── Machine Card (ring gauge layout) ────────────────────────────────────────
+// ─── Machine Card ─────────────────────────────────────────────────────────────
 function MachineCard({ m, history, isMobile, processes, onExpand }: {
   m: Machine; history: TempPoint[]; isMobile: boolean;
   processes: Process[]; onExpand: (id: string) => void;
@@ -184,7 +187,6 @@ function MachineCard({ m, history, isMobile, processes, onExpand }: {
 
   return (
     <div className={machineCardClass(m)} style={{ opacity: m.online ? 1 : 0.5, animation: 'fadeUp 350ms cubic-bezier(0.16,1,0.3,1) both' }}>
-      {/* Header */}
       <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
@@ -218,18 +220,11 @@ function MachineCard({ m, history, isMobile, processes, onExpand }: {
         </div>
       </div>
 
-      {/* Ring gauges row */}
       {m.online && (
         <div style={{ display: 'flex', justifyContent: 'space-around', padding: '4px 16px 16px', gap: 8 }}>
-          {m.cpu != null && (
-            <RingGauge pct={m.cpu} label="CPU" size={isMobile ? 60 : 68} />
-          )}
-          {m.mem && (
-            <RingGauge pct={m.mem.percent} label="RAM" sublabel={fmtBytes(m.mem.total)} size={isMobile ? 60 : 68} />
-          )}
-          {totalDisk > 0 && (
-            <RingGauge pct={diskPct} label="Disk" sublabel={fmtBytes(totalDisk)} warn={75} crit={90} size={isMobile ? 60 : 68} />
-          )}
+          {m.cpu != null && <RingGauge pct={m.cpu} label="CPU" size={isMobile ? 60 : 68} />}
+          {m.mem && <RingGauge pct={m.mem.percent} label="RAM" sublabel={fmtBytes(m.mem.total)} size={isMobile ? 60 : 68} />}
+          {totalDisk > 0 && <RingGauge pct={diskPct} label="Disk" sublabel={fmtBytes(totalDisk)} warn={75} crit={90} size={isMobile ? 60 : 68} />}
           {m.gpu && !isIntegrated(m.gpu.name ?? '') && m.gpu.utilization != null && (
             <RingGauge pct={m.gpu.utilization} label="GPU" warn={80} crit={95} size={isMobile ? 60 : 68} />
           )}
@@ -239,7 +234,6 @@ function MachineCard({ m, history, isMobile, processes, onExpand }: {
         </div>
       )}
 
-      {/* Expanded detail */}
       {open && m.online && (
         <div style={{ borderTop: '1px solid var(--line)', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {m.disks.length > 1 && (
@@ -359,6 +353,173 @@ function AINodeCard({ node, sessions }: { node: OllamaNode; sessions: ActiveSess
   );
 }
 
+// ─── Service Health Slide-Out Panel ──────────────────────────────────────────
+function ServiceHealthPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [services, setServices] = useState<ServiceHealth[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    fetch('/api/health/services', { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        const raw = d;
+        if (Array.isArray(raw.services)) setServices(raw.services);
+        else setServices(Object.values(raw as Record<string, ServiceHealth>));
+      })
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      {open && (
+        <div
+          onClick={onClose}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200, animation: 'fadeIn 150ms ease' }}
+        />
+      )}
+      {/* Panel */}
+      <div style={{
+        position: 'fixed', top: 0, right: 0, height: '100vh', width: 360,
+        background: 'var(--raised)', borderLeft: '1px solid var(--line)', zIndex: 201,
+        transform: open ? 'translateX(0)' : 'translateX(100%)',
+        transition: 'transform 280ms cubic-bezier(0.16,1,0.3,1)',
+        display: 'flex', flexDirection: 'column', overflowY: 'auto',
+      }}>
+        <div style={{ padding: '20px 20px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--t1)' }}>Service Health</div>
+            <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 2 }}>{services.length} services tracked</div>
+          </div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid var(--line)', background: 'var(--canvas)', color: 'var(--t3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <X size={14} />
+          </button>
+        </div>
+        <div style={{ padding: '12px 20px', flex: 1 }}>
+          {loading && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[1,2,3,4,5,6].map(i => <div key={i} className="j-skeleton" style={{ height: 44, borderRadius: 8 }} />)}
+            </div>
+          )}
+          {!loading && services.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--t3)', paddingTop: 16 }}>No service data</div>
+          )}
+          {!loading && services.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[...services].sort((a, b) => {
+                if (a.status === 'offline' && b.status !== 'offline') return -1;
+                if (b.status === 'offline' && a.status !== 'offline') return 1;
+                return (a.name || a.id).localeCompare(b.name || b.id);
+              }).map(svc => {
+                const isUp = svc.status === 'online';
+                const isOff = svc.status === 'offline';
+                const ago = svc.last_checked ? Math.floor((Date.now() - svc.last_checked) / 60000) : null;
+                return (
+                  <div key={svc.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                    borderRadius: 8, background: 'var(--canvas)',
+                    border: `1px solid ${isOff ? 'rgba(244,63,94,0.2)' : 'var(--line)'}`,
+                  }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                      background: isUp ? 'var(--ok)' : isOff ? 'var(--err)' : 'var(--t3)',
+                      boxShadow: isUp ? '0 0 0 2px var(--ok-dim)' : isOff ? '0 0 0 2px rgba(244,63,94,0.15)' : undefined,
+                      animation: isUp ? 'pulseDot 2.5s ease-in-out infinite' : undefined,
+                    }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {svc.name || svc.id}
+                      </div>
+                      {svc.url && <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{svc.url}</div>}
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: isUp ? 'var(--ok)' : isOff ? 'var(--err)' : 'var(--t3)' }}>
+                        {isUp ? 'Up' : isOff ? 'Down' : '?'}
+                      </div>
+                      {svc.response_time && <div style={{ fontSize: 9, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace' }}>{svc.response_time}ms</div>}
+                      {ago !== null && <div style={{ fontSize: 9, color: 'var(--t3)' }}>{ago}m ago</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Minecraft Mini-Card ─────────────────────────────────────────────────────
+function MinecraftMiniCard() {
+  const [servers, setServers] = useState<McServer[]>([]);
+  const [apiDown, setApiDown] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const r = await fetch('/api/minecraft/status', {
+          headers: { Authorization: `Bearer ${getToken()}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!r.ok) { setApiDown(true); return; }
+        const data = await r.json();
+        setServers(Object.values(data as Record<string, McServer>));
+        setApiDown(false);
+      } catch {
+        setApiDown(true);
+      }
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const running = servers.filter(s => s.status === 'running');
+  const totalPlayers = running.reduce((s, sv) => s + (sv.players?.length ?? 0), 0);
+
+  return (
+    <Link to="/minecraft" className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 4, textDecoration: 'none', transition: 'box-shadow 150ms' }}
+      onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = '0 0 0 1px var(--accent-border), 0 8px 24px rgba(0,0,0,0.5)'; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = '0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.35)'; }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Sword size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+        <span className="j-panel-title">Minecraft</span>
+      </div>
+      {apiDown ? (
+        <>
+          <div className="j-stat-num" style={{ color: 'var(--t3)', fontSize: 20 }}>—</div>
+          <div style={{ fontSize: 11, color: 'var(--t3)' }}>API unreachable</div>
+        </>
+      ) : servers.length === 0 ? (
+        <div className="j-skeleton" style={{ height: 36 }} />
+      ) : (
+        <>
+          <div className="j-stat-num" style={{ color: running.length > 0 ? 'var(--ok)' : 'var(--t3)', fontSize: 28 }}>
+            {running.length}<span style={{ fontSize: 16, color: 'var(--t3)', fontWeight: 300 }}>/{servers.length}</span>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--t3)' }}>servers up</div>
+          {totalPlayers > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+              <span style={{ fontSize: 10, color: 'var(--ok)', fontWeight: 600 }}>{totalPlayers} online</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+            {servers.map(s => (
+              <span key={s.id} className={`j-chip ${s.status === 'running' ? 'j-chip-ok' : ''}`} style={s.status !== 'running' ? { color: 'var(--t3)' } : {}}>
+                {s.name}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </Link>
+  );
+}
+
 // ─── Cache ────────────────────────────────────────────────────────────────────
 function rc<T>(k: string): T | null { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
 function wc(k: string, v: unknown)  { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
@@ -387,6 +548,7 @@ export default function LabPage() {
   const [loading, setLoading] = useState(() => !rc('cache_lab_overview'));
   const [lastRefresh, setLR]  = useState(new Date());
   const [processes, setProcesses] = useState<Record<string, Process[]>>({});
+  const [showHealthPanel, setShowHealthPanel] = useState(false);
   const isMobileRef = useRef(typeof window !== 'undefined' && window.innerWidth < 768);
 
   const fetchAll = useCallback(async () => {
@@ -420,8 +582,8 @@ export default function LabPage() {
     if (c.status === 'fulfilled' && Array.isArray(c.value)) {
       const arr = c.value as DockerContainer[];
       setCont(arr); wc('cache_lab_containers', arr);
-      setDocker({ running: arr.filter(x => x.state === 'running').length, stopped: arr.filter(x => x.state !== 'running').length, unhealthy: arr.filter(x => x.health === 'unhealthy').length });
-      wc('cache_lab_docker_summary', { running: arr.filter(x => x.state === 'running').length, stopped: arr.filter(x => x.state !== 'running').length, unhealthy: arr.filter(x => x.health === 'unhealthy').length });
+      const summary = { running: arr.filter(x => x.state === 'running').length, stopped: arr.filter(x => x.state !== 'running').length, unhealthy: arr.filter(x => x.health === 'unhealthy').length };
+      setDocker(summary); wc('cache_lab_docker_summary', summary);
     }
     if (d.status === 'fulfilled' && d.value) setHistory(d.value);
     if (e.status === 'fulfilled' && Array.isArray(e.value)) setSess(e.value);
@@ -430,7 +592,6 @@ export default function LabPage() {
     if (ag.status === 'fulfilled' && ag.value) setAdguard(ag.value);
     if (bk.status === 'fulfilled' && bk.value) setBackup(bk.value);
     if (hs.status === 'fulfilled' && hs.value) {
-      // API returns either {services:[]} or {serviceId: {status,...}} object map
       const raw = hs.value;
       const svcs: Array<{ status: string }> = Array.isArray(raw.services)
         ? raw.services
@@ -447,7 +608,6 @@ export default function LabPage() {
 
   useEffect(() => { fetchAll(); const id = setInterval(fetchAll, POLL_MS); return () => clearInterval(id); }, [fetchAll]);
 
-  // Process list — separate slower poll (30s), only runs when a card is expanded
   const fetchProcesses = useCallback(async (machineId: string) => {
     const h = { Authorization: `Bearer ${getToken()}` };
     try {
@@ -466,15 +626,17 @@ export default function LabPage() {
   const burst    = data?.machines.filter(m => !m.always_on) ?? [];
   const isMobile = isMobileRef.current;
 
-  // Status pill
   const statusLabel = { healthy: '● Healthy', degraded: '⚠ Degraded', critical: '✕ Critical' };
   const statusColor = { healthy: 'var(--ok)', degraded: 'var(--warn)', critical: 'var(--err)' };
   const svcLabels: Record<string, string> = { plex: 'Plex', adguard: 'AdGuard', ollama: 'Ollama', prometheus: 'Prom', tailscale: 'Tail' };
 
   return (
     <div>
+      {/* ── Service Health Slide-Out ── */}
+      <ServiceHealthPanel open={showHealthPanel} onClose={() => setShowHealthPanel(false)} />
+
       {/* ── Page header ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--t1)', lineHeight: 1 }}>Lab Overview</h1>
           <p style={{ fontSize: 12, color: 'var(--t3)', marginTop: 5 }}>JojeCo Home Lab · {new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
@@ -488,24 +650,25 @@ export default function LabPage() {
         </button>
       </div>
 
-      {/* ── Hero stat row ── */}
-      <div className="j-grid-5 stagger" style={{ marginBottom: 24 }}>
-        {/* Health */}
+      {/* ── Hero stat row — top summary ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, marginBottom: 10 }}>
+
+        {/* Lab Status */}
         <div className="j-stat-tile">
-          <div className="j-panel-title" style={{ marginBottom: 8 }}>Status</div>
+          <div className="j-panel-title" style={{ marginBottom: 6 }}>Status</div>
           {data ? (
             <>
-              <div className="j-stat-num" style={{ fontSize: 20, color: statusColor[data.status] }}>
+              <div className="j-stat-num" style={{ fontSize: 18, color: statusColor[data.status] }}>
                 {statusLabel[data.status]}
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 10 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 8 }}>
                 {Object.entries(data.services).map(([id, up]) => (
                   <span key={id} className={`j-chip ${up ? 'j-chip-ok' : 'j-chip-err'}`}>{svcLabels[id] ?? id}</span>
                 ))}
               </div>
               {data.issues.filter(i => i.severity === 'critical').map((iss, i) => (
-                <div key={i} style={{ fontSize: 11, color: 'var(--err)', marginTop: 6, display: 'flex', gap: 5 }}>
-                  <span className="j-dot j-dot-err" style={{ marginTop: 3 }} />
+                <div key={i} style={{ fontSize: 10, color: 'var(--err)', marginTop: 5, display: 'flex', gap: 4 }}>
+                  <span className="j-dot j-dot-err" style={{ marginTop: 3, flexShrink: 0 }} />
                   {iss.message}
                 </div>
               ))}
@@ -513,42 +676,37 @@ export default function LabPage() {
           ) : <div className="j-skeleton" style={{ height: 24, width: 80 }} />}
         </div>
 
-        {/* LVM Thin Pool */}
-        <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div className="j-panel-title">LVM Thin Pool</div>
-          {data?.lvmThinPool !== undefined ? (
+        {/* Service Health — clickable, opens slide-out */}
+        <button
+          onClick={() => setShowHealthPanel(true)}
+          className="j-stat-tile"
+          style={{ textAlign: 'left', cursor: 'pointer', transition: 'box-shadow 150ms' }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 0 1px var(--accent-border), 0 8px 24px rgba(0,0,0,0.5)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.35)'; }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <Activity size={12} style={{ color: healthSummary?.overallStatus === 'healthy' ? 'var(--ok)' : healthSummary?.overallStatus === 'critical' ? 'var(--err)' : 'var(--warn)', flexShrink: 0 }} />
+            <span className="j-panel-title">Services</span>
+            <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--accent)', fontWeight: 600 }}>View all →</span>
+          </div>
+          {healthSummary ? (
             <>
-              <div className="j-stat-num" style={{ color: (data.lvmThinPool ?? 0) > 85 ? 'var(--err)' : (data.lvmThinPool ?? 0) > 70 ? 'var(--warn)' : 'var(--ok)' }}>
-                {data.lvmThinPool !== null ? `${data.lvmThinPool.toFixed(1)}%` : '—'}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--t3)' }}>pve/data pool</div>
-              {data.lvmThinPool !== null && (
-                <div style={{ marginTop: 6, background: 'var(--canvas)', borderRadius: 3, height: 4, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${Math.min(data.lvmThinPool, 100)}%`, background: (data.lvmThinPool > 85) ? 'var(--err)' : (data.lvmThinPool > 70) ? 'var(--warn)' : 'var(--ok)', transition: 'width 0.5s' }} />
+              <div style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
+                <div>
+                  <span style={{ fontSize: 28, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--ok)', lineHeight: 1 }}>{healthSummary.up}</span>
+                  {healthSummary.down > 0 && <span style={{ fontSize: 18, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--err)', marginLeft: 8 }}>-{healthSummary.down}</span>}
                 </div>
-              )}
-            </>
-          ) : <div className="j-skeleton" style={{ height: 24, width: 60 }} />}
-        </div>
-
-        {/* Claude Agent */}
-        <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div className="j-panel-title">Claude Agent</div>
-          {data?.claudeRunning !== undefined ? (
-            <>
-              <div className="j-stat-num" style={{ fontSize: 20, color: data.claudeRunning === true ? 'var(--ok)' : data.claudeRunning === false ? 'var(--err)' : 'var(--t3)' }}>
-                {data.claudeRunning === true ? 'Running' : data.claudeRunning === false ? 'Down' : '—'}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--t3)' }}>jojeco-agent service</div>
-              {data.claudeRunning === false && (
-                <div style={{ fontSize: 11, color: 'var(--err)', marginTop: 4 }}>⚠ Grafana alert active</div>
-              )}
+              <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 4 }}>{healthSummary.total} tracked</div>
+              <div style={{ background: 'var(--canvas)', borderRadius: 3, height: 3, overflow: 'hidden', marginTop: 8 }}>
+                <div style={{ height: '100%', width: `${healthSummary.total > 0 ? (healthSummary.up / healthSummary.total) * 100 : 0}%`, background: healthSummary.overallStatus === 'healthy' ? 'var(--ok)' : healthSummary.overallStatus === 'critical' ? 'var(--err)' : 'var(--warn)', transition: 'width 0.5s' }} />
+              </div>
             </>
-          ) : <div className="j-skeleton" style={{ height: 40, width: 60 }} />}
-        </div>
+          ) : <div className="j-skeleton" style={{ height: 40 }} />}
+        </button>
 
-        {/* Docker */}
-        <a href="/docker" className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 4, transition: 'box-shadow 150ms' }}
+        {/* Containers — links to /services */}
+        <Link to="/services" className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 4, textDecoration: 'none', transition: 'box-shadow 150ms' }}
           onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = '0 0 0 1px var(--accent-border), 0 8px 24px rgba(0,0,0,0.5)'; }}
           onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = '0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.35)'; }}>
           <div className="j-panel-title">Containers</div>
@@ -562,9 +720,9 @@ export default function LabPage() {
               </div>
             </>
           ) : <div className="j-skeleton" style={{ height: 40, width: 60 }} />}
-        </a>
+        </Link>
 
-        {/* AI Nodes */}
+        {/* AI Fleet */}
         <div className="j-stat-tile">
           <div className="j-panel-title">AI Fleet</div>
           {fleet ? (() => {
@@ -590,29 +748,62 @@ export default function LabPage() {
           })() : <div className="j-skeleton" style={{ height: 40, width: 60 }} />}
         </div>
 
-        {/* LiteLLM spend */}
+        {/* Gateway */}
         <div className="j-stat-tile">
           <div className="j-panel-title">Gateway</div>
           {fleet ? (
             <>
-              <div className="j-stat-num" style={{ color: fleet.litellm.online ? 'var(--ok)' : 'var(--err)', fontSize: 32 }}>
+              <div className="j-stat-num" style={{ color: fleet.litellm.online ? 'var(--ok)' : 'var(--err)', fontSize: 28 }}>
                 {fleet.litellm.online ? 'Up' : 'Down'}
               </div>
               <div style={{ fontSize: 11, color: 'var(--t3)' }}>LiteLLM</div>
               {fleet.litellm.spend != null && (
-                <div style={{ fontSize: 18, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--t2)', marginTop: 10 }}>
+                <div style={{ fontSize: 16, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--t2)', marginTop: 8 }}>
                   ${fleet.litellm.spend.toFixed(4)}
-                  <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--t3)', marginLeft: 4 }}>spent</span>
+                  <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--t3)', marginLeft: 4 }}>spent</span>
                 </div>
               )}
             </>
           ) : <div className="j-skeleton" style={{ height: 40, width: 60 }} />}
         </div>
 
+        {/* LVM Thin Pool */}
+        <div className="j-stat-tile">
+          <div className="j-panel-title">LVM Pool</div>
+          {data?.lvmThinPool !== undefined ? (
+            <>
+              <div className="j-stat-num" style={{ color: (data.lvmThinPool ?? 0) > 85 ? 'var(--err)' : (data.lvmThinPool ?? 0) > 70 ? 'var(--warn)' : 'var(--ok)' }}>
+                {data.lvmThinPool !== null ? `${data.lvmThinPool.toFixed(1)}%` : '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--t3)' }}>pve/data</div>
+              {data.lvmThinPool !== null && (
+                <div style={{ marginTop: 8, background: 'var(--canvas)', borderRadius: 3, height: 3, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.min(data.lvmThinPool, 100)}%`, background: (data.lvmThinPool > 85) ? 'var(--err)' : (data.lvmThinPool > 70) ? 'var(--warn)' : 'var(--ok)', transition: 'width 0.5s' }} />
+                </div>
+              )}
+            </>
+          ) : <div className="j-skeleton" style={{ height: 40, width: 60 }} />}
+        </div>
+
+        {/* Claude Agent */}
+        <div className="j-stat-tile">
+          <div className="j-panel-title">Agent</div>
+          {data?.claudeRunning !== undefined ? (
+            <>
+              <div className="j-stat-num" style={{ fontSize: 18, color: data.claudeRunning === true ? 'var(--ok)' : data.claudeRunning === false ? 'var(--err)' : 'var(--t3)' }}>
+                {data.claudeRunning === true ? 'Running' : data.claudeRunning === false ? 'Down' : '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--t3)' }}>jojeco-agent</div>
+            </>
+          ) : <div className="j-skeleton" style={{ height: 40, width: 60 }} />}
+        </div>
+
+        {/* Minecraft mini-card */}
+        <MinecraftMiniCard />
       </div>
 
       {/* ── Alerts / Automation / AdGuard row ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginBottom: 20 }}>
         {/* Recent Alerts */}
         <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -679,9 +870,7 @@ export default function LabPage() {
                     <span style={{ fontSize: 10, fontFamily: 'Geist Mono, monospace', color: job.status === 'error' ? 'var(--err)' : 'var(--t3)' }}>
                       {new Date(job.lastRun).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}
                     </span>
-                  ) : (
-                    <span style={{ fontSize: 10, color: 'var(--t3)' }}>—</span>
-                  )}
+                  ) : <span style={{ fontSize: 10, color: 'var(--t3)' }}>—</span>}
                 </div>
               </div>
             ))}
@@ -704,26 +893,52 @@ export default function LabPage() {
                   <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2 }}>queries (24h)</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: 'var(--err)', lineHeight: 1 }}>
-                    {adguard.blockedPercent}%
-                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: 'var(--err)', lineHeight: 1 }}>{adguard.blockedPercent}%</div>
                   <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2 }}>blocked</div>
                 </div>
               </div>
               {adguard.avgProcessingTime && (
-                <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace' }}>
-                  avg {adguard.avgProcessingTime}ms response
-                </div>
+                <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace' }}>avg {adguard.avgProcessingTime}ms response</div>
               )}
             </div>
           ) : (
             <div style={{ fontSize: 11, color: 'var(--t3)', padding: '4px 0' }}>Connecting...</div>
           )}
         </div>
+
+        {/* GDrive Backup */}
+        <div className="j-stat-tile" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <HardDrive size={13} style={{ color: 'var(--accent)' }} />
+            <span className="j-panel-title">GDrive Backup</span>
+            {backup && (
+              <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 7px', borderRadius: 4,
+                background: backup.status === 'ok' ? 'var(--ok-dim)' : backup.status === 'error' ? 'rgba(244,63,94,0.1)' : 'var(--raised)',
+                color: backup.status === 'ok' ? 'var(--ok)' : backup.status === 'error' ? 'var(--err)' : 'var(--t3)',
+              }}>
+                {backup.status === 'ok' ? '● OK' : backup.status === 'error' ? '✕ Error' : '— Unknown'}
+              </span>
+            )}
+          </div>
+          {backup ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 11, color: 'var(--t2)' }}>
+                Last run: <span style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--t1)' }}>{backup.lastRun ?? '—'}</span>
+              </div>
+              {backup.message && (
+                <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace', background: 'var(--canvas)', borderRadius: 6, padding: '6px 8px', maxHeight: 60, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {backup.message.split('\n').slice(-4).join('\n')}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="j-skeleton" style={{ height: 40 }} />
+          )}
+        </div>
       </div>
 
       {/* ── Hardware + AI side by side ── */}
-      <div className="j-grid-half" style={{ marginBottom: 28 }}>
+      <div className="j-grid-half" style={{ marginBottom: 24 }}>
         {/* Servers */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {alwaysOn.length > 0 && (
@@ -767,83 +982,7 @@ export default function LabPage() {
         </div>
       </div>
 
-      {/* ── Backup Status + Health Summary ── */}
-      <div className="j-grid-half" style={{ marginBottom: 28 }}>
-        {/* Backup Status */}
-        <div className="j-card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <HardDrive size={13} style={{ color: 'var(--accent)' }} />
-            <span className="j-panel-title">GDrive Backup</span>
-            {backup && (
-              <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 7px', borderRadius: 4,
-                background: backup.status === 'ok' ? 'var(--ok-dim)' : backup.status === 'error' ? 'rgba(244,63,94,0.1)' : 'var(--raised)',
-                color: backup.status === 'ok' ? 'var(--ok)' : backup.status === 'error' ? 'var(--err)' : 'var(--t3)',
-              }}>
-                {backup.status === 'ok' ? '● OK' : backup.status === 'error' ? '✕ Error' : '— Unknown'}
-              </span>
-            )}
-          </div>
-          {backup ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 11, color: 'var(--t2)' }}>
-                Last run: <span style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--t1)' }}>{backup.lastRun ?? '—'}</span>
-              </div>
-              {backup.message && (
-                <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace', background: 'var(--canvas)', borderRadius: 6, padding: '6px 8px', maxHeight: 80, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {backup.message.split('\n').slice(-4).join('\n')}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="j-skeleton" style={{ height: 40 }} />
-          )}
-        </div>
-
-        {/* System Health Summary */}
-        <div className="j-card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Activity size={13} style={{ color: healthSummary?.overallStatus === 'healthy' ? 'var(--ok)' : healthSummary?.overallStatus === 'critical' ? 'var(--err)' : 'var(--warn)' }} />
-            <span className="j-panel-title">Service Health</span>
-          </div>
-          {healthSummary ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ display: 'flex', gap: 20 }}>
-                <div>
-                  <div style={{ fontSize: 28, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--ok)', lineHeight: 1 }}>{healthSummary.up}</div>
-                  <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>up</div>
-                </div>
-                {healthSummary.down > 0 && (
-                  <div>
-                    <div style={{ fontSize: 28, fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: 'var(--err)', lineHeight: 1 }}>{healthSummary.down}</div>
-                    <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>down</div>
-                  </div>
-                )}
-                <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700,
-                    color: healthSummary.overallStatus === 'healthy' ? 'var(--ok)' : healthSummary.overallStatus === 'critical' ? 'var(--err)' : 'var(--warn)',
-                  }}>
-                    {healthSummary.overallStatus === 'healthy' ? '● All Green' : healthSummary.overallStatus === 'critical' ? '✕ Critical' : '⚠ Degraded'}
-                  </span>
-                  <span style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>{healthSummary.total} services tracked</span>
-                </div>
-              </div>
-              {/* Uptime bar */}
-              <div style={{ background: 'var(--canvas)', borderRadius: 3, height: 5, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${healthSummary.total > 0 ? (healthSummary.up / healthSummary.total) * 100 : 0}%`,
-                  background: healthSummary.overallStatus === 'healthy' ? 'var(--ok)' : healthSummary.overallStatus === 'critical' ? 'var(--err)' : 'var(--warn)',
-                  transition: 'width 0.5s' }} />
-              </div>
-              <div style={{ fontSize: 10, color: 'var(--t3)' }}>
-                {healthSummary.total > 0 ? `${Math.round((healthSummary.up / healthSummary.total) * 100)}% availability` : '—'}
-              </div>
-            </div>
-          ) : (
-            <div className="j-skeleton" style={{ height: 60 }} />
-          )}
-        </div>
-      </div>
-
-      {/* ── Quick Links (app tile grid) ── */}
+      {/* ── Quick Links ── */}
       <div>
         <div className="j-section-label">Quick Access</div>
         <div className="j-grid-auto">
