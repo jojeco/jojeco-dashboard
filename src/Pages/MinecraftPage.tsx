@@ -139,124 +139,105 @@ export default function MinecraftPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <Server size={20} style={{ color: 'var(--accent)' }} />
         <div>
-          <div style={{ fontWeight: 700, fontSize: 18 }}>Minecraft Servers</div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>S1 · XPS 8700 · 192.168.50.10</div>
+          <h1 style={{ fontWeight: 700, fontSize: 22, letterSpacing: '-0.02em', color: 'var(--t1)', lineHeight: 1 }}>Minecraft</h1>
+          <div style={{ fontSize: 12, color: 'var(--t3)', marginTop: 4 }}>Server 1 · 192.168.50.10</div>
         </div>
         {apiDown && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: '#ef4444', fontSize: 12 }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--err)', fontSize: 12, fontWeight: 500 }}>
             <WifiOff size={14} /> API offline
           </div>
         )}
         {!apiDown && serverList.length > 0 && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: '#22c55e', fontSize: 12 }}>
-            <Wifi size={14} /> API connected
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ok)', fontSize: 12, fontWeight: 500 }}>
+            <Wifi size={14} /> Connected
           </div>
         )}
       </div>
 
       {/* Server Cards */}
       {apiDown && serverList.length === 0 ? (
-        <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }}>
-          <WifiOff size={32} style={{ marginBottom: 12, opacity: 0.4 }} />
-          <div>mc_manager API unreachable at {MC_API}</div>
-          <div style={{ fontSize: 12, marginTop: 4 }}>Make sure mc_manager.py is running on Server 1</div>
+        <div className="j-card" style={{ padding: 48, textAlign: 'center' }}>
+          <WifiOff size={32} style={{ marginBottom: 12, opacity: 0.3, color: 'var(--t3)', display: 'block', margin: '0 auto 12px' }} />
+          <div style={{ fontSize: 14, color: 'var(--t2)', fontWeight: 500 }}>mc_manager API unreachable</div>
+          <div style={{ fontSize: 12, color: 'var(--t3)', marginTop: 4 }}>Make sure mc_manager.py is running on Server 1 (port 8765)</div>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
           {serverList.map(srv => {
             const isLoading = (act: string) => !!loading[`${srv.id}_${act}`];
+            const btnBase: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--raised)', color: 'var(--t2)', cursor: 'pointer', fontSize: 12, fontWeight: 500, transition: 'all 120ms' };
             return (
-              <div key={srv.id} className="j-card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div key={srv.id} className="j-card" style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '16px' }}>
                 {/* Card header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 15 }}>{srv.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Port {srv.port}</div>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--t1)' }}>{srv.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 3, fontFamily: 'Geist Mono, monospace' }}>:{srv.port}</div>
                   </div>
                   <StatusBadge status={srv.status} />
                 </div>
 
                 {/* Players */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-muted)' }}>
-                  <Users size={14} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--t3)', borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+                  <Users size={13} style={{ flexShrink: 0 }} />
                   {srv.players && srv.players.length > 0
-                    ? <span style={{ color: 'var(--text)' }}>{srv.players.join(', ')}</span>
+                    ? <span style={{ color: 'var(--ok)', fontWeight: 600 }}>{srv.players.join(', ')}</span>
                     : <span>No players online</span>
                   }
                 </div>
 
                 {/* Action buttons */}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    className="j-btn j-btn-primary"
-                    style={{ flex: 1, gap: 6, fontSize: 13 }}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button style={{ ...btnBase, color: srv.status !== 'stopped' || isLoading('start') ? 'var(--t3)' : 'var(--ok)', borderColor: srv.status !== 'stopped' || isLoading('start') ? 'var(--line)' : 'rgba(16,185,129,0.3)', opacity: srv.status !== 'stopped' || isLoading('start') ? 0.5 : 1 }}
                     disabled={srv.status !== 'stopped' || isLoading('start')}
-                    onClick={() => action(srv.id, 'start')}
-                  >
-                    {isLoading('start') ? <Loader size={14} className="spin" /> : <Play size={14} />}
+                    onClick={() => action(srv.id, 'start')}>
+                    {isLoading('start') ? <Loader size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />}
                     Start
                   </button>
-                  <button
-                    className="j-btn"
-                    style={{ flex: 1, gap: 6, fontSize: 13 }}
+                  <button style={{ ...btnBase, color: srv.status === 'stopped' || isLoading('stop') ? 'var(--t3)' : 'var(--err)', borderColor: srv.status === 'stopped' || isLoading('stop') ? 'var(--line)' : 'rgba(244,63,94,0.3)', opacity: srv.status === 'stopped' || isLoading('stop') ? 0.5 : 1 }}
                     disabled={srv.status === 'stopped' || isLoading('stop')}
-                    onClick={() => action(srv.id, 'stop')}
-                  >
-                    {isLoading('stop') ? <Loader size={14} className="spin" /> : <Square size={14} />}
+                    onClick={() => action(srv.id, 'stop')}>
+                    {isLoading('stop') ? <Loader size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Square size={13} />}
                     Stop
                   </button>
-                  <button
-                    className="j-btn"
-                    style={{ flex: 1, gap: 6, fontSize: 13 }}
+                  <button style={{ ...btnBase, color: srv.status === 'stopped' || isLoading('restart') ? 'var(--t3)' : 'var(--warn)', opacity: srv.status === 'stopped' || isLoading('restart') ? 0.5 : 1 }}
                     disabled={srv.status === 'stopped' || isLoading('restart')}
-                    onClick={() => action(srv.id, 'restart')}
-                  >
-                    {isLoading('restart') ? <Loader size={14} className="spin" /> : <RotateCcw size={14} />}
+                    onClick={() => action(srv.id, 'restart')}>
+                    {isLoading('restart') ? <Loader size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <RotateCcw size={13} />}
                     Restart
                   </button>
                 </div>
 
                 {/* Log / Error buttons */}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    className="j-btn"
-                    style={{ flex: 1, gap: 6, fontSize: 12 }}
-                    onClick={() => activeLog === srv.id ? setActiveLog(null) : fetchLogs(srv.id)}
-                  >
-                    <FileText size={13} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button style={{ ...btnBase, background: activeLog === srv.id ? 'var(--accent-dim)' : 'var(--raised)', borderColor: activeLog === srv.id ? 'var(--accent-border)' : 'var(--line)', color: activeLog === srv.id ? 'var(--accent)' : 'var(--t3)' }}
+                    onClick={() => activeLog === srv.id ? setActiveLog(null) : fetchLogs(srv.id)}>
+                    <FileText size={12} />
                     {activeLog === srv.id ? 'Hide Logs' : 'Logs'}
                   </button>
-                  <button
-                    className="j-btn"
-                    style={{ flex: 1, gap: 6, fontSize: 12, color: activeErrors === srv.id ? '#ef4444' : undefined }}
-                    onClick={() => activeErrors === srv.id ? setActiveErrors(null) : fetchErrors(srv.id)}
-                  >
-                    <AlertTriangle size={13} />
+                  <button style={{ ...btnBase, background: activeErrors === srv.id ? 'rgba(244,63,94,0.08)' : 'var(--raised)', borderColor: activeErrors === srv.id ? 'rgba(244,63,94,0.3)' : 'var(--line)', color: activeErrors === srv.id ? 'var(--err)' : 'var(--t3)' }}
+                    onClick={() => activeErrors === srv.id ? setActiveErrors(null) : fetchErrors(srv.id)}>
+                    <AlertTriangle size={12} />
                     {activeErrors === srv.id ? 'Hide Errors' : 'Errors'}
                   </button>
                 </div>
 
                 {/* Log viewer */}
                 {(activeLog === srv.id || activeErrors === srv.id) && (
-                  <div style={{
-                    background: 'var(--surface-2, rgba(0,0,0,0.3))', borderRadius: 8,
-                    padding: 12, maxHeight: 300, overflowY: 'auto', fontSize: 11,
-                    fontFamily: 'monospace', lineHeight: 1.6, color: 'rgba(255,255,255,0.75)',
-                    border: '1px solid var(--border)',
-                  }}>
+                  <div style={{ background: 'var(--canvas)', borderRadius: 8, padding: 12, maxHeight: 280, overflowY: 'auto', fontSize: 11, fontFamily: 'Geist Mono, monospace', lineHeight: 1.6, color: 'var(--t2)', border: '1px solid var(--line)' }}>
                     {activeLog === srv.id && (
                       logs[srv.id]
                         ? logs[srv.id]!.length > 0
                           ? logs[srv.id]!.map((line, i) => <div key={i}>{line}</div>)
-                          : <div style={{ color: 'var(--text-muted)' }}>No log output</div>
-                        : <div style={{ color: 'var(--text-muted)' }}>Loading...</div>
+                          : <div style={{ color: 'var(--t3)' }}>No log output</div>
+                        : <div style={{ color: 'var(--t3)' }}>Loading...</div>
                     )}
                     {activeErrors === srv.id && (
                       errors[srv.id]
                         ? errors[srv.id]!.length > 0
-                          ? errors[srv.id]!.map((line, i) => <div key={i} style={{ color: '#fca5a5' }}>{line}</div>)
-                          : <div style={{ color: '#22c55e' }}>No errors found</div>
-                        : <div style={{ color: 'var(--text-muted)' }}>Loading...</div>
+                          ? errors[srv.id]!.map((line, i) => <div key={i} style={{ color: 'var(--err)' }}>{line}</div>)
+                          : <div style={{ color: 'var(--ok)' }}>No errors found</div>
+                        : <div style={{ color: 'var(--t3)' }}>Loading...</div>
                     )}
                   </div>
                 )}
@@ -266,22 +247,19 @@ export default function MinecraftPage() {
         </div>
       )}
 
-      {/* Quick status summary */}
       {serverList.length > 0 && (
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           {(['running', 'starting', 'stopped'] as const).map(s => {
             const count = serverList.filter(x => x.status === s).length;
             if (!count) return null;
-            const colors = { running: '#22c55e', starting: '#f59e0b', stopped: '#6b7280' };
+            const colors = { running: 'var(--ok)', starting: 'var(--warn)', stopped: 'var(--t3)' };
             return (
-              <div key={s} style={{ fontSize: 12, color: colors[s] }}>
+              <span key={s} style={{ fontSize: 11, color: colors[s], fontWeight: 600 }}>
                 {count} {s}
-              </div>
+              </span>
             );
           })}
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-            Auto-refreshes every 15s
-          </div>
+          <span style={{ fontSize: 10, color: 'var(--t3)', marginLeft: 'auto' }}>Refreshes every 15s</span>
         </div>
       )}
     </div>

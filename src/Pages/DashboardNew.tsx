@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Search, Settings,
   ExternalLink,
-  Plus, Download, Lock, Server,
+  Plus, Download, Lock, Server, ChevronDown, ChevronRight,
 } from 'lucide-react';
+import DockerPage from './DockerPage';
 import { useAuth } from '../contexts/AuthContext';
 import { Service } from '../types/service';
 import { serviceService } from '../services/serviceService';
@@ -138,6 +139,23 @@ function SettingsModal({
         </p>
       </div>
     </BaseModal>
+  );
+}
+
+function CollapsibleContainers() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 32, borderTop: '1px solid var(--line)', paddingTop: 20 }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginBottom: open ? 16 : 0 }}
+      >
+        {open ? <ChevronDown size={14} style={{ color: 'var(--t3)' }} /> : <ChevronRight size={14} style={{ color: 'var(--t3)' }} />}
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Containers</span>
+        {!open && <span style={{ fontSize: 11, color: 'var(--t3)', marginLeft: 4 }}>click to expand</span>}
+      </button>
+      {open && <DockerPage />}
+    </div>
   );
 }
 
@@ -370,6 +388,9 @@ export default function Dashboard() {
           </div>
         )}
       </main>
+
+      {/* ── Containers section ── */}
+      <CollapsibleContainers />
 
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} onPasswordChange={() => setPasswordChangeOpen(true)} />
       <PasswordChangeModal isOpen={passwordChangeOpen} onClose={() => setPasswordChangeOpen(false)} />
