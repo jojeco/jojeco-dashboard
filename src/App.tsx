@@ -28,6 +28,7 @@ import LabPage from './Pages/LabPage';
 import ChaosPage from './Pages/ChaosPage';
 import ControlsPage from './Pages/ControlsPage';
 import MinecraftPage from './Pages/MinecraftPage';
+import KioskPage from './Pages/Kiosk/KioskPage';
 
 function MediaAndTorrentsPage() {
   return (
@@ -190,7 +191,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
   const isMobile = useMediaQuery('(max-width: 768px)');
   const { theme, toggle: toggleTheme } = useTheme();
 
-  if (location.pathname === '/login' || location.pathname === '/birthday') {
+  if (location.pathname === '/login' || location.pathname === '/birthday' || location.pathname === '/kiosk') {
     return <>{children}</>;
   }
 
@@ -233,6 +234,7 @@ function App() {
             <Route path="/chaos"    element={<ChaosPage />} />
             <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/minecraft"  element={<ProtectedRoute><ErrorBoundary><MinecraftPage /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/kiosk"      element={<ErrorBoundary><KioskPage /></ErrorBoundary>} />
           </Routes>
         </PageShell>
       </AuthProvider>
