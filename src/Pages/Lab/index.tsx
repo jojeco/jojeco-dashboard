@@ -118,16 +118,29 @@ export default function LabPage() {
       {/* ── Page header ── */}
       <div className="flex items-start justify-between mb-5">
         <div>
-          <h1 className="text-[22px] font-bold tracking-tight text-[var(--t1)] leading-none">Lab Overview</h1>
-          <p className="text-[12px] text-[var(--t3)] mt-1">
+          <h1 style={{ fontSize: 'clamp(18px, 4vw, 22px)', fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--t1)', lineHeight: 1 }}>
+            Lab Overview
+          </h1>
+          <p style={{ fontSize: 11, color: 'var(--t3)', marginTop: 4, letterSpacing: '0.02em' }}>
             JojeCo Home Lab · {new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' })}
           </p>
         </div>
         <button
           onClick={refresh}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--line)] bg-[var(--raised)] text-[11px] font-medium text-[var(--t3)] transition-all hover:text-[var(--t1)] hover:border-[var(--line-2)]"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '6px 12px', borderRadius: 'var(--r-sm)',
+            background: 'var(--raised)', border: 'none',
+            fontSize: 11, fontWeight: 500, color: 'var(--t3)',
+            cursor: 'pointer', fontFamily: 'inherit',
+            boxShadow: 'var(--shadow-ring)',
+            transition: 'color 150ms, background 150ms',
+            flexShrink: 0,
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t1)'; (e.currentTarget as HTMLElement).style.background = 'var(--raised-2)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t3)'; (e.currentTarget as HTMLElement).style.background = 'var(--raised)'; }}
         >
-          <RefreshCw size={12} style={loading ? { animation: 'spin 1s linear infinite' } : {}} />
+          <RefreshCw size={11} style={loading ? { animation: 'spin 1s linear infinite' } : {}} />
           {lastRefresh.toLocaleTimeString()}
         </button>
       </div>
