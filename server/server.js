@@ -42,11 +42,14 @@ const loginRateLimit = (req, res, next) => {
 // This prevents the XFF auth bypass where spoofed X-Forwarded-For: 192.168.50.x bypassed lanOrAuth
 
 // LAN bypass middleware: uses socket remoteAddress (not spoofable via XFF)
+// NOTE: do NOT trust 172.* — public traffic arrives via the nginx container's
+// docker IP (172.x), which made every lanOrAuth endpoint publicly readable.
+// True LAN clients hit :3001 directly and keep the bypass; everything routed
+// through the proxy (including dash.jojeco.ca) must present a JWT.
 const lanOrAuth = (req, res, next) => {
   const ip = (req.socket?.remoteAddress || req.connection?.remoteAddress || '').replace(/^::ffff:/, '');
   if (
     ip.startsWith('192.168.50.') ||
-    ip.startsWith('172.') ||
     ip === '::1' ||
     ip === '127.0.0.1'
   ) return next();
