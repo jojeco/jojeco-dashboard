@@ -18,6 +18,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | n
 
 import { LogOut, LogIn, Server, Film, Zap, LayoutDashboard, Sliders, Sun, Moon, Sword, Mic, Home } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { SnapshotProvider } from './hooks/useSnapshot';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
 import Dashboard from './Pages/DashboardNew';
@@ -26,7 +27,7 @@ import TorrentsPage from './Pages/TorrentsPage';
 import DockerPage from './Pages/DockerPage';
 import MediaPage from './Pages/MediaPage';
 import AIPage from './Pages/AIPage';
-import LabPage from './Pages/LabPage';
+import LabPage from './Pages/Lab';
 import ChaosPage from './Pages/ChaosPage';
 import ControlsPage from './Pages/ControlsPage';
 import MinecraftPage from './Pages/MinecraftPage';
@@ -239,6 +240,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <SnapshotProvider>
         <PageShell>
           <Routes>
             <Route path="/login"    element={<Login />} />
@@ -258,6 +260,7 @@ function App() {
           </Routes>
         </PageShell>
         <Toaster />
+        </SnapshotProvider>
       </AuthProvider>
     </BrowserRouter>
   );
