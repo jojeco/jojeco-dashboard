@@ -22,17 +22,33 @@ import {
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-app.set('trust proxy', true);
 
-// LAN bypass middleware: allow unauthenticated read access from LAN + Docker subnets (n8n, scripts, etc.)
+// Simple in-memory login rate limiter: max 10 attempts per IP per 15 minutes
+const loginAttempts = new Map();
+const loginRateLimit = (req, res, next) => {
+  const ip = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+  const now = Date.now();
+  const window = 15 * 60 * 1000;
+  const max = 10;
+  const entry = loginAttempts.get(ip) || { count: 0, reset: now + window };
+  if (now > entry.reset) { entry.count = 0; entry.reset = now + window; }
+  entry.count++;
+  loginAttempts.set(ip, entry);
+  if (entry.count > max) return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
+  next();
+};
+
+// trust proxy disabled — req.ip now reflects actual socket IP, not XFF header
+// This prevents the XFF auth bypass where spoofed X-Forwarded-For: 192.168.50.x bypassed lanOrAuth
+
+// LAN bypass middleware: uses socket remoteAddress (not spoofable via XFF)
 const lanOrAuth = (req, res, next) => {
-  const ip = req.ip || req.connection?.remoteAddress || '';
-  const stripped = ip.replace(/^::ffff:/, '');
+  const ip = (req.socket?.remoteAddress || req.connection?.remoteAddress || '').replace(/^::ffff:/, '');
   if (
-    stripped.startsWith('192.168.50.') ||
-    stripped.startsWith('172.') ||
-    stripped === '::1' ||
-    stripped === '127.0.0.1'
+    ip.startsWith('192.168.50.') ||
+    ip.startsWith('172.') ||
+    ip === '::1' ||
+    ip === '127.0.0.1'
   ) return next();
   return authMiddleware(req, res, next);
 };
@@ -49,7 +65,7 @@ app.post('/api/auth/register', (req, res) => {
   res.status(403).json({ error: 'Registration is disabled' });
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginRateLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -741,6 +757,7 @@ const QBT_URL = process.env.QBT_URL || 'http://192.168.50.13:9091';
 const QBT_USER = process.env.QBT_USER || 'admin';
 const QBT_PASS = process.env.QBT_PASS || 'REDACTED';
 let qbtSid = null;
+let qbtCookieName = 'SID';
 
 async function qbtLogin() {
   const res = await fetch(`${QBT_URL}/api/v2/auth/login`, {
@@ -749,20 +766,19 @@ async function qbtLogin() {
     body: `username=${QBT_USER}&password=${QBT_PASS}`,
   });
   const cookies = res.headers.get('set-cookie') || '';
-  const match = cookies.match(/SID=([^;]+)/);
-  if (match) { qbtSid = match[1]; return true; }
+  // qBittorrent changed cookie name to QBT_SID_{PORT} in newer versions
+  const match = cookies.match(/([A-Z_]*SID[^=]*)=([^;]+)/);
+  if (match) { qbtCookieName = match[1]; qbtSid = match[2]; return true; }
   return false;
 }
 
 async function qbtFetch(path, options = {}) {
-  // Try direct call first (subnet whitelist bypasses auth)
   const headers = { 'Referer': QBT_URL, ...(options.headers || {}) };
-  if (qbtSid) headers['Cookie'] = `SID=${qbtSid}`;
+  if (qbtSid) headers['Cookie'] = `${qbtCookieName}=${qbtSid}`;
   const res = await fetch(`${QBT_URL}${path}`, { ...options, headers });
   if (res.status === 403) {
-    // Auth required - login and retry
     await qbtLogin();
-    const retryHeaders = { 'Cookie': `SID=${qbtSid}`, 'Referer': QBT_URL, ...(options.headers || {}) };
+    const retryHeaders = { 'Cookie': `${qbtCookieName}=${qbtSid}`, 'Referer': QBT_URL, ...(options.headers || {}) };
     return fetch(`${QBT_URL}${path}`, { ...options, headers: retryHeaders });
   }
   return res;
@@ -907,8 +923,8 @@ async function arrFetch(baseUrl, apiKey, path) {
 app.get('/api/media/queue', authMiddleware, async (req, res) => {
   try {
     const [sq, rq] = await Promise.allSettled([
-      arrFetch(SONARR_URL, SONARR_KEY, '/queue?pageSize=50&includeUnknownSeriesItems=false'),
-      arrFetch(RADARR_URL, RADARR_KEY, '/queue?pageSize=50&includeUnknownMovieItems=false'),
+      arrFetch(SONARR_URL, SONARR_KEY, '/queue?pageSize=50&includeUnknownSeriesItems=false&includeSeries=true&includeEpisode=true'),
+      arrFetch(RADARR_URL, RADARR_KEY, '/queue?pageSize=50&includeUnknownMovieItems=false&includeMovie=true'),
     ]);
     res.json({
       sonarr: sq.status === 'fulfilled' ? sq.value.records || [] : [],
@@ -2631,6 +2647,79 @@ app.get('/api/adguard/status', authMiddleware, async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: 'AdGuard unreachable', detail: e.message });
   }
+});
+
+// ============================================================================
+// JARVIS VOICE API PROXY
+// ============================================================================
+
+const JARVIS_API_URL = 'http://192.168.50.13:8300';
+const JARVIS_KEY = 'jojeco-jarvis-2026';
+
+app.post('/api/jarvis/voice', authMiddleware, async (req, res) => {
+  try {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', async () => {
+      const body = Buffer.concat(chunks);
+      const upstream = await fetch(`${JARVIS_API_URL}/voice`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${JARVIS_KEY}`, 'Content-Type': req.headers['content-type'] },
+        body,
+      });
+      res.status(upstream.status);
+      ['X-Transcript', 'X-Reply', 'Content-Type'].forEach(h => {
+        const v = upstream.headers.get(h); if (v) res.set(h, v);
+      });
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.send(buf);
+    });
+  } catch (e) { res.status(500).json({ error: String(e) }); }
+});
+
+app.post('/api/jarvis/text', authMiddleware, async (req, res) => {
+  try {
+    const upstream = await fetch(`${JARVIS_API_URL}/text`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${JARVIS_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    });
+    res.status(upstream.status);
+    const ct = upstream.headers.get('Content-Type') || '';
+    if (ct.includes('audio')) {
+      res.set('Content-Type', ct);
+      const xr = upstream.headers.get('X-Reply'); if (xr) res.set('X-Reply', xr);
+      res.send(Buffer.from(await upstream.arrayBuffer()));
+    } else {
+      res.json(await upstream.json());
+    }
+  } catch (e) { res.status(500).json({ error: String(e) }); }
+});
+
+app.get('/api/jarvis/health', lanOrAuth, async (req, res) => {
+  try {
+    const upstream = await fetch(`${JARVIS_API_URL}/health`);
+    res.json(await upstream.json());
+  } catch { res.status(503).json({ error: 'Jarvis API unreachable' }); }
+});
+
+app.get('/api/jarvis/history/:sessionId', authMiddleware, async (req, res) => {
+  try {
+    const upstream = await fetch(`${JARVIS_API_URL}/history/${req.params.sessionId}`, {
+      headers: { 'Authorization': `Bearer ${JARVIS_KEY}` }
+    });
+    res.json(await upstream.json());
+  } catch { res.status(502).json({ error: 'Jarvis API unreachable' }); }
+});
+
+app.delete('/api/jarvis/history/:sessionId', authMiddleware, async (req, res) => {
+  try {
+    const upstream = await fetch(`${JARVIS_API_URL}/history/${req.params.sessionId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${JARVIS_KEY}` }
+    });
+    res.json(await upstream.json());
+  } catch { res.status(502).json({ error: 'Jarvis API unreachable' }); }
 });
 
 // ============================================================================

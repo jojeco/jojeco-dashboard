@@ -31,7 +31,7 @@
       - ADMIN_EMAIL=${ADMIN_EMAIL:-}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - ADMIN_USER_ID=${ADMIN_USER_ID:-}
-      - NODE_TLS_REJECT_UNAUTHORIZED=0
+      - NODE_TLS_REJECT_UNAUTHORIZED=1
     restart: unless-stopped
     networks:
       - jojeco-network
@@ -68,6 +68,7 @@
     container_name: netdata
     hostname: jojeco-server
     restart: unless-stopped
+    mem_limit: 512m
     cap_add:
       - SYS_PTRACE
       - SYS_ADMIN

@@ -91,7 +91,7 @@ function TdarrPanel({ tdarr }: { tdarr: TdarrStatus | null }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 6 }}>
         {[
           { label: 'Library Score', value: `${score.toFixed(1)}%`, color: score >= 90 ? 'var(--ok)' : score >= 70 ? 'var(--warn)' : 'var(--err)' },
           { label: 'Transcoded', value: tdarr.transcoded.toLocaleString(), color: 'var(--ok)' },
@@ -151,7 +151,7 @@ function TdarrPanel({ tdarr }: { tdarr: TdarrStatus | null }) {
                       <Zap size={9} />{w.fps} fps
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--t2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 4 }}>{w.file || '—'}</div>
+                  <div style={{ fontSize: 11, color: 'var(--t2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', wordBreak: 'break-word', marginBottom: 4 }}>{w.file || '—'}</div>
                   <div className="j-bar-track" style={{ height: 3 }}>
                     <div className="j-bar-fill" style={{ width: `${w.percentage}%`, background: color, transition: 'width 1s linear' }} />
                   </div>
@@ -182,7 +182,7 @@ function RipCard({ rip }: { rip: RipStatus }) {
     <div className="j-panel" style={{ padding: 14, marginBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <Disc size={14} style={{ flexShrink: 0, color: rip.status === 'ripping' ? '#a78bfa' : 'var(--t3)', animation: rip.status === 'ripping' ? 'spin 1s linear infinite' : 'none' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rip.album || 'CD Rip'}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', wordBreak: 'break-word' }}>{rip.album || 'CD Rip'}</span>
         <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: `${color}18`, color }}>{rip.status}</span>
       </div>
       {rip.total > 0 && (
@@ -235,8 +235,8 @@ function UpcomingCard({ item }: { item: UpcomingItem }) {
       <div className="j-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <Tv size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</div>
-          <div style={{ fontSize: 11, color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.episode}{item.episodeTitle ? ` — ${item.episodeTitle}` : ''}</div>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.title}</div>
+          <div style={{ fontSize: 11, color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.episode}{item.episodeTitle ? ` — ${item.episodeTitle}` : ''}</div>
           {item.network && <div style={{ fontSize: 10, color: 'var(--t3)' }}>{item.network}</div>}
         </div>
         {date && (
@@ -255,8 +255,8 @@ function UpcomingCard({ item }: { item: UpcomingItem }) {
     <div className="j-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
       <Film size={13} style={{ color: '#a78bfa', flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title} {item.year ? `(${item.year})` : ''}</div>
-        {item.studio && <div style={{ fontSize: 11, color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.studio}</div>}
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.title} {item.year ? `(${item.year})` : ''}</div>
+        {item.studio && <div style={{ fontSize: 11, color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', wordBreak: 'break-word' }}>{item.studio}</div>}
         {releaseType && <div style={{ fontSize: 10, color: 'var(--t3)' }}>{releaseType}</div>}
       </div>
       {date && (
@@ -385,7 +385,7 @@ export default function MediaPage() {
   if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256, color: 'var(--t3)', fontSize: 13 }}>Loading...</div>;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, overflowX: 'hidden' }}>
       {isGuest && (
         <div style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--accent-border)', background: 'var(--accent-dim)', fontSize: 12, color: 'var(--t2)' }}>
           <strong style={{ color: 'var(--t1)' }}>Media</strong> — download queue and upcoming releases from Sonarr and Radarr.
@@ -393,7 +393,7 @@ export default function MediaPage() {
       )}
 
       {/* Top row: Rip/Torrents | Transcoder */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 20, alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)', display: 'flex', alignItems: 'center', gap: 6 }}>
             Rip Station
@@ -402,7 +402,7 @@ export default function MediaPage() {
         </div>
 
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <Cpu size={13} style={{ color: 'var(--t3)' }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Transcoder</span>
             {tdarr && tdarr.workers.filter(w => w.status === 'Execute' || w.status === 'Processing').length > 0 && (
@@ -416,12 +416,12 @@ export default function MediaPage() {
       </div>
 
       {/* Bottom row: Download Queue | Upcoming */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 20, alignItems: 'start' }}>
         {/* Download Queue */}
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Download Queue</span>
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
               <PerPageSelect value={queuePerPage} onChange={n => { setQueuePerPage(n); setQueuePage(1); }} />
               <TabBar
                 tabs={[
@@ -455,7 +455,7 @@ export default function MediaPage() {
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                           {isShow ? <Tv size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} /> : <Film size={13} style={{ color: '#a78bfa', flexShrink: 0 }} />}
-                          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', wordBreak: 'break-word' }}>{title}</div>
                         </div>
                         <div style={{ flexShrink: 0 }}>{statusBadge(item.status)}</div>
                       </div>
@@ -480,11 +480,11 @@ export default function MediaPage() {
         </div>
 
         {/* Upcoming */}
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <Calendar size={13} style={{ color: 'var(--t3)' }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Upcoming</span>
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
               <PerPageSelect value={upcomingPerPage} onChange={n => { setUpcomingPerPage(n); setUpcomingPage(1); }} />
               <TabBar
                 tabs={[

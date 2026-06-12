@@ -458,4 +458,11 @@ button { font-family: inherit; cursor: pointer; }
   .j-grid-auto { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
   .j-stat-num  { font-size: 32px; }
   .j-stat-tile { padding: 12px 14px; }
+  /* Global mobile safety net: collapse inline pixel-fixed grids that media queries can't reach */
+  .j-mobile-content [style*="minmax(2"] { grid-template-columns: 1fr !important; }
+  .j-mobile-content [style*="minmax(3"] { grid-template-columns: 1fr !important; }
+  .j-mobile-content [style*="repeat(3"] { grid-template-columns: 1fr !important; }
+  .j-mobile-content [style*="repeat(4"] { grid-template-columns: repeat(2, 1fr) !important; }
+  .j-mobile-content [style*="repeat(5"] { grid-template-columns: repeat(2, 1fr) !important; }
+  .j-mobile-content { overflow-x: hidden; }
 }

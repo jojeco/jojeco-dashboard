@@ -14,7 +14,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | n
     return this.props.children;
   }
 }
-import { LogOut, LogIn, Server, Film, Zap, LayoutDashboard, Sliders, Sun, Moon, Sword } from 'lucide-react';
+import { LogOut, LogIn, Server, Film, Zap, LayoutDashboard, Sliders, Sun, Moon, Sword, Mic, Home } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
@@ -29,6 +29,8 @@ import ChaosPage from './Pages/ChaosPage';
 import ControlsPage from './Pages/ControlsPage';
 import MinecraftPage from './Pages/MinecraftPage';
 import KioskPage from './Pages/Kiosk/KioskPage';
+import JarvisPage from './Pages/JarvisPage';
+import HomeAssistantPage from './Pages/HomeAssistantPage';
 
 function MediaAndTorrentsPage() {
   return (
@@ -65,6 +67,8 @@ const NAV = [
   { id: 'controls',  label: 'Controls',  href: '/controls',  icon: Sliders },
   { id: 'minecraft', label: 'Minecraft', href: '/minecraft', icon: Sword },
   { id: 'chaos',     label: 'Chaos',     href: '/chaos',     icon: Zap },
+  { id: 'jarvis',   label: 'Jarvis',    href: '/jarvis',    icon: Mic },
+  { id: 'home',     label: 'Home',      href: '/home',      icon: Home },
 ];
 
 
@@ -235,6 +239,8 @@ function App() {
             <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/minecraft"  element={<ProtectedRoute><ErrorBoundary><MinecraftPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/kiosk"      element={<ErrorBoundary><KioskPage /></ErrorBoundary>} />
+            <Route path="/jarvis"     element={<ProtectedRoute><ErrorBoundary><JarvisPage /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/home"       element={<ProtectedRoute><ErrorBoundary><HomeAssistantPage /></ErrorBoundary></ProtectedRoute>} />
           </Routes>
         </PageShell>
       </AuthProvider>
