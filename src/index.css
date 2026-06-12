@@ -4,7 +4,74 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Design Tokens ─────────────────────────────────────────────── */
+/* ─── shadcn/ui CSS Variable Layer (dark-first, teal accent) ───────── */
+@layer base {
+  :root {
+    /* Dark theme is the default (dark-first) */
+    --background:         222 47% 6%;       /* ~#0a0e1a */
+    --foreground:         210 20% 92%;
+
+    --card:               222 35% 8%;
+    --card-foreground:    210 20% 92%;
+
+    --popover:            222 35% 8%;
+    --popover-foreground: 210 20% 92%;
+
+    --primary:            174 72% 40%;      /* teal — matches --accent #14b8a6 hue */
+    --primary-foreground: 222 47% 6%;
+
+    --secondary:          222 20% 14%;
+    --secondary-foreground: 210 20% 75%;
+
+    --muted:              222 20% 14%;
+    --muted-foreground:   215 15% 45%;
+
+    --accent:             174 72% 40%;
+    --accent-foreground:  222 47% 6%;
+
+    --destructive:        0 72% 60%;        /* --err #ef4444 */
+    --destructive-foreground: 210 20% 92%;
+
+    --border:             222 20% 14%;
+    --input:              222 20% 14%;
+    --ring:               174 72% 40%;
+
+    --radius:             0.625rem;         /* 10px matches --r */
+  }
+
+  /* Light theme — applied when .light class is on <html> */
+  .light {
+    --background:         220 14% 96%;
+    --foreground:         222 47% 8%;
+
+    --card:               0 0% 100%;
+    --card-foreground:    222 47% 8%;
+
+    --popover:            0 0% 100%;
+    --popover-foreground: 222 47% 8%;
+
+    --primary:            174 72% 32%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary:          220 14% 93%;
+    --secondary-foreground: 222 47% 20%;
+
+    --muted:              220 14% 93%;
+    --muted-foreground:   215 15% 50%;
+
+    --accent:             174 72% 32%;
+    --accent-foreground:  0 0% 100%;
+
+    --destructive:        0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border:             220 14% 88%;
+    --input:              220 14% 88%;
+    --ring:               174 72% 32%;
+  }
+}
+
+/* ─── JojeCo Legacy Design Tokens ───────────────────────────────── */
 :root {
   --canvas:   #0a0a0c;
   --surface:  #111114;
