@@ -28,7 +28,7 @@ export function AINodeCard({ node, sessions }: AINodeCardProps) {
     : { background: 'var(--ok)', boxShadow: '0 0 0 2px var(--ok-dim)', animation: 'pulseDot 2.5s ease-in-out infinite' };
 
   return (
-    <Card className="p-4" style={{ opacity: node.online ? 1 : 0.5 }}>
+    <Card className="p-4" style={{ opacity: node.online ? 1 : 0.5, boxShadow: 'var(--shadow-ring), var(--shadow-card)' }}>
       <div className="flex justify-between items-start mb-2.5">
         <div>
           <div className="flex items-center gap-2 mb-0.5">

@@ -1,10 +1,10 @@
 /**
  * InfoPanels — the second row: Recent Alerts, Automation jobs,
  * AdGuard DNS stats, GDrive Backup status.
+ * Dark-control-room surface language: elevated surface, no light borders.
  */
 import { useState } from 'react';
 import { Bell, CheckCircle, XCircle, AlertTriangle, Shield, HardDrive, ChevronDown, ChevronRight } from 'lucide-react';
-import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { NtfyAlert, AutomationJob } from '@/hooks/useSnapshot';
 
@@ -20,6 +20,32 @@ interface InfoPanelsProps {
   backup: BackupStatus | null;
 }
 
+// ─── Panel shell — same surface as MachineCard/AINodeCard ────────────────────
+
+const panelStyle: React.CSSProperties = {
+  background: 'var(--surface)',
+  borderRadius: 'var(--r-lg)',
+  padding: '14px 16px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  boxShadow: 'var(--shadow-ring), var(--shadow-card)',
+  minWidth: 0,
+  overflow: 'hidden',
+};
+
+function PanelHeader({ icon, title, right }: { icon: React.ReactNode; title: string; right?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+      {icon}
+      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--t3)' }}>
+        {title}
+      </span>
+      {right && <span style={{ marginLeft: 'auto' }}>{right}</span>}
+    </div>
+  );
+}
+
 // ─── Alerts Panel ────────────────────────────────────────────────────────────
 
 function AlertsPanel({ alerts }: { alerts: NtfyAlert[] | null }) {
@@ -27,15 +53,15 @@ function AlertsPanel({ alerts }: { alerts: NtfyAlert[] | null }) {
   const list = alerts ?? [];
 
   return (
-    <Card className="p-3.5 flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <Bell size={13} style={{ color: 'var(--accent)' }} />
-        <span className="j-panel-title">Recent Alerts</span>
-        <span className="text-[10px] text-[var(--t3)] ml-auto">{list.length}</span>
-      </div>
-      <div className="flex flex-col gap-0.5 max-h-44 overflow-y-auto">
+    <div style={panelStyle}>
+      <PanelHeader
+        icon={<Bell size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
+        title="Recent Alerts"
+        right={<span style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace' }}>{list.length}</span>}
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxHeight: 168, overflowY: 'auto' }}>
         {list.length === 0 ? (
-          <div className="text-[11px] text-[var(--t3)] py-1">No recent alerts</div>
+          <div style={{ fontSize: 11, color: 'var(--t3)', paddingTop: 4, paddingBottom: 4 }}>No recent alerts</div>
         ) : list.slice(0, 8).map(a => {
           const ago = Math.floor((Date.now() / 1000 - a.time) / 60);
           const agoStr = ago < 60 ? `${ago}m` : ago < 1440 ? `${Math.floor(ago / 60)}h` : `${Math.floor(ago / 1440)}d`;
@@ -43,26 +69,28 @@ function AlertsPanel({ alerts }: { alerts: NtfyAlert[] | null }) {
           const isExpanded = expandedAlert === a.id;
 
           return (
-            <div key={a.id} className="border-b border-[var(--line)]">
+            <div key={a.id} style={{ borderBottom: '1px solid var(--line)' }}>
               <div
                 onClick={() => setExpandedAlert(isExpanded ? null : a.id)}
-                className="flex gap-1.5 text-[11px] leading-relaxed py-0.5 cursor-pointer items-start"
+                style={{ display: 'flex', gap: 6, fontSize: 11, lineHeight: '1.5', paddingTop: 5, paddingBottom: 5, cursor: 'pointer', alignItems: 'flex-start' }}
               >
-                <span style={{ color: prioColor, flexShrink: 0, marginTop: 3, fontSize: 8 }}>●</span>
-                <span className="text-[var(--t2)] flex-1 overflow-hidden" style={{ textOverflow: 'ellipsis', whiteSpace: isExpanded ? 'normal' : 'nowrap' }}>
+                <span style={{ color: prioColor, flexShrink: 0, marginTop: 3, fontSize: 7 }}>●</span>
+                <span style={{ color: 'var(--t2)', flex: 1, overflow: 'hidden', textOverflow: isExpanded ? 'unset' : 'ellipsis', whiteSpace: isExpanded ? 'normal' : 'nowrap' }}>
                   {a.message}
                 </span>
-                <span className="text-[var(--t3)] shrink-0 text-[10px] font-mono ml-1">{agoStr}</span>
-                {isExpanded ? <ChevronDown size={10} className="text-[var(--t3)] shrink-0 mt-0.5" /> : <ChevronRight size={10} className="text-[var(--t3)] shrink-0 mt-0.5" />}
+                <span style={{ color: 'var(--t3)', flexShrink: 0, fontSize: 10, fontFamily: 'Geist Mono, monospace', marginLeft: 4 }}>{agoStr}</span>
+                {isExpanded
+                  ? <ChevronDown size={9} style={{ color: 'var(--t3)', flexShrink: 0, marginTop: 3 }} />
+                  : <ChevronRight size={9} style={{ color: 'var(--t3)', flexShrink: 0, marginTop: 3 }} />}
               </div>
               {isExpanded && (
-                <div className="text-[10px] text-[var(--t2)] bg-[var(--canvas)] rounded-md px-2 py-1.5 mb-1 break-words whitespace-pre-wrap leading-relaxed">
-                  {a.title && <div className="font-semibold text-[var(--t1)] mb-0.5">{a.title}</div>}
+                <div style={{ fontSize: 10, color: 'var(--t2)', background: 'var(--canvas)', borderRadius: 'var(--r-sm)', padding: '8px 10px', marginBottom: 6, wordBreak: 'break-word', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                  {a.title && <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>{a.title}</div>}
                   {a.message}
                   {a.tags.length > 0 && (
-                    <div className="mt-1 flex flex-wrap gap-0.5">
+                    <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                       {a.tags.map(tag => (
-                        <span key={tag} className="text-[9px] bg-[var(--raised)] px-1 py-0.5 rounded text-[var(--t3)]">{tag}</span>
+                        <span key={tag} style={{ fontSize: 9, background: 'var(--raised)', padding: '2px 6px', borderRadius: 4, color: 'var(--t3)' }}>{tag}</span>
                       ))}
                     </div>
                   )}
@@ -72,7 +100,7 @@ function AlertsPanel({ alerts }: { alerts: NtfyAlert[] | null }) {
           );
         })}
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -82,36 +110,36 @@ function AutomationPanel({ automation }: { automation: AutomationJob[] | null })
   const jobs = automation ?? [];
 
   return (
-    <Card className="p-3.5 flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <CheckCircle size={13} style={{ color: 'var(--ok)' }} />
-        <span className="j-panel-title">Automation</span>
-      </div>
-      <div className="flex flex-col gap-1.5">
+    <div style={panelStyle}>
+      <PanelHeader
+        icon={<CheckCircle size={12} style={{ color: 'var(--ok)', flexShrink: 0 }} />}
+        title="Automation"
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {jobs.length === 0 ? (
-          <div className="text-[11px] text-[var(--t3)] py-1">Loading...</div>
+          <div style={{ fontSize: 11, color: 'var(--t3)', paddingTop: 4 }}>Loading...</div>
         ) : jobs.map(job => (
-          <div key={job.id} className="flex items-center gap-2 text-[11px]">
+          <div key={job.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
             {job.status === 'ok'
-              ? <CheckCircle size={11} className="shrink-0" style={{ color: 'var(--ok)' }} />
+              ? <CheckCircle size={11} style={{ color: 'var(--ok)', flexShrink: 0 }} />
               : job.status === 'error'
-              ? <XCircle size={11} className="shrink-0" style={{ color: 'var(--err)' }} />
-              : <AlertTriangle size={11} className="shrink-0 text-[var(--t3)]" />}
-            <div className="flex-1 min-w-0">
-              <div className="font-medium text-[var(--t1)]">{job.label}</div>
-              <div className="text-[10px] text-[var(--t3)]">{job.schedule}</div>
+              ? <XCircle size={11} style={{ color: 'var(--err)', flexShrink: 0 }} />
+              : <AlertTriangle size={11} style={{ color: 'var(--t3)', flexShrink: 0 }} />}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.label}</div>
+              <div style={{ fontSize: 10, color: 'var(--t3)' }}>{job.schedule}</div>
             </div>
-            <div className="text-right shrink-0">
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
               {job.lastRun ? (
-                <span className="text-[10px] font-mono" style={{ color: job.status === 'error' ? 'var(--err)' : 'var(--t3)' }}>
+                <span style={{ fontSize: 10, fontFamily: 'Geist Mono, monospace', color: job.status === 'error' ? 'var(--err)' : 'var(--t3)' }}>
                   {new Date(job.lastRun).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}
                 </span>
-              ) : <span className="text-[10px] text-[var(--t3)]">—</span>}
+              ) : <span style={{ fontSize: 10, color: 'var(--t3)' }}>—</span>}
             </div>
           </div>
         ))}
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -119,76 +147,74 @@ function AutomationPanel({ automation }: { automation: AutomationJob[] | null })
 
 function AdGuardPanel({ adguard }: { adguard: AdGuardStats | null }) {
   return (
-    <Card className="p-3.5 flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <Shield size={13} style={{ color: 'var(--accent)' }} />
-        <span className="j-panel-title">AdGuard DNS</span>
-      </div>
+    <div style={panelStyle}>
+      <PanelHeader
+        icon={<Shield size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
+        title="AdGuard DNS"
+      />
       {adguard ? (
-        <div className="flex flex-col gap-1.5">
-          <div className="flex gap-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 20, alignItems: 'flex-end' }}>
             <div>
-              <div className="text-[22px] font-bold font-mono text-[var(--t1)] leading-none">
+              <div style={{ fontSize: 'clamp(20px, 3.5vw, 26px)', fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: 'var(--t1)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
                 {adguard.totalQueries >= 1000 ? `${(adguard.totalQueries / 1000).toFixed(1)}k` : adguard.totalQueries}
               </div>
-              <div className="text-[9px] text-[var(--t3)] mt-0.5">queries (24h)</div>
+              <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 3, letterSpacing: '0.04em' }}>queries / 24h</div>
             </div>
             <div>
-              <div className="text-[22px] font-bold font-mono leading-none" style={{ color: 'var(--err)' }}>
+              <div style={{ fontSize: 'clamp(20px, 3.5vw, 26px)', fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: 'var(--err)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
                 {adguard.blockedPercent}%
               </div>
-              <div className="text-[9px] text-[var(--t3)] mt-0.5">blocked</div>
+              <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 3, letterSpacing: '0.04em' }}>blocked</div>
             </div>
           </div>
           {adguard.avgProcessingTime && (
-            <div className="text-[10px] text-[var(--t3)] font-mono">avg {adguard.avgProcessingTime}ms response</div>
+            <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace' }}>avg {adguard.avgProcessingTime}ms response</div>
           )}
         </div>
       ) : (
-        <div className="text-[11px] text-[var(--t3)] py-1">Connecting...</div>
+        <div style={{ fontSize: 11, color: 'var(--t3)', paddingTop: 4 }}>Connecting...</div>
       )}
-    </Card>
+    </div>
   );
 }
 
 // ─── GDrive Backup Panel ──────────────────────────────────────────────────────
 
 function BackupPanel({ backup }: { backup: BackupStatus | null }) {
+  const statusStyle = backup ? {
+    ok:      { background: 'var(--ok-dim)',  color: 'var(--ok)' },
+    error:   { background: 'var(--err-dim)', color: 'var(--err)' },
+    unknown: { background: 'var(--raised)',  color: 'var(--t3)' },
+    never:   { background: 'var(--raised)',  color: 'var(--t3)' },
+  }[backup.status] : null;
+
   return (
-    <Card className="p-3.5 flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <HardDrive size={13} style={{ color: 'var(--accent)' }} />
-        <span className="j-panel-title">GDrive Backup</span>
-        {backup && (
-          <span
-            className="ml-auto text-[10px] px-1.5 py-0.5 rounded"
-            style={{
-              background: backup.status === 'ok' ? 'var(--ok-dim)' : backup.status === 'error' ? 'rgba(244,63,94,0.1)' : 'var(--raised)',
-              color: backup.status === 'ok' ? 'var(--ok)' : backup.status === 'error' ? 'var(--err)' : 'var(--t3)',
-            }}
-          >
+    <div style={panelStyle}>
+      <PanelHeader
+        icon={<HardDrive size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
+        title="GDrive Backup"
+        right={backup && statusStyle ? (
+          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, ...statusStyle }}>
             {backup.status === 'ok' ? '● OK' : backup.status === 'error' ? '✕ Error' : '— Unknown'}
           </span>
-        )}
-      </div>
+        ) : null}
+      />
       {backup ? (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-[11px] text-[var(--t2)]">
-            Last run:{' '}
-            <span className="font-mono text-[var(--t1)]">{backup.lastRun ?? '—'}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 11, color: 'var(--t2)' }}>
+            Last run: <span style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--t1)', fontSize: 11 }}>{backup.lastRun ?? '—'}</span>
           </div>
           {backup.message && (
-            <div
-              className="text-[10px] text-[var(--t3)] font-mono bg-[var(--canvas)] rounded-md px-2 py-1.5 max-h-14 overflow-y-auto whitespace-pre-wrap break-all"
-            >
+            <div style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace', background: 'var(--canvas)', borderRadius: 'var(--r-sm)', padding: '8px 10px', maxHeight: 56, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: 1.6 }}>
               {backup.message.split('\n').slice(-4).join('\n')}
             </div>
           )}
         </div>
       ) : (
-        <Skeleton className="h-10" />
+        <Skeleton className="h-10 mt-1" />
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -196,7 +222,7 @@ function BackupPanel({ backup }: { backup: BackupStatus | null }) {
 
 export function InfoPanels({ alerts, automation, adguard, backup }: InfoPanelsProps) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginBottom: 20 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, marginBottom: 20 }}>
       <AlertsPanel alerts={alerts} />
       <AutomationPanel automation={automation} />
       <AdGuardPanel adguard={adguard} />

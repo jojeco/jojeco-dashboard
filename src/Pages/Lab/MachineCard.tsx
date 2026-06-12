@@ -4,6 +4,7 @@
  * top processes fetched on expand.
  */
 import { useState } from 'react';
+import type React from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -22,11 +23,13 @@ interface MachineCardProps {
   onExpand: (id: string) => void;
 }
 
-function machineCardBorder(m: Machine): string {
-  if (!m.online) return 'border-border/40';
+function machineCardStyle(m: Machine): React.CSSProperties {
+  if (!m.online) return { boxShadow: 'var(--shadow-ring), var(--shadow-card)', opacity: 0.55 };
   const pcts = [m.cpu, m.mem?.percent].filter(v => v != null) as number[];
-  if (pcts.some(p => p >= 85)) return 'border-yellow-500/30';
-  return 'border-green-500/20';
+  if (pcts.some(p => p >= 85)) {
+    return { boxShadow: '0 0 0 1px rgba(234,179,8,0.15), var(--shadow-card), inset 0 1px 0 rgba(234,179,8,0.2)' };
+  }
+  return { boxShadow: '0 0 0 1px rgba(34,197,94,0.10), var(--shadow-card)' };
 }
 
 export function MachineCard({ m, history, isMobile, processes, onExpand }: MachineCardProps) {
@@ -39,8 +42,8 @@ export function MachineCard({ m, history, isMobile, processes, onExpand }: Machi
   const gaugeSize = isMobile ? 60 : 68;
 
   return (
-    <Card className={`transition-opacity ${!m.online ? 'opacity-50' : 'opacity-100'} ${machineCardBorder(m)}`}
-      style={{ animation: 'fadeUp 350ms cubic-bezier(0.16,1,0.3,1) both' }}>
+    <Card className="transition-opacity"
+      style={{ animation: 'fadeUp 350ms cubic-bezier(0.16,1,0.3,1) both', ...machineCardStyle(m) }}>
       {/* Header */}
       <div className="flex justify-between items-start p-4 pb-3">
         <div className="min-w-0 flex-1">
