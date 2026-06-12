@@ -2833,6 +2833,57 @@ app.get('/api/kiosk/pi-ap', optionalAuthMiddleware, async (req, res) => {
 });
 
 // ============================================================================
+// Aggregated snapshot — single payload for the v3 frontend's shared data hook.
+// Replaces N per-page pollers with one request. Internally fans out to the
+// existing endpoints (so each section keeps its own auth/sanitization logic)
+// with a short-TTL shared cache so concurrent clients don't multiply load on
+// lab machines. Phase 3 refactor will inline these instead of looping back.
+// ============================================================================
+
+const snapshotCache = new Map(); // `${section}:${auth|guest}` → { at, data }
+const SNAP_SECTIONS = {
+  lab:            '/api/lab/overview',
+  servicesHealth: '/api/services/health',
+  docker:         '/api/docker/containers',
+  fleet:          '/api/ops/fleet',
+  ollama:         '/api/lab/ollama/ps',
+  media:          '/api/media/queue',
+  system:         '/api/system/metrics',
+  serverStatus:   '/api/controls/server-status',
+  alerts:         '/api/alerts/recent',
+  minecraft:      '/api/minecraft/status',
+  automation:     '/api/automation/status',
+  torrents:       '/api/torrents/transfer',
+};
+const SNAP_TTL_MS = { automation: 60000, alerts: 30000, default: 15000 };
+
+app.get('/api/snapshot', optionalAuthMiddleware, async (req, res) => {
+  const wanted = (req.query.sections ? String(req.query.sections).split(',') : Object.keys(SNAP_SECTIONS))
+    .filter(s => SNAP_SECTIONS[s]);
+  const auth = req.headers.authorization || '';
+  const scope = auth ? 'auth' : 'guest';
+  const out = {};
+  await Promise.all(wanted.map(async (s) => {
+    const ttl = SNAP_TTL_MS[s] || SNAP_TTL_MS.default;
+    const key = `${s}:${scope}`;
+    const hit = snapshotCache.get(key);
+    if (hit && Date.now() - hit.at < ttl) { out[s] = hit.data; return; }
+    try {
+      const r = await fetch(`http://127.0.0.1:${PORT}${SNAP_SECTIONS[s]}`, {
+        headers: auth ? { authorization: auth } : {},
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = r.ok ? await r.json() : null;
+      out[s] = data;
+      if (data !== null) snapshotCache.set(key, { at: Date.now(), data });
+    } catch {
+      out[s] = hit ? hit.data : null; // serve stale over nothing
+    }
+  }));
+  res.json({ at: Date.now(), sections: out });
+});
+
+// ============================================================================
 
 async function startServer() {
   await db.init();
