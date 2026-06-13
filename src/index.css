@@ -544,4 +544,8 @@ button { font-family: inherit; cursor: pointer; }
     bottom: max(10px, env(safe-area-inset-bottom));
     padding-bottom: env(safe-area-inset-bottom);
   }
+  /* Docker stat tiles — 2×2 on mobile */
+  .docker-stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  /* Services grid — 2 cols on mobile (minmax 140px fills to 2 at 390px) */
+  .j-mobile-content [style*="minmax(140"] { grid-template-columns: repeat(2, 1fr) !important; }
 }

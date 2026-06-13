@@ -21,7 +21,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SnapshotProvider } from './hooks/useSnapshot';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
-import Dashboard from './Pages/DashboardNew';
+import ServicesPage from './Pages/Services';
 import { Birthday } from './Pages/Birthday';
 import TorrentsPage from './Pages/TorrentsPage';
 import DockerPage from './Pages/DockerPage';
@@ -246,7 +246,7 @@ function App() {
             <Route path="/login"    element={<Login />} />
             <Route path="/birthday" element={<Birthday />} />
             <Route path="/"         element={<ProtectedRoute><ErrorBoundary><LabPage /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/services" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/services" element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
             <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPage /></ProtectedRoute>} />
             <Route path="/docker"   element={<ProtectedRoute><DockerPage /></ProtectedRoute>} />
             <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPage /></ProtectedRoute>} />

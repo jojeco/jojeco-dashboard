@@ -163,6 +163,95 @@ Priority order (Jordan's: Looks/UX first):
 
 ---
 
+---
+
+## ServicesPage + DockerSection Feature-Parity Checklist
+
+**Sources:** `src/Pages/DashboardNew.tsx` + `src/Pages/DockerPage.tsx` → new `src/Pages/Services/`
+
+### ServicesPage — Layout & Structure
+- [ ] Guest banner (info box about URLs hidden in guest view)
+- [ ] Search bar with magnifier icon; accent border on focus
+- [ ] Status summary pill: "n/total up" with correct color dot (all-up=ok, all-down=err, partial=warn)
+- [ ] Toolbar action buttons for authed users: Add (accent), Import/Export (Download icon), Settings (gear)
+- [ ] Tag filter chip row — horizontally scrollable, scrollbar-none
+- [ ] Pinned section with section label + hairline divider
+- [ ] All Services section label (only shown when pinned section also exists)
+- [ ] Empty state — no services: "Load JojeCo Services" seed button + "Add Manually" button
+- [ ] Empty state — no match: "No services match your filter" + "Clear filters" link
+- [ ] Collapsible Containers section below services (hairline divider top, chevron toggle, renders DockerSection when open)
+
+### ServiceCard
+- [ ] Borderless Card (surface elevation, shadow-ring + shadow-card; no explicit border color)
+- [ ] Icon box (8×8 background raised, no hard border → use shadow-ring only)
+- [ ] Status dot top-right (pulsing when online)
+- [ ] Response time in monospace (t3)
+- [ ] Name (13px, semibold, t1, truncated)
+- [ ] Description (11px, t3, truncated)
+- [ ] Tag chips (max 2, 9px, raised bg, t3, NO border — shadow-ring only or drop entirely)
+- [ ] Uptime sparkline (7-day / 24 buckets) bottom-left
+- [ ] Up/Down/— status label (color-coded)
+- [ ] External link icon (t3→accent on hover)
+- [ ] Click → open edit modal (not for guests)
+- [ ] Offline card: red inset shadow stripe (j-card-err class) — NOT a red border color
+- [ ] Hover: shadow-hover (no border change)
+
+### Health Data
+- [ ] On-mount + 60s interval: fetch `/services/health` via api.ts
+- [ ] On-mount + 30min interval: fetch `/health/sparklines` via api.ts
+- [ ] healthMap and sparklines populated from API responses
+- [ ] NO per-card setInterval
+
+### Service Mutations (modal-based, existing modals reused)
+- [ ] Add service (ServiceModal, selectedService=null)
+- [ ] Edit service (ServiceModal, selectedService=service)
+- [ ] Delete service (serviceService.deleteService via ServiceModal onDelete)
+- [ ] Pin/unpin (via ServiceModal → serviceService.updateService with isPinned toggle)
+- [ ] Import services (ImportExportModal → serviceService.importServices)
+- [ ] Export services (ImportExportModal → serviceService.exportServices)
+- [ ] Seed default services ("Load JojeCo Services" → serviceService.seedDefaultServices)
+
+### Settings Modal
+- [ ] "Signed in as" email
+- [ ] Change Password button → opens PasswordChangeModal
+- [ ] App description + version footer
+- [ ] Guest view: settings button hidden
+
+### DockerSection (replaces standalone DockerPage in collapsible area)
+- [ ] Stat tiles row: Running (ok), Stopped (err if >0), Stacks (accent), Images (t2)
+- [ ] Unhealthy alert banner (red bg, err dot, count)
+- [ ] Search bar — filters by name, image, compose_project
+- [ ] Sort buttons: state | name | created (accent active state)
+- [ ] Checkboxes: "Group by stack" + "Show stopped"
+- [ ] Container count + Refresh button
+- [ ] Container list grouped by compose stack (StackGroup) OR flat list
+- [ ] StackGroup: collapsible, stack icon (Layers=accent/Box=t3), running/total count, unhealthy warning
+- [ ] ContainerRow: state dot (ok/err/warn/off), name, HealthBadge, image, port chips, timeSince created
+- [ ] Action buttons for authed: Restart (warn), Stop (err) for running; Start (ok) for stopped
+- [ ] Log viewer: toggle via Terminal icon, log search, match count, green pre block, max-h 256
+- [ ] Polling: 8s interval within the section via local fetch (not snapshot; docker containers in snapshot are summary only)
+- [ ] localStorage cache key `cache_docker_containers` (warm on load)
+- [ ] Empty state: Box icon + "No containers found"
+- [ ] Error state: centered err-color message
+
+### Mobile (390px)
+- [ ] Service grid: 2 columns (minmax 140px with 8px gap fills to 2 on 390px)
+- [ ] Tag row scrolls horizontally without showing scrollbar
+- [ ] Docker stat tiles: 2×2 grid on mobile
+- [ ] ContainerRow: ports hidden or wrapped on mobile (no overflow)
+- [ ] Log panel does not overflow screen width
+- [ ] Bottom nav safe-area respected (padding-bottom: env(safe-area-inset-bottom))
+
+### Design compliance
+- [ ] No explicit `border` / `borderColor` on cards — elevation only (shadow-ring)
+- [ ] Section labels: 10-11px uppercase muted (var(--t3)), font-weight 700, letter-spacing 0.08em
+- [ ] Status colors ONLY on status content (dots, labels, numbers)
+- [ ] Hairline dividers: `1px solid var(--line)` (rgba 6% max) only for structural separation
+- [ ] Tag chips in ServiceCard: NO border — use shadow-ring or drop border
+- [ ] All numbers: font-variant-numeric tabular-nums, Geist Mono where prominent
+
+---
+
 ## Phase 2 — Speed
 
 - [ ] SSE stream from API: `GET /api/events` — server push replaces client polling
