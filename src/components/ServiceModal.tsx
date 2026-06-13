@@ -30,6 +30,50 @@ const EMPTY_FORM = {
   healthCheckInterval: 60,
 };
 
+// Shared input style using surface tokens
+const inputStyle: React.CSSProperties = {
+  display: 'block', width: '100%', minWidth: 0,
+  padding: '9px 12px',
+  background: 'var(--raised)',
+  border: '1px solid var(--line-2)',
+  borderRadius: 'var(--r-sm)',
+  color: 'var(--t1)',
+  fontSize: 13,
+  outline: 'none',
+  transition: 'border-color 120ms',
+  fontFamily: 'Geist, system-ui, sans-serif',
+};
+
+function LabelText({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 6, letterSpacing: '0.02em' }}>
+      {children}
+    </span>
+  );
+}
+
+function FocusInput({ style, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      style={{ ...inputStyle, ...style }}
+      onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent-border)')}
+      onBlur={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
+      {...props}
+    />
+  );
+}
+
+function FocusTextarea({ style, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      style={{ ...inputStyle, resize: 'none', ...style }}
+      onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent-border)')}
+      onBlur={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
+      {...props}
+    />
+  );
+}
+
 export const ServiceModal: React.FC<ServiceModalProps> = ({
   isOpen,
   onClose,
@@ -129,112 +173,107 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
       scrollable
       error={error}
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
         {/* Name & Description */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Service Name *
-          </label>
-          <input
+          <LabelText>Service Name *</LabelText>
+          <FocusInput
             type="text"
             value={formData.name}
             onChange={e => setFormData({ ...formData, name: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="My Service"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Description
-          </label>
-          <textarea
+          <LabelText>Description</LabelText>
+          <FocusTextarea
             value={formData.description}
             onChange={e => setFormData({ ...formData, description: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="What this service does"
             rows={2}
           />
         </div>
 
         {/* URLs */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Public URL *
-            </label>
-            <input
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <LabelText>Public URL *</LabelText>
+            <FocusInput
               type="url"
               value={formData.url}
               onChange={e => setFormData({ ...formData, url: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="https://example.com"
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              LAN URL
-            </label>
-            <input
+          <div style={{ minWidth: 0 }}>
+            <LabelText>LAN URL</LabelText>
+            <FocusInput
               type="url"
               value={formData.lanUrl}
               onChange={e => setFormData({ ...formData, lanUrl: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="http://192.168.1.100"
             />
           </div>
         </div>
 
         {/* Health check */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Health Check URL
-            </label>
-            <input
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <LabelText>Health Check URL</LabelText>
+            <FocusInput
               type="url"
               value={formData.healthCheckUrl}
               onChange={e => setFormData({ ...formData, healthCheckUrl: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="https://example.com/health"
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Check Interval (seconds)
-            </label>
-            <input
+          <div style={{ minWidth: 0 }}>
+            <LabelText>Check Interval (seconds)</LabelText>
+            <FocusInput
               type="number"
               min="10"
               max="3600"
               value={formData.healthCheckInterval}
               onChange={e => setFormData({ ...formData, healthCheckInterval: parseInt(e.target.value) })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
         </div>
 
-        {/* Icon picker — renders actual Lucide icons */}
+        {/* Icon picker */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Icon
-          </label>
-          <div className="grid grid-cols-8 gap-1.5 max-h-44 overflow-y-auto p-2 border border-gray-300 dark:border-gray-600 rounded-lg">
+          <LabelText>Icon</LabelText>
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)',
+            gap: 6, maxHeight: 176, overflowY: 'auto',
+            padding: 8,
+            background: 'var(--raised)',
+            borderRadius: 'var(--r-sm)',
+            border: '1px solid var(--line)',
+          }}>
             {AVAILABLE_ICONS.map(iconName => {
               const Icon = ICON_MAP[iconName];
+              const selected = formData.icon === iconName;
               return (
                 <button
                   key={iconName}
                   type="button"
                   onClick={() => setFormData({ ...formData, icon: iconName })}
-                  className={`p-2 rounded-lg border-2 flex items-center justify-center ${
-                    formData.icon === iconName
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/40'
-                      : 'border-transparent hover:border-gray-300 dark:hover:border-gray-500'
-                  }`}
+                  style={{
+                    padding: 8,
+                    borderRadius: 6,
+                    border: '2px solid',
+                    borderColor: selected ? 'var(--accent)' : 'transparent',
+                    background: selected ? 'var(--accent-dim)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 100ms',
+                    minWidth: 0,
+                  }}
                   title={iconName}
                 >
-                  {Icon && <Icon className="w-5 h-5 text-gray-700 dark:text-gray-300" />}
+                  {Icon && <Icon size={18} color={selected ? 'var(--accent)' : 'var(--t2)'} />}
                 </button>
               );
             })}
@@ -243,18 +282,17 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
 
         {/* Color picker */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Color
-          </label>
-          <div className="flex gap-2 flex-wrap">
+          <LabelText>Color</LabelText>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {AVAILABLE_COLORS.map(color => (
               <button
                 key={color.value}
                 type="button"
                 onClick={() => setFormData({ ...formData, color: color.value })}
                 className={`w-9 h-9 rounded-lg ${color.value} transition-all ${
-                  formData.color === color.value ? 'ring-4 ring-offset-2 ring-blue-500 dark:ring-offset-gray-800' : ''
+                  formData.color === color.value ? 'ring-4 ring-offset-2 ring-blue-500' : ''
                 }`}
+                style={{ minWidth: 0 }}
                 title={color.name}
               />
             ))}
@@ -263,52 +301,82 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
 
         {/* Tags */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Tags
-          </label>
-          <div className="flex flex-wrap gap-2 mb-2">
-            {DEFAULT_TAGS.map(tag => (
-              <button
-                key={tag}
-                type="button"
-                onClick={() => toggleTag(tag)}
-                className={`px-3 py-1 rounded-full text-sm transition-colors ${
-                  formData.tags.includes(tag)
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-                }`}
-              >
-                {tag}
-              </button>
-            ))}
+          <LabelText>Tags</LabelText>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            {DEFAULT_TAGS.map(tag => {
+              const active = formData.tags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: 99,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    border: 'none',
+                    transition: 'all 100ms',
+                    background: active ? 'var(--accent)' : 'var(--raised)',
+                    color: active ? '#000' : 'var(--t2)',
+                    minWidth: 0,
+                  }}
+                >
+                  {tag}
+                </button>
+              );
+            })}
           </div>
-          <div className="flex gap-2">
-            <input
+          <div style={{ display: 'flex', gap: 8 }}>
+            <FocusInput
               type="text"
               value={customTag}
               onChange={e => setCustomTag(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCustomTag())}
-              className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Custom tag…"
+              style={{ flex: 1, minWidth: 0 }}
             />
             <button
               type="button"
               onClick={addCustomTag}
-              className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+              style={{
+                padding: '0 16px',
+                background: 'var(--raised)',
+                border: '1px solid var(--line-2)',
+                borderRadius: 'var(--r-sm)',
+                color: 'var(--t2)',
+                fontSize: 13,
+                cursor: 'pointer',
+                flexShrink: 0,
+                transition: 'background 100ms',
+              }}
             >
               Add
             </button>
           </div>
           {formData.tags.filter(t => !DEFAULT_TAGS.includes(t)).length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-2">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
               {formData.tags.filter(t => !DEFAULT_TAGS.includes(t)).map(tag => (
                 <span
                   key={tag}
-                  className="px-3 py-1 rounded-full text-sm bg-purple-500 text-white flex items-center gap-1"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    padding: '4px 10px',
+                    borderRadius: 99,
+                    fontSize: 12,
+                    background: 'rgba(139,92,246,0.15)',
+                    color: '#a78bfa',
+                    minWidth: 0,
+                  }}
                 >
                   {tag}
-                  <button type="button" onClick={() => toggleTag(tag)} className="hover:text-red-200">
-                    <X size={13} />
+                  <button
+                    type="button"
+                    onClick={() => toggleTag(tag)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, display: 'flex' }}
+                  >
+                    <X size={12} />
                   </button>
                 </span>
               ))}
@@ -317,44 +385,76 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
         </div>
 
         {/* Pin */}
-        <label className="flex items-center gap-2 cursor-pointer">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
           <input
             type="checkbox"
             checked={formData.isPinned}
             onChange={e => setFormData({ ...formData, isPinned: e.target.checked })}
-            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--accent)' }}
           />
-          <span className="text-sm text-gray-700 dark:text-gray-300">Pin to top</span>
+          <span style={{ fontSize: 13, color: 'var(--t2)' }}>Pin to top</span>
         </label>
 
-        {/* Actions */}
-        <div className="flex justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
+        {/* Divider */}
+        <div style={{ borderTop: '1px solid var(--line)', paddingTop: 16, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
           {service && onDelete ? (
             <button
               type="button"
               onClick={handleDelete}
               disabled={isLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '9px 16px',
+                background: 'var(--err-dim)',
+                border: '1px solid rgba(239,68,68,0.20)',
+                color: 'var(--err)',
+                borderRadius: 'var(--r-sm)',
+                fontSize: 13, fontWeight: 600,
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                opacity: isLoading ? 0.5 : 1,
+                minWidth: 0,
+              }}
             >
-              <Trash2 size={16} />
+              <Trash2 size={15} />
               Delete
             </button>
           ) : <div />}
-          <div className="flex gap-2">
+          <div style={{ display: 'flex', gap: 8 }}>
             <button
               type="button"
               onClick={onClose}
               disabled={isLoading}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+              style={{
+                padding: '9px 16px',
+                background: 'var(--raised)',
+                border: '1px solid var(--line-2)',
+                color: 'var(--t2)',
+                borderRadius: 'var(--r-sm)',
+                fontSize: 13, fontWeight: 500,
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                opacity: isLoading ? 0.5 : 1,
+                minWidth: 0,
+              }}
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '9px 16px',
+                background: 'var(--accent)',
+                border: 'none',
+                color: '#000',
+                borderRadius: 'var(--r-sm)',
+                fontSize: 13, fontWeight: 600,
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                opacity: isLoading ? 0.6 : 1,
+                minWidth: 0,
+              }}
             >
-              <Save size={16} />
+              <Save size={15} />
               {isLoading ? 'Saving…' : 'Save'}
             </button>
           </div>

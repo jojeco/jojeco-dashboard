@@ -113,10 +113,10 @@ Priority order (Jordan's: Looks/UX first):
 | Media | MediaPage + TorrentsPage | Table component fits |
 | Minecraft | MinecraftPage.tsx | — |
 | Chaos | ChaosPage.tsx | — |
-| Jarvis | JarvisPage.tsx | — |
-| Home Assistant | HomeAssistantPage.tsx | — |
-| Login | Login.tsx | Card + form |
-| Kiosk | Kiosk/KioskPage.tsx | Keep as-is until layout finalized |
+| ~~Jarvis~~ | ~~JarvisPage.tsx~~ | **DONE** — already on CSS var tokens; genUUID preserved; verified |
+| ~~Home Assistant~~ | ~~HomeAssistantPage.tsx~~ | **DONE** — iframe only, light polish |
+| ~~Login~~ | ~~Login.tsx~~ | **DONE** — reskinned to CSS var surface tokens, no dark: gray classes |
+| ~~Kiosk~~ | ~~Kiosk/KioskPage.tsx~~ | **DONE** — already compliant with k-* vars; light audit confirmed ok |
 
 ---
 
@@ -125,7 +125,7 @@ Priority order (Jordan's: Looks/UX first):
 - [x] `/api/snapshot` endpoint on API — single aggregated payload to replace 21 pollers (landed via origin/main merge)
 - [x] `useSnapshot` hook — `src/hooks/useSnapshot.tsx`; `<SnapshotProvider>` mounted in App.tsx inside AuthProvider; polls every 5s LAN / 20s WAN; pauses on document.hidden; 401 → redirect to /login
 - [x] Decompose LabPage.tsx into sub-components (it's 999 lines) — new `src/Pages/Lab/` directory
-- [ ] Remove `/ai` orphan route (Odysseus replaced LibreChat)
+- [x] Remove `/ai` orphan route (Odysseus replaced LibreChat) — AIPage.tsx deleted, route removed from App.tsx
 - [x] Feature-parity checklist per page before marking done — see LabPage checklist below
 
 ---
@@ -543,6 +543,136 @@ Priority order (Jordan's: Looks/UX first):
 - [x] mobile-first — service grid wraps to 1 column at 390px
 - [x] ConfirmDialog for RUN module + ABORT (v3 adds confirm for RUN/ABORT that old page lacked)
 - [x] ToastStack for real-mode errors
+
+---
+
+---
+
+## JarvisPage Feature-Parity Checklist
+
+**Source:** `src/Pages/JarvisPage.tsx` (164 lines) — restyled in place
+
+### Parity: 7/7
+
+- [x] `genUUID()` fallback preserved (crypto.randomUUID only in secure contexts — plain HTTP staging needs fallback)
+- [x] Session ID stored in localStorage, persisted across page loads
+- [x] Status bar: JARVIS ONLINE indicator (Radio icon, var(--ok)), status text (var(--t3)), clear history button
+- [x] Chat history: user bubbles (right, var(--accent) bg, white text) / Jarvis bubbles (left, var(--surface) bg, t1 text)
+- [x] Push-to-talk mic button: 80px circle, accent when idle, err when recording, pulsing glow shadow
+- [x] Loading spinner (Loader2 + j-panel) while processing
+- [x] TTS replay button per Jarvis message (Volume2 icon)
+- [x] `clearHistory()` → DELETE /api/jarvis/history/:session_id
+- [x] No setInterval — audio recording/streaming timers via MediaRecorder events (not data polling)
+- [x] Design: already used CSS var tokens throughout; minWidth:0 on all bubbles; maxWidth 80% on messages
+- [x] Mobile: scrollable chat area, mic button stays at bottom
+
+---
+
+## HomeAssistantPage Feature-Parity Checklist
+
+**Source:** `src/Pages/HomeAssistantPage.tsx` (18 lines) — minimal, restyled
+
+### Parity: 3/3
+
+- [x] Full-viewport iframe embedding HA at http://192.168.50.13:8123
+- [x] `allow="microphone"` preserved (HA voice assistant)
+- [x] `border: none` — no hard border on iframe
+- [x] Wrapper uses j-content class with padding:0 and flex column
+- [x] minWidth:0 on wrapper (overflow-safe)
+
+---
+
+## Login Feature-Parity Checklist
+
+**Source:** `src/Pages/Login.tsx` (101 lines) — reskinned from Tailwind dark: gray-800 to CSS var surface tokens
+
+### Parity: 6/6
+
+- [x] Email + password form fields with focus → accent-border highlight
+- [x] signInWithEmail() → navigates to /
+- [x] Error display (var(--err-dim) bg, red border, var(--err) text)
+- [x] Loading state on Sign In button (disables, shows "Signing in…")
+- [x] "Continue as Guest →" sets sessionStorage guestMode=1 → navigate('/')
+- [x] Design: var(--surface) card, var(--canvas) page bg, var(--raised) inputs, var(--accent) CTA button
+- [x] No Tailwind dark: gray-800/gray-700 — fully on CSS var tokens
+- [x] minWidth:0 on card and all inputs
+- [x] Hairline divider (var(--line)) above guest button
+
+---
+
+## Modal Suite Feature-Parity Checklist
+
+**Sources:** `BaseModal.tsx`, `ServiceModal.tsx`, `ImportExportModal.tsx`, `PasswordChangeModal.tsx`
+
+### Parity: 100%
+
+#### BaseModal
+- [x] Backdrop: rgba(0,0,0,0.65) — no light backdrop
+- [x] Panel: var(--surface) bg, shadow ring 7% + deep drop shadow, var(--r-lg) radius
+- [x] Header: var(--t1) title, X button var(--t3)→var(--t1) on hover, bottom hairline var(--line)
+- [x] Error alert: var(--err-dim) bg, low-alpha red border, var(--err) text
+- [x] Success alert: var(--ok-dim) bg, low-alpha green border, var(--ok) text
+- [x] Scrollable mode: maxHeight 90vh, flex column (content scrolls, header fixed)
+- [x] maxWidth via pixel map (not Tailwind classes)
+- [x] No gray-800/gray-700 classes
+
+#### ServiceModal
+- [x] All 9 form fields preserved: name, description, URL, LAN URL, health URL, interval, icon, color, tags, isPinned
+- [x] Icon picker: var(--raised) container, accent border on selected, no Tailwind dark: classes
+- [x] Color picker: Tailwind bg color classes (these ARE the color swatches, correct to use them)
+- [x] Tag chips: var(--accent) bg when active, var(--raised) when inactive — no explicit border
+- [x] Custom tag: accent purple tint (rgba 15% bg, #a78bfa text) for user-added tags
+- [x] Delete button: var(--err-dim) bg with low-alpha red border
+- [x] Save button: var(--accent) bg, #000 text (dark text on teal)
+- [x] Cancel button: var(--raised) bg, var(--line-2) border (hairline)
+- [x] minWidth:0 on all grid items and inputs
+- [x] Grid layout auto-fit minmax(200px, 1fr) for URL/health pairs
+
+#### ImportExportModal
+- [x] Tab bar: accent underline + accent text for active tab, t3 for inactive — no gray-700 border
+- [x] Export textarea: var(--raised) bg, var(--line-2) border (hairline), Geist Mono
+- [x] Import file input + paste textarea: same token system
+- [x] Download button: var(--ok-dim) bg + low-alpha green border
+- [x] Copy button: var(--raised) bg; transitions to var(--ok) text + Check icon on copied
+- [x] Import button: var(--accent) bg when active, opacity 0.5 when disabled
+
+#### PasswordChangeModal
+- [x] 3 password fields: var(--raised) bg, focus → accent-border
+- [x] Cancel: var(--raised) + hairline border
+- [x] Submit: var(--accent) bg, #000 text
+- [x] Error/success handled by BaseModal's own alert system
+- [x] Reset on close
+
+---
+
+## Kiosk Polish Checklist
+
+**Source:** `src/Pages/Kiosk/KioskPage.tsx` — light polish only, layout preserved
+
+### Parity: already compliant
+
+- [x] Uses k-* scoped CSS variables (k-surface, k-border, k-accent, k-green, k-red, k-amber)
+- [x] Card borders: dynamic color based on status (ok/warn/crit/loading) — NOT hard gray borders
+- [x] k-border = rgba(255,255,255,0.07) — 7% alpha hairline only on neutral-status cards
+- [x] KCard: minWidth:0 in grid (gridColumn span, minWidth:0 explicit in styles)
+- [x] Fullscreen fixed layout with 4-column grid — designed for 1280×800 wall display
+- [x] setInterval: used ONLY for data polling at 30s KIOSK_REFRESH_MS — this is a kiosk page that runs permanently; interval is intentional and cleaned up in useEffect return
+- [x] No changes needed — already uses surface elevation tokens, no hard Tailwind dark: borders
+
+---
+
+## Cleanup Checklist
+
+- [x] Deleted `src/Pages/AIPage.tsx` — Odysseus replaced LibreChat at /ai
+- [x] Deleted `src/Pages/LabPage.tsx` — replaced by `src/Pages/Lab/` folder
+- [x] Deleted `src/Pages/DashboardNew.tsx` — replaced by `src/Pages/Services/` folder
+- [x] Deleted `src/Pages/ControlsPage.tsx` — replaced by `src/Pages/Controls/` folder
+- [x] Deleted `src/Pages/MediaPage.tsx` — replaced by `src/Pages/Media/` folder
+- [x] Deleted `src/Pages/TorrentsPage.tsx` — replaced by `src/Pages/Media/` folder (same page)
+- [x] Deleted `src/Pages/MinecraftPage.tsx` — replaced by `src/Pages/Minecraft/` folder
+- [x] Deleted `src/Pages/ChaosPage.tsx` — replaced by `src/Pages/Chaos/` folder
+- [x] Removed `/ai` route from `src/App.tsx`
+- [x] Note: `src/Pages/DockerPage.tsx` kept — still wired to `/docker` route in App.tsx (DockerSection is embedded in Services but /docker direct link preserved)
 
 ---
 
