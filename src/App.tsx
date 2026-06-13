@@ -23,7 +23,6 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
 import ServicesPage from './Pages/Services';
 import { Birthday } from './Pages/Birthday';
-import DockerPage from './Pages/DockerPage';
 import MediaAndTorrentsPageV3 from './Pages/Media';
 import LabPage from './Pages/Lab';
 import ChaosPage from './Pages/Chaos';
@@ -232,7 +231,7 @@ function App() {
             <Route path="/"         element={<ProtectedRoute><ErrorBoundary><LabPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/services" element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
             <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
-            <Route path="/docker"   element={<ProtectedRoute><DockerPage /></ProtectedRoute>} />
+            <Route path="/docker"   element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
             <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
             {/* /ai removed — Odysseus (port 7000) replaced LibreChat */}
             <Route path="/chaos"    element={<ChaosPage />} />
