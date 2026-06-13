@@ -33,64 +33,158 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
-      <div className="max-w-md w-full space-y-8 bg-white dark:bg-gray-800 p-8 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700">
-        <div className="text-center">
-          <LogIn className="mx-auto h-12 w-12 text-blue-500" />
-          <h2 className="mt-6 text-3xl font-bold text-gray-900 dark:text-gray-100">
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--canvas)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '0 16px',
+    }}>
+      <div style={{
+        width: '100%',
+        maxWidth: 400,
+        background: 'var(--surface)',
+        borderRadius: 'var(--r-lg)',
+        boxShadow: 'var(--shadow-card), 0 0 0 1px rgba(255,255,255,0.05)',
+        padding: '36px 32px',
+        minWidth: 0,
+      }}>
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{
+            width: 52, height: 52,
+            borderRadius: 14,
+            background: 'var(--accent-dim)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 16px',
+            boxShadow: '0 0 24px var(--accent-glow)',
+          }}>
+            <LogIn size={24} color="var(--accent)" />
+          </div>
+          <h2 style={{
+            fontSize: 22, fontWeight: 700,
+            color: 'var(--t1)', marginBottom: 6,
+            letterSpacing: '-0.02em',
+          }}>
             Sign In
           </h2>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">jojeco</p>
+          <p style={{ fontSize: 13, color: 'var(--t3)', fontFamily: 'Geist Mono, monospace', letterSpacing: '0.04em' }}>
+            jojeco
+          </p>
         </div>
 
+        {/* Error */}
         {error && (
-          <div className="bg-red-500/10 border border-red-500 text-red-500 px-4 py-3 rounded-lg text-sm">
+          <div style={{
+            background: 'var(--err-dim)',
+            border: '1px solid rgba(239,68,68,0.25)',
+            color: 'var(--err)',
+            padding: '10px 14px',
+            borderRadius: 'var(--r-sm)',
+            fontSize: 13,
+            marginBottom: 16,
+          }}>
             {error}
           </div>
         )}
 
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Email */}
           <div>
-            <label htmlFor="email" className="sr-only">Email</label>
+            <label htmlFor="email" style={{ display: 'none' }}>Email</label>
             <input
               id="email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 placeholder-gray-400 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              style={{
+                display: 'block', width: '100%', minWidth: 0,
+                padding: '10px 14px',
+                background: 'var(--raised)',
+                border: '1px solid var(--line-2)',
+                borderRadius: 'var(--r-sm)',
+                color: 'var(--t1)',
+                fontSize: 14,
+                outline: 'none',
+                transition: 'border-color 120ms',
+                fontFamily: 'Geist, system-ui, sans-serif',
+              }}
               placeholder="Email address"
               disabled={loading}
               autoComplete="email"
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent-border)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
             />
           </div>
+
+          {/* Password */}
           <div>
-            <label htmlFor="password" className="sr-only">Password</label>
+            <label htmlFor="password" style={{ display: 'none' }}>Password</label>
             <input
               id="password"
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 placeholder-gray-400 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              style={{
+                display: 'block', width: '100%', minWidth: 0,
+                padding: '10px 14px',
+                background: 'var(--raised)',
+                border: '1px solid var(--line-2)',
+                borderRadius: 'var(--r-sm)',
+                color: 'var(--t1)',
+                fontSize: 14,
+                outline: 'none',
+                transition: 'border-color 120ms',
+                fontFamily: 'Geist, system-ui, sans-serif',
+              }}
               placeholder="Password"
               disabled={loading}
               autoComplete="current-password"
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent-border)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            style={{
+              width: '100%', minWidth: 0,
+              padding: '11px 0',
+              background: loading ? 'var(--raised)' : 'var(--accent)',
+              color: loading ? 'var(--t3)' : '#000',
+              border: 'none',
+              borderRadius: 'var(--r-sm)',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: loading ? 'not-allowed' : 'pointer',
+              transition: 'background 120ms, opacity 120ms',
+              opacity: loading ? 0.6 : 1,
+              fontFamily: 'Geist, system-ui, sans-serif',
+            }}
           >
-            {loading ? 'Loading…' : 'Sign In'}
+            {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
 
-        <div className="pt-2 border-t border-gray-200 dark:border-gray-700 text-center">
+        {/* Divider */}
+        <div style={{ borderTop: '1px solid var(--line)', margin: '20px 0 0' }} />
+        <div style={{ paddingTop: 16, textAlign: 'center' }}>
           <button
             type="button"
             onClick={() => { sessionStorage.setItem('guestMode', '1'); navigate('/'); }}
-            className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            style={{
+              fontSize: 13,
+              color: 'var(--t3)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              transition: 'color 120ms',
+              fontFamily: 'Geist, system-ui, sans-serif',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--t1)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--t3)')}
           >
             Continue as Guest →
           </button>

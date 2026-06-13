@@ -9,6 +9,20 @@ interface ImportExportModalProps {
   onImport: (data: string) => Promise<number>;
 }
 
+const textareaStyle: React.CSSProperties = {
+  display: 'block', width: '100%', minWidth: 0,
+  padding: '10px 12px',
+  background: 'var(--raised)',
+  border: '1px solid var(--line-2)',
+  borderRadius: 'var(--r-sm)',
+  color: 'var(--t1)',
+  fontSize: 12,
+  fontFamily: 'Geist Mono, monospace',
+  resize: 'none',
+  outline: 'none',
+  transition: 'border-color 120ms',
+};
+
 export const ImportExportModal: React.FC<ImportExportModalProps> = ({
   isOpen,
   onClose,
@@ -89,6 +103,12 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
     }
   };
 
+  const switchTab = (tab: 'export' | 'import') => {
+    setActiveTab(tab);
+    setError('');
+    setSuccess('');
+  };
+
   return (
     <BaseModal
       isOpen={isOpen}
@@ -98,29 +118,45 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
       error={error}
       success={success}
     >
-      {/* Tab bar — lives between header and content */}
-      <div className="-mx-6 -mt-6 mb-6 flex border-b border-gray-200 dark:border-gray-700">
-        {(['export', 'import'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => { setActiveTab(tab); setError(''); setSuccess(''); }}
-            className={`flex-1 px-6 py-3 text-sm font-medium capitalize ${
-              activeTab === tab
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-            }`}
-          >
-            {tab === 'export'
-              ? <><Download className="inline mr-2" size={16} />Export</>
-              : <><Upload className="inline mr-2" size={16} />Import</>
-            }
-          </button>
-        ))}
+      {/* Tab bar — hairline divider below header */}
+      <div style={{
+        display: 'flex',
+        borderBottom: '1px solid var(--line)',
+        marginBottom: 20,
+      }}>
+        {(['export', 'import'] as const).map(tab => {
+          const active = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              onClick={() => switchTab(tab)}
+              style={{
+                flex: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: '10px 0',
+                fontSize: 13, fontWeight: 600,
+                textTransform: 'capitalize',
+                border: 'none',
+                background: 'none',
+                cursor: 'pointer',
+                color: active ? 'var(--accent)' : 'var(--t3)',
+                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                marginBottom: -1,
+                transition: 'color 120ms',
+              }}
+            >
+              {tab === 'export'
+                ? <><Download size={14} />Export</>
+                : <><Upload size={14} />Import</>
+              }
+            </button>
+          );
+        })}
       </div>
 
       {activeTab === 'export' ? (
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <p style={{ fontSize: 13, color: 'var(--t2)' }}>
             Export all your services as a JSON backup.
           </p>
 
@@ -128,9 +164,18 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
             <button
               onClick={handleExport}
               disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: '11px 0', width: '100%',
+                background: 'var(--accent)',
+                border: 'none', borderRadius: 'var(--r-sm)',
+                color: '#000', fontSize: 13, fontWeight: 600,
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                opacity: isLoading ? 0.6 : 1,
+                minWidth: 0,
+              }}
             >
-              <Download size={18} />
+              <Download size={16} />
               {isLoading ? 'Exporting…' : 'Export Services'}
             </button>
           ) : (
@@ -138,21 +183,38 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
               <textarea
                 value={exportData}
                 readOnly
-                className="w-full h-64 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+                style={{ ...textareaStyle, height: 256 }}
               />
-              <div className="flex gap-2">
+              <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   onClick={handleDownload}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  style={{
+                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    padding: '9px 0',
+                    background: 'var(--ok-dim)',
+                    border: '1px solid rgba(34,197,94,0.20)',
+                    color: 'var(--ok)', borderRadius: 'var(--r-sm)',
+                    fontSize: 13, fontWeight: 600,
+                    cursor: 'pointer', minWidth: 0,
+                  }}
                 >
-                  <Download size={16} />
+                  <Download size={15} />
                   Download
                 </button>
                 <button
                   onClick={handleCopy}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  style={{
+                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    padding: '9px 0',
+                    background: 'var(--raised)',
+                    border: '1px solid var(--line-2)',
+                    color: copied ? 'var(--ok)' : 'var(--t2)', borderRadius: 'var(--r-sm)',
+                    fontSize: 13, fontWeight: 600,
+                    cursor: 'pointer', minWidth: 0,
+                    transition: 'color 120ms',
+                  }}
                 >
-                  {copied ? <Check size={16} /> : <Copy size={16} />}
+                  {copied ? <Check size={15} /> : <Copy size={15} />}
                   {copied ? 'Copied!' : 'Copy'}
                 </button>
               </div>
@@ -160,41 +222,62 @@ export const ImportExportModal: React.FC<ImportExportModalProps> = ({
           )}
         </div>
       ) : (
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <p style={{ fontSize: 13, color: 'var(--t2)' }}>
             Import services from a JSON file. New services are added without replacing existing ones.
           </p>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <span style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 6 }}>
               Upload JSON File
-            </label>
+            </span>
             <input
               type="file"
               accept=".json"
               onChange={handleFileUpload}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+              style={{
+                display: 'block', width: '100%', minWidth: 0,
+                padding: '9px 12px',
+                background: 'var(--raised)',
+                border: '1px solid var(--line-2)',
+                borderRadius: 'var(--r-sm)',
+                color: 'var(--t2)',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <span style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 6 }}>
               Or Paste JSON
-            </label>
+            </span>
             <textarea
               value={importData}
               onChange={e => setImportData(e.target.value)}
-              className="w-full h-48 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+              style={{ ...textareaStyle, height: 192 }}
               placeholder="Paste your JSON data here…"
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent-border)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
             />
           </div>
 
           <button
             onClick={handleImport}
             disabled={isLoading || !importData.trim()}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              padding: '11px 0', width: '100%',
+              background: 'var(--accent)',
+              border: 'none', borderRadius: 'var(--r-sm)',
+              color: '#000', fontSize: 13, fontWeight: 600,
+              cursor: (isLoading || !importData.trim()) ? 'not-allowed' : 'pointer',
+              opacity: (isLoading || !importData.trim()) ? 0.5 : 1,
+              minWidth: 0,
+              transition: 'opacity 120ms',
+            }}
           >
-            <Upload size={18} />
+            <Upload size={16} />
             {isLoading ? 'Importing…' : 'Import Services'}
           </button>
         </div>

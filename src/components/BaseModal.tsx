@@ -13,12 +13,12 @@ interface BaseModalProps {
   success?: string;
 }
 
-const maxWidthClasses = {
-  sm: 'max-w-sm',
-  md: 'max-w-md',
-  lg: 'max-w-lg',
-  xl: 'max-w-xl',
-  '2xl': 'max-w-2xl',
+const maxWidthMap = {
+  sm:  380,
+  md:  448,
+  lg:  520,
+  xl:  600,
+  '2xl': 672,
 };
 
 export function BaseModal({
@@ -33,43 +33,97 @@ export function BaseModal({
 }: BaseModalProps) {
   if (!isOpen) return null;
 
+  const mw = maxWidthMap[maxWidth];
+
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(0,0,0,0.65)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 50, padding: 16,
+      }}
       onClick={onClose}
     >
       <div
-        className={`bg-white dark:bg-gray-800 rounded-lg shadow-xl ${maxWidthClasses[maxWidth]} w-full ${
-          scrollable ? 'max-h-[90vh] flex flex-col' : ''
-        }`}
+        style={{
+          background: 'var(--surface)',
+          borderRadius: 'var(--r-lg)',
+          boxShadow: '0 0 0 1px rgba(255,255,255,0.07), 0 24px 64px rgba(0,0,0,0.6)',
+          width: '100%',
+          maxWidth: mw,
+          minWidth: 0,
+          ...(scrollable ? { maxHeight: '90vh', display: 'flex', flexDirection: 'column' } : {}),
+        }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header — never scrolls */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 shrink-0">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{title}</h2>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '18px 20px',
+          borderBottom: '1px solid var(--line)',
+          flexShrink: 0,
+        }}>
+          <h2 style={{
+            fontSize: 16, fontWeight: 700,
+            color: 'var(--t1)',
+            letterSpacing: '-0.01em',
+            minWidth: 0,
+          }}>
+            {title}
+          </h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+            style={{
+              background: 'none', border: 'none',
+              color: 'var(--t3)', cursor: 'pointer',
+              padding: 4, display: 'flex', alignItems: 'center',
+              borderRadius: 6, transition: 'color 120ms',
+              flexShrink: 0,
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--t1)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--t3)')}
             aria-label="Close"
           >
-            <X size={24} />
+            <X size={20} />
           </button>
         </div>
 
         {/* Inline alerts — also don't scroll */}
         {error && (
-          <div className="mx-6 mt-4 bg-red-100 dark:bg-red-900/30 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-300 px-4 py-3 rounded shrink-0">
+          <div style={{
+            margin: '12px 20px 0',
+            background: 'var(--err-dim)',
+            border: '1px solid rgba(239,68,68,0.20)',
+            color: 'var(--err)',
+            padding: '10px 14px',
+            borderRadius: 'var(--r-sm)',
+            fontSize: 13,
+            flexShrink: 0,
+          }}>
             {error}
           </div>
         )}
         {success && (
-          <div className="mx-6 mt-4 bg-green-100 dark:bg-green-900/30 border border-green-400 dark:border-green-700 text-green-700 dark:text-green-300 px-4 py-3 rounded shrink-0">
+          <div style={{
+            margin: '12px 20px 0',
+            background: 'var(--ok-dim)',
+            border: '1px solid rgba(34,197,94,0.20)',
+            color: 'var(--ok)',
+            padding: '10px 14px',
+            borderRadius: 'var(--r-sm)',
+            fontSize: 13,
+            flexShrink: 0,
+          }}>
             {success}
           </div>
         )}
 
         {/* Content */}
-        <div className={`p-6 ${scrollable ? 'overflow-y-auto flex-1' : ''}`}>
+        <div style={{
+          padding: '20px',
+          ...(scrollable ? { overflowY: 'auto', flex: 1 } : {}),
+        }}>
           {children}
         </div>
       </div>

@@ -25,7 +25,6 @@ import ServicesPage from './Pages/Services';
 import { Birthday } from './Pages/Birthday';
 import DockerPage from './Pages/DockerPage';
 import MediaAndTorrentsPageV3 from './Pages/Media';
-import AIPage from './Pages/AIPage';
 import LabPage from './Pages/Lab';
 import ChaosPage from './Pages/Chaos';
 import ControlsPage from './Pages/Controls';
@@ -235,7 +234,7 @@ function App() {
             <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
             <Route path="/docker"   element={<ProtectedRoute><DockerPage /></ProtectedRoute>} />
             <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
-            <Route path="/ai"       element={<ProtectedRoute><AIPage /></ProtectedRoute>} />
+            {/* /ai removed — Odysseus (port 7000) replaced LibreChat */}
             <Route path="/chaos"    element={<ChaosPage />} />
             <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/minecraft"  element={<ProtectedRoute><ErrorBoundary><MinecraftPage /></ErrorBoundary></ProtectedRoute>} />
