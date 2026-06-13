@@ -23,9 +23,8 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
 import ServicesPage from './Pages/Services';
 import { Birthday } from './Pages/Birthday';
-import TorrentsPage from './Pages/TorrentsPage';
 import DockerPage from './Pages/DockerPage';
-import MediaPage from './Pages/MediaPage';
+import MediaAndTorrentsPageV3 from './Pages/Media';
 import AIPage from './Pages/AIPage';
 import LabPage from './Pages/Lab';
 import ChaosPage from './Pages/ChaosPage';
@@ -35,20 +34,6 @@ import KioskPage from './Pages/Kiosk/KioskPage';
 import JarvisPage from './Pages/JarvisPage';
 import HomeAssistantPage from './Pages/HomeAssistantPage';
 
-function MediaAndTorrentsPage() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 36 }}>
-      <div>
-        <div className="j-section-label" style={{ marginBottom: 16 }}>Torrents</div>
-        <TorrentsPage />
-      </div>
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 36 }}>
-        <div className="j-section-label" style={{ marginBottom: 16 }}>Media Queue &amp; Upcoming</div>
-        <MediaPage />
-      </div>
-    </div>
-  );
-}
 
 // ─── Theme Hook ───────────────────────────────────────────────────────────────
 function useTheme() {
@@ -247,9 +232,9 @@ function App() {
             <Route path="/birthday" element={<Birthday />} />
             <Route path="/"         element={<ProtectedRoute><ErrorBoundary><LabPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/services" element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
-            <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPage /></ProtectedRoute>} />
+            <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
             <Route path="/docker"   element={<ProtectedRoute><DockerPage /></ProtectedRoute>} />
-            <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPage /></ProtectedRoute>} />
+            <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
             <Route path="/ai"       element={<ProtectedRoute><AIPage /></ProtectedRoute>} />
             <Route path="/chaos"    element={<ChaosPage />} />
             <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />

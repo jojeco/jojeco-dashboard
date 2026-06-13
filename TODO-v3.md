@@ -326,6 +326,110 @@ Priority order (Jordan's: Looks/UX first):
 
 ---
 
+## Media + Torrents Page Feature-Parity Checklist
+
+**Sources:** `src/Pages/MediaPage.tsx` + `src/Pages/TorrentsPage.tsx` → new `src/Pages/Media/`  
+**Routes:** `/media` and `/torrents` both render `MediaAndTorrentsPage` wrapper in App.tsx.
+
+### Parity: 40/40
+
+#### Torrents — Transfer Stats (4 tiles)
+- [x] Download speed tile (↓ /s, accent)
+- [x] Upload speed tile (↑ /s, ok)
+- [x] Session DL total tile (t3)
+- [x] VPN / connection status tile (Wifi/WifiOff icon, ok/warn)
+
+#### Torrents — Tab Bar (3 tabs)
+- [x] In Progress tab (active downloads, stalled, queued)
+- [x] Completed tab (seeding, done)
+- [x] Errors tab (error, missingFiles)
+- [x] Per-tab count badge
+- [x] Underline indicator on active tab
+
+#### Torrents — Toolbar
+- [x] Per-page selector (5/10/25)
+- [x] Add torrent button (authed only) — accent
+- [x] Select all / Deselect all button
+- [x] Bulk pause (active tab), resume (done tab), recheck, delete buttons when selection > 0
+- [x] Selected count label
+- [x] Refresh button (right-aligned)
+
+#### Torrents — Add Torrent Form
+- [x] Magnet/URL input (expanded on button press, Enter to submit)
+- [x] Submit + Cancel buttons
+
+#### Torrents — Torrent List
+- [x] Mobile: card layout (progress bar full-width, speed chips below)
+- [x] Desktop: same card layout (dense table deferred — cards are per-spec for mobile-first)
+- [x] Per-torrent: name, state label (color-coded), size, ETA (if downloading)
+- [x] Progress bar (color by tab: accent active, ok done, err error)
+- [x] Speed: ↓ dlspeed/s and ↑ upspeed/s if nonzero
+- [x] Seeds/leechers count
+- [x] Click-to-select (border-color highlight when selected)
+- [x] Per-row action bar: pause/resume (context-sensitive), recheck, delete (ConfirmDialog)
+- [x] Pagination (prev/next/page numbers)
+
+#### Torrents — Data
+- [x] Fetch `/api/torrents/list` on mount + after mutations + on snapshot refresh
+- [x] Transfer stats from `useSnapshot('torrents')` (avoids duplicate setInterval)
+- [x] No setInterval in page — snapshot handles cadence
+- [x] Error state when API unreachable
+- [x] Loading skeleton / spinner
+
+#### Media — CD Rip Status
+- [x] RipCard shown only when rip.status !== 'idle'
+- [x] Album name + spinning Disc icon (ripping state)
+- [x] Track progress bar + track/total + percent
+- [x] Status badge (ripping/importing/done/error/starting) color-coded
+- [x] Rip status fetched via GET `/api/rip/status` on mount + snapshot refresh cadence
+
+#### Media — Transcoder (Tdarr)
+- [x] Library Score / Transcoded / In-Queue or Errors / Space Saved stat tiles
+- [x] HEVC Coverage progress bar + legend (Already HEVC / Transcoded / Errors / Health errors)
+- [x] Active workers list: type badge (GPU Transcode/CPU), node name, fps, filename, per-worker progress bar
+- [x] "No active workers" empty state
+- [x] "Tdarr unavailable" graceful null state
+- [x] Tdarr data fetched via GET `/api/tdarr/status` on mount + snapshot refresh cadence
+
+#### Media — Download Queue (Sonarr + Radarr)
+- [x] Source tab bar: All / 📺 Sonarr count / 🎬 Radarr count
+- [x] Per-page selector (5/10/25)
+- [x] Refresh button
+- [x] Sorted by progress descending
+- [x] Per-item card: type icon (TV/Film), title (show: Series — SxxExx EpTitle; movie: Title (Year)), status badge
+- [x] Progress bar (size - sizeleft / size) + size labels + percent
+- [x] Time-left display (Clock icon, hidden when 00:00:00)
+- [x] Tracked download warning (AlertCircle, hidden when Ok)
+- [x] Empty state (CheckCircle icon)
+- [x] Pagination
+- [x] Data from `useSnapshot('media')` — no extra fetch needed
+
+#### Media — Upcoming Calendar
+- [x] Source tab bar: All / 📺 episodes count / 🎬 movies count
+- [x] Per-page selector (5/10/25)
+- [x] Episodes sorted by airDate ascending
+- [x] Movies sorted by digitalRelease → physicalRelease → inCinemas ascending
+- [x] All-tab: interleaved chronologically
+- [x] Per-episode card: TV icon (accent), series name, episode (SxxExx — title), network, date badge (Today/Tomorrow/in Nd/Nd ago)
+- [x] Per-movie card: Film icon (purple), title (year), studio, release type (Digital/Physical/In Cinemas), date badge
+- [x] Empty state text
+- [x] Pagination
+- [x] Data from GET `/api/media/upcoming` on mount + snapshot refresh cadence
+
+#### Design System Compliance
+- [x] Surface elevation (j-panel) — no white/hard borders
+- [x] Hairlines only: `1px solid var(--line)` for structural dividers
+- [x] Section labels: 10px uppercase t3, 0.08em letterSpacing + hairline rule (SectionLabel from Controls/)
+- [x] Status colors ONLY on status content (dots, badges, state labels)
+- [x] Destructive delete: ConfirmDialog from Controls/ (lifted to components/ or imported)
+- [x] `minWidth: 0` on every grid/flex item — prevents 390px overflow
+- [x] Progress bars have `overflow: hidden` wrapper track
+- [x] Torrent name: `overflow: hidden; textOverflow: ellipsis; whiteSpace: nowrap` (single-line in card)
+- [x] No setInterval in page component — useSnapshot + on-demand fetches only
+- [x] Mobile-first: single-column stack at 390px, bottom-nav safe-area gap
+
+---
+
 ## Phase 2 — Speed
 
 - [ ] SSE stream from API: `GET /api/events` — server push replaces client polling
