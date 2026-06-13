@@ -430,6 +430,122 @@ Priority order (Jordan's: Looks/UX first):
 
 ---
 
+## MinecraftPage Feature-Parity Checklist
+
+**Source:** `src/Pages/MinecraftPage.tsx` (267 lines) → new `src/Pages/Minecraft/`
+
+### Parity: 14/14
+
+#### Header
+- [x] Server icon + "Minecraft" title + subtitle "Server 1 · 192.168.50.10"
+- [x] API connectivity indicator (Wifi / WifiOff) top-right
+- [x] Refresh button (on-demand, triggers snapshot.refresh or re-fetch)
+
+#### Server Cards (one per server returned from API)
+- [x] Server name (fontWeight 700) + port in monospace (t3)
+- [x] StatusBadge: running=ok, starting=warn, stopped=t3 — pill with dot + label
+- [x] Players row: Users icon, comma-joined player names if online, "No players online" otherwise
+- [x] Start button — disabled+dimmed when NOT stopped, confirm dialog before firing
+- [x] Stop button — disabled+dimmed when stopped, confirm dialog before firing
+- [x] Restart button — disabled+dimmed when stopped, confirm dialog before firing
+- [x] Loading spinner state per button key (`${id}_${act}`)
+- [x] Logs toggle button — on click fetches `/logs/:id` and expands log viewer; click again to hide
+- [x] Errors toggle button — on click fetches `/errors/:id` and expands log viewer in err color; click again to hide
+- [x] Log/error viewer panel (mono, max-height 280, overflow-y scroll)
+
+#### Data
+- [x] Status via `useSnapshot('minecraft')` — no setInterval in component
+- [x] On-demand refresh after successful start/stop/restart (500ms delay then snapshot.refresh)
+- [x] API down state → full-page empty card with WifiOff icon + help text
+
+#### Status summary footer
+- [x] Running/starting/stopped counts + "Refreshes every Xs" label (snapshot cadence)
+
+#### Design System Compliance
+- [x] Surface elevation only — no white/hard borders
+- [x] 10px uppercase section labels with hairline rule
+- [x] Status color only on status dots/badges
+- [x] minWidth: 0 on all grid/flex items
+- [x] mobile-first — cards stack to single-column at 390px
+- [x] ConfirmDialog for start/stop/restart (destructive server actions)
+- [x] ToastStack for mutation feedback
+- [x] No setInterval in page — useSnapshot cadence only
+
+---
+
+## ChaosPage Feature-Parity Checklist
+
+**Source:** `src/Pages/ChaosPage.tsx` (636 lines) → new `src/Pages/Chaos/`
+
+### PUBLIC ROUTE — Renders logged-out (no ProtectedRoute). Uses optionalAuth endpoints.
+
+### Parity: 24/24
+
+#### Header
+- [x] "ChaosMonkey" title + mode chip (LIVE/SIMULATION IDLE/SIMULATION RUNNING/REAL MODE/REAL RUNNING)
+- [x] Subtitle: polled time (live), "Simulated chaos demo" (sim), agent connected/disconnected (real)
+- [x] Mode button set: LIVE → [↺ REFRESH, SIMULATE, REAL CHAOS]; SIM → [RESET, LAUNCH SIM, EXIT SIM]; REAL → [EXIT REAL]
+
+#### Stats Row
+- [x] HEALTHY / DEGRADED / DOWN / TOTAL counts (Geist Mono, color-coded)
+
+#### Service Grid
+- [x] Grouped by category (Core/Media/Storage/AI/Monitoring/Comms) with section labels
+- [x] Per-service card: name, status dot + label (HEALTHY/DEGRADED/DOWN/UNKNOWN), latency, dependsOn list
+- [x] Degraded/down services: colored border highlight (STATUS_DIM bg or shadow)
+- [x] Grid auto-fill minmax(200px, 1fr) → wraps to single column on 390px
+
+#### Dependency Map
+- [x] Renders edge list: from-service ──▶ to-service, colored by status
+- [x] Hidden when no edges
+
+#### Simulation Mode
+- [x] SIM_SCRIPT hardcoded in component (not fetched) — runs via setTimeout array
+- [x] Reset clears timers + resets services to live snapshot copy
+- [x] Launch runs all steps in sequence (no re-launch while running)
+- [x] Exit clears timers, returns to live mode
+
+#### Real Mode
+- [x] Agent status panel: ONLINE/OFFLINE chip, module count
+- [x] Module selector chips (redis-probe, port-scan, dep-kill)
+- [x] Module description hint text
+- [x] Target input with per-module placeholder
+- [x] Dry run toggle chip (DRY RUN=safe / LIVE RUN=warn)
+- [x] RUN button → POST `/api/chaos/agent/run/:module` (Authorization header from getToken — may be null for guest, but guest can't reach real mode without agent being online; endpoint uses optionalAuth)
+- [x] ABORT button (visible while running) → POST `/api/chaos/agent/abort`
+- [x] **ConfirmDialog required** before RUN and ABORT (added in v3 — old page had no confirm)
+
+#### Log Panel (sim + real modes)
+- [x] "ATTACK LOG" (sim) / "AGENT LOG" (real)
+- [x] Entry count
+- [x] Per-entry: timestamp + colored message (info/warn/crit/ok color mapping)
+- [x] Auto-scroll to bottom on new entries (useEffect on logs array)
+- [x] Blinking cursor (▊) while running
+- [x] "Awaiting chaos launch..." / "Select a module and run..." empty states
+
+#### Service Polling
+- [x] `GET /api/chaos/services` on mount — public, no auth required
+- [x] Re-poll on manual REFRESH click
+- [x] **Interval rationale:** /chaos is a PUBLIC route not covered by SnapshotProvider's auth flow; the snapshot provider redirects 401 → /login which would break the public view. A page-level 30s interval for `poll()` is kept (matches old behavior) because this is the only endpoint safe to hit unauthenticated without risking auth redirect. Documented here.
+- [x] Agent status polling 10s (only when mode === 'real') — uses getToken() which returns null for guests; agent endpoint returns 401 for unauthenticated which is caught and sets agentOnline=false
+
+#### Guest / Public View
+- [x] Page renders fully without auth token (LIVE mode, sim mode work unauthenticated)
+- [x] Real mode reachable from UI but agent will show OFFLINE if auth fails
+- [x] No ProtectedRoute wrapper preserved in App.tsx
+
+#### Design System Compliance
+- [x] Surface elevation only — no white/hard borders; status-colored border on degraded/down service cards
+- [x] Hairlines: 1px solid var(--line) for panel separators
+- [x] Section labels: 10px uppercase + hairline rule
+- [x] Status color only on dots, labels, numbers
+- [x] minWidth: 0 on all grid/flex items
+- [x] mobile-first — service grid wraps to 1 column at 390px
+- [x] ConfirmDialog for RUN module + ABORT (v3 adds confirm for RUN/ABORT that old page lacked)
+- [x] ToastStack for real-mode errors
+
+---
+
 ## Phase 2 — Speed
 
 - [ ] SSE stream from API: `GET /api/events` — server push replaces client polling
