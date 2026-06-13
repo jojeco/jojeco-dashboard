@@ -18,6 +18,7 @@ import { MachineCard } from './MachineCard';
 import { AINodeCard } from './AINodeCard';
 import { ServiceHealthPanel } from './ServiceHealthPanel';
 import { QuickLinks } from './QuickLinks';
+import { PrinterCard } from './PrinterCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TempPoint } from './TempSparkline';
 
@@ -48,6 +49,7 @@ export default function LabPage() {
   const svcHealth = data?.servicesHealth ?? null;
   const alerts    = data?.alerts ?? null;
   const automation = data?.automation ?? null;
+  const printer   = data?.printer ?? null;
 
   // Sessions (ollama active runs)
   const sessions = Array.isArray(data?.ollama) ? (data!.ollama as Array<{ id: string; active: Array<{ name: string; size_vram?: number }> }>) : [];
@@ -226,6 +228,15 @@ export default function LabPage() {
             </>
           )}
         </div>
+      </div>
+
+      {/* ── 3D Printer ── */}
+      <div className="mb-6">
+        <div className="j-section-label">3D Printer</div>
+        {loading && !printer
+          ? <Skeleton className="h-40 rounded-[14px]" />
+          : <PrinterCard printer={printer} />
+        }
       </div>
 
       {/* ── Quick Links ── */}

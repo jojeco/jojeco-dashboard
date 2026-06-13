@@ -12,6 +12,26 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, Re
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface PrinterStatus {
+  online: boolean;
+  gcode_state?: string;
+  job?: string | null;
+  pct?: number;
+  layer?: number;
+  total_layers?: number;
+  remaining_min?: number | null;
+  nozzle_temp?: number | null;
+  nozzle_target?: number | null;
+  bed_temp?: number | null;
+  bed_target?: number | null;
+  speed_level?: string;
+  active_tray?: number | null;
+  tray_color?: string | null;
+  tray_type?: string | null;
+  print_error?: number;
+  lastFetch?: number;
+}
+
 export interface SnapshotSections {
   lab: LabSection | null;
   servicesHealth: ServicesHealthSection | null;
@@ -25,6 +45,7 @@ export interface SnapshotSections {
   automation: AutomationJob[] | null;
   torrents: unknown | null;
   minecraft: Record<string, McServer> | null;
+  printer: PrinterStatus | null;
 }
 
 export interface Disk { label: string; used: number; size: number; percent: number }
