@@ -29,7 +29,7 @@ import MediaPage from './Pages/MediaPage';
 import AIPage from './Pages/AIPage';
 import LabPage from './Pages/Lab';
 import ChaosPage from './Pages/ChaosPage';
-import ControlsPage from './Pages/ControlsPage';
+import ControlsPage from './Pages/Controls';
 import MinecraftPage from './Pages/MinecraftPage';
 import KioskPage from './Pages/Kiosk/KioskPage';
 import JarvisPage from './Pages/JarvisPage';

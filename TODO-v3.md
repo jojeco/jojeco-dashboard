@@ -24,6 +24,80 @@
 
 ---
 
+## ControlsPage Feature-Parity Checklist
+
+**Source:** `src/Pages/ControlsPage.tsx` (837 lines) → new `src/Pages/Controls/`
+
+### Parity: 47/47 features ported
+
+#### Server Power Controls (6/6 servers)
+- [x] CT100, Server1, Server2, Server3, MacMini, JoPc — all rendered
+- [x] Online/offline status dot from snapshot serverStatus section
+- [x] Restart button (Server2 → confirm dialog: warnRestart)
+- [x] Shutdown button (ALL servers → confirm dialog)
+- [x] Wake (WoL) button (canWake servers)
+- [x] Claude stop (CT100, S1, S3 → confirm dialog)
+- [x] Claude restart (no confirm — lower risk)
+- [x] CT100 special: no restart/shutdown (claudeLocal=true)
+- [x] Loading states per button key
+
+#### Automation Status
+- [x] Jobs from snapshot automation section
+- [x] Per-job: label, schedule, last run, status icon, badge
+- [x] Running indicator cross-referenced with triggerJobs
+- [x] Log snippet in mono pre block
+
+#### Manual Triggers (6/6)
+- [x] health, backup, snapshot, sync-context, claude-server3, claude-server1
+- [x] Fire → POST /controls/trigger/:id
+- [x] Abort → POST /controls/trigger/:id/abort (while running)
+- [x] Job status display: running/elapsed, done, error, aborted
+- [x] Polling 3s while any job running (interval only, not setInterval in page)
+- [x] Toast on complete/error
+
+#### Container Updates
+- [x] Check / Re-check → GET /updates/available[?force=1]
+- [x] Checkbox selection + "Select all"
+- [x] Apply → POST /updates/apply (confirm dialog)
+- [x] Apply job tracking
+- [x] Cached/checked timestamp
+
+#### S2→S3 Failover Panel
+- [x] S2/S3 online status, watchdog badge, failover active/normal badge
+- [x] Last sync display, output box
+- [x] Activate → confirm dialog
+- [x] Deactivate → confirm dialog (only when active)
+- [x] Sync Now (no confirm)
+- [x] Refresh button
+
+#### Container Controls
+- [x] Full list from GET /controls/containers
+- [x] Search + filter (all/running/stopped)
+- [x] Restart (no confirm), Stop (confirm dialog), Start (no confirm)
+
+#### Confirm Dialogs (7 distinct scenarios, all via shadcn Dialog)
+- [x] Server restart (Server2/Proxmox only)
+- [x] Server shutdown (ALL servers)
+- [x] Claude stop
+- [x] Failover activate
+- [x] Failover deactivate
+- [x] Container stop
+- [x] Apply updates
+
+#### Design System Compliance
+- [x] Surface elevation only — no white/hard borders
+- [x] Hairlines ≤6% alpha (var(--line)) for structural dividers only
+- [x] 10px uppercase section labels with hairline rule
+- [x] Status color only on status content (dots, badges, numbers)
+- [x] Destructive: var(--err) tint on bg+text
+- [x] minHeight 40px buttons (thumb targets)
+- [x] minWidth: 0 on all grid/flex items
+- [x] Mobile single-flow at 390px, safe-area paddingBottom
+- [x] tabular-nums on elapsed timers
+- [x] No setInterval in page component (snapshot for serverStatus/automation; trigger poll only while jobs running)
+
+---
+
 ## Phase 1 — Page Porting (next up)
 
 Port each page from inline CSS + custom j-* classes to shadcn/ui + Tailwind.
