@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect, Component, ReactNode } from 'react';
+import { Toaster } from '@/components/ui/sonner';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
   state = { err: null };
@@ -14,52 +15,46 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | n
     return this.props.children;
   }
 }
+
 import { LogOut, LogIn, Server, Film, Zap, LayoutDashboard, Sliders, Sun, Moon, Sword, Mic, Home } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { SnapshotProvider } from './hooks/useSnapshot';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
-import Dashboard from './Pages/DashboardNew';
+import ServicesPage from './Pages/Services';
 import { Birthday } from './Pages/Birthday';
-import TorrentsPage from './Pages/TorrentsPage';
-import DockerPage from './Pages/DockerPage';
-import MediaPage from './Pages/MediaPage';
-import AIPage from './Pages/AIPage';
-import LabPage from './Pages/LabPage';
-import ChaosPage from './Pages/ChaosPage';
-import ControlsPage from './Pages/ControlsPage';
-import MinecraftPage from './Pages/MinecraftPage';
+import MediaAndTorrentsPageV3 from './Pages/Media';
+import LabPage from './Pages/Lab';
+import ChaosPage from './Pages/Chaos';
+import ControlsPage from './Pages/Controls';
+import MinecraftPage from './Pages/Minecraft';
 import KioskPage from './Pages/Kiosk/KioskPage';
 import JarvisPage from './Pages/JarvisPage';
 import HomeAssistantPage from './Pages/HomeAssistantPage';
 
-function MediaAndTorrentsPage() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 36 }}>
-      <div>
-        <div className="j-section-label" style={{ marginBottom: 16 }}>Torrents</div>
-        <TorrentsPage />
-      </div>
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 36 }}>
-        <div className="j-section-label" style={{ marginBottom: 16 }}>Media Queue & Upcoming</div>
-        <MediaPage />
-      </div>
-    </div>
-  );
-}
 
+// ─── Theme Hook ───────────────────────────────────────────────────────────────
 function useTheme() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     if (typeof window === 'undefined') return 'dark';
     return (localStorage.getItem('jojeco_theme') as 'dark' | 'light') || 'dark';
   });
+
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    const root = document.documentElement;
+    // Legacy data-theme (existing pages use CSS vars gated on [data-theme="light"])
+    root.setAttribute('data-theme', theme);
+    // shadcn/ui class-based dark mode
+    root.classList.toggle('dark', theme === 'dark');
+    root.classList.toggle('light', theme === 'light');
     localStorage.setItem('jojeco_theme', theme);
   }, [theme]);
+
   const toggle = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
   return { theme, toggle };
 }
 
+// ─── Nav config ───────────────────────────────────────────────────────────────
 const NAV = [
   { id: 'lab',       label: 'Lab',       href: '/',          icon: LayoutDashboard },
   { id: 'services',  label: 'Services',  href: '/services',  icon: Server },
@@ -67,10 +62,9 @@ const NAV = [
   { id: 'controls',  label: 'Controls',  href: '/controls',  icon: Sliders },
   { id: 'minecraft', label: 'Minecraft', href: '/minecraft', icon: Sword },
   { id: 'chaos',     label: 'Chaos',     href: '/chaos',     icon: Zap },
-  { id: 'jarvis',   label: 'Jarvis',    href: '/jarvis',    icon: Mic },
-  { id: 'home',     label: 'Home',      href: '/home',      icon: Home },
+  { id: 'jarvis',    label: 'Jarvis',    href: '/jarvis',    icon: Mic },
+  { id: 'home',      label: 'Home',      href: '/home',      icon: Home },
 ];
-
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
@@ -83,6 +77,7 @@ function useMediaQuery(query: string) {
   return matches;
 }
 
+// ─── Desktop Icon Rail ────────────────────────────────────────────────────────
 function IconNav({ theme, onToggleTheme }: { theme: string; onToggleTheme: () => void }) {
   const { currentUser, logout } = useAuth();
   const location = useLocation();
@@ -90,10 +85,8 @@ function IconNav({ theme, onToggleTheme }: { theme: string; onToggleTheme: () =>
 
   return (
     <aside className="j-icon-nav">
-      {/* Logo mark */}
       <Link to="/" className="j-icon-nav-logo" title="JojeCo Lab">J</Link>
 
-      {/* Nav items */}
       {NAV.map(item => {
         const Icon = item.icon;
         const active = item.id === activeId;
@@ -111,7 +104,6 @@ function IconNav({ theme, onToggleTheme }: { theme: string; onToggleTheme: () =>
 
       <div className="j-icon-nav-spacer" />
 
-      {/* Theme toggle */}
       <button
         onClick={onToggleTheme}
         className="j-icon-btn"
@@ -120,7 +112,6 @@ function IconNav({ theme, onToggleTheme }: { theme: string; onToggleTheme: () =>
         {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
       </button>
 
-      {/* Auth */}
       {currentUser ? (
         <button
           onClick={() => logout()}
@@ -141,6 +132,7 @@ function IconNav({ theme, onToggleTheme }: { theme: string; onToggleTheme: () =>
   );
 }
 
+// ─── Mobile Header ────────────────────────────────────────────────────────────
 function MobileHeader({ theme, onToggleTheme }: { theme: string; onToggleTheme: () => void }) {
   const location = useLocation();
   const activeLabel = NAV.find(n => n.href === location.pathname)?.label ?? 'Lab';
@@ -158,6 +150,7 @@ function MobileHeader({ theme, onToggleTheme }: { theme: string; onToggleTheme: 
   );
 }
 
+// ─── Mobile Bottom Nav ────────────────────────────────────────────────────────
 function BottomNav() {
   const location = useLocation();
   const activeId = NAV.find(n => n.href === location.pathname)?.id ?? 'lab';
@@ -176,6 +169,7 @@ function BottomNav() {
   );
 }
 
+// ─── Guest Banner ─────────────────────────────────────────────────────────────
 function GuestBanner() {
   const navigate = useNavigate();
   return (
@@ -189,15 +183,18 @@ function GuestBanner() {
   );
 }
 
+// ─── Page Shell ───────────────────────────────────────────────────────────────
+// Wraps every page. Login/birthday/kiosk bypass and render full-screen.
+// All existing pages render inside their original CSS — the new shell is purely
+// structural scaffolding. Page-by-page shadcn porting happens in Phase 1 pages.
 function PageShell({ children }: { children: React.ReactNode }) {
   const { currentUser } = useAuth();
   const location = useLocation();
   const isMobile = useMediaQuery('(max-width: 768px)');
   const { theme, toggle: toggleTheme } = useTheme();
 
-  if (location.pathname === '/login' || location.pathname === '/birthday' || location.pathname === '/kiosk') {
-    return <>{children}</>;
-  }
+  const isFullscreen = ['/login', '/birthday', '/kiosk'].includes(location.pathname);
+  if (isFullscreen) return <>{children}</>;
 
   if (isMobile) {
     return (
@@ -221,20 +218,22 @@ function PageShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ─── Root App ─────────────────────────────────────────────────────────────────
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <SnapshotProvider>
         <PageShell>
           <Routes>
             <Route path="/login"    element={<Login />} />
             <Route path="/birthday" element={<Birthday />} />
             <Route path="/"         element={<ProtectedRoute><ErrorBoundary><LabPage /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/services" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPage /></ProtectedRoute>} />
-            <Route path="/docker"   element={<ProtectedRoute><DockerPage /></ProtectedRoute>} />
-            <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPage /></ProtectedRoute>} />
-            <Route path="/ai"       element={<ProtectedRoute><AIPage /></ProtectedRoute>} />
+            <Route path="/services" element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
+            <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
+            <Route path="/docker"   element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
+            <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
+            {/* /ai removed — Odysseus (port 7000) replaced LibreChat */}
             <Route path="/chaos"    element={<ChaosPage />} />
             <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/minecraft"  element={<ProtectedRoute><ErrorBoundary><MinecraftPage /></ErrorBoundary></ProtectedRoute>} />
@@ -243,6 +242,8 @@ function App() {
             <Route path="/home"       element={<ProtectedRoute><ErrorBoundary><HomeAssistantPage /></ErrorBoundary></ProtectedRoute>} />
           </Routes>
         </PageShell>
+        <Toaster />
+        </SnapshotProvider>
       </AuthProvider>
     </BrowserRouter>
   );

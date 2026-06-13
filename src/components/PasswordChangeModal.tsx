@@ -8,6 +8,19 @@ interface PasswordChangeModalProps {
   onClose: () => void;
 }
 
+const inputStyle: React.CSSProperties = {
+  display: 'block', width: '100%', minWidth: 0,
+  padding: '9px 12px',
+  background: 'var(--raised)',
+  border: '1px solid var(--line-2)',
+  borderRadius: 'var(--r-sm)',
+  color: 'var(--t1)',
+  fontSize: 13,
+  outline: 'none',
+  transition: 'border-color 120ms',
+  fontFamily: 'Geist, system-ui, sans-serif',
+};
+
 export function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProps) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -71,65 +84,96 @@ export function PasswordChangeModal({ isOpen, onClose }: PasswordChangeModalProp
       error={error}
       success={success}
     >
-      <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 4 }}>
+
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            <Lock className="inline w-3.5 h-3.5 mr-1" />
-            Current Password
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 6 }}>
+            <Lock size={12} /> Current Password
           </label>
           <input
             type="password"
             value={currentPassword}
             onChange={e => setCurrentPassword(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={inputStyle}
             placeholder="Current password"
             disabled={loading || !!success}
+            onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent-border)')}
+            onBlur={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 6 }}>
             New Password
           </label>
           <input
             type="password"
             value={newPassword}
             onChange={e => setNewPassword(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={inputStyle}
             placeholder="New password (min 6 characters)"
             disabled={loading || !!success}
+            onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent-border)')}
+            onBlur={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 6 }}>
             Confirm New Password
           </label>
           <input
             type="password"
             value={confirmPassword}
             onChange={e => setConfirmPassword(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={inputStyle}
             placeholder="Confirm new password"
             disabled={loading || !!success}
+            onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent-border)')}
+            onBlur={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
           />
         </div>
 
-        <div className="flex gap-3 pt-2">
+        <div style={{ display: 'flex', gap: 8 }}>
           <button
             type="button"
             onClick={handleClose}
             disabled={loading}
-            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+            style={{
+              flex: 1,
+              padding: '9px 0',
+              background: 'var(--raised)',
+              border: '1px solid var(--line-2)',
+              color: 'var(--t2)',
+              borderRadius: 'var(--r-sm)',
+              fontSize: 13, fontWeight: 500,
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.5 : 1,
+              minWidth: 0,
+              fontFamily: 'Geist, system-ui, sans-serif',
+            }}
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={loading || !!success}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            style={{
+              flex: 1,
+              padding: '9px 0',
+              background: 'var(--accent)',
+              border: 'none',
+              color: '#000',
+              borderRadius: 'var(--r-sm)',
+              fontSize: 13, fontWeight: 600,
+              cursor: (loading || !!success) ? 'not-allowed' : 'pointer',
+              opacity: (loading || !!success) ? 0.5 : 1,
+              minWidth: 0,
+              fontFamily: 'Geist, system-ui, sans-serif',
+              transition: 'opacity 120ms',
+            }}
           >
-            {loading ? 'Changing...' : 'Change Password'}
+            {loading ? 'Changing…' : 'Change Password'}
           </button>
         </div>
       </form>
