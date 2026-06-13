@@ -2845,6 +2845,142 @@ app.get('/api/kiosk/pi-ap', optionalAuthMiddleware, async (req, res) => {
 });
 
 // ============================================================================
+// ============================================================================
+// BAMBU P1S PRINTER — MQTT STATUS POLLER
+// ============================================================================
+// Background: connects once to the printer's MQTT broker (TLS, self-signed cert)
+// every 15 s, fires pushall, waits for the rich status payload, then caches it.
+// Requests to /api/printer/p1s serve the last cached value instantly (no blocking).
+// READ-ONLY: we only subscribe + publish pushall. No control commands.
+
+import mqtt from 'mqtt';
+
+const P1S_HOST   = '192.168.50.228';
+const P1S_PORT   = 8883;
+const P1S_USER   = 'bblp';
+const P1S_PASS   = '583f2d55';
+const P1S_SN     = '01P00C5C1203051';
+const P1S_REPORT = `device/${P1S_SN}/report`;
+const P1S_REQ    = `device/${P1S_SN}/request`;
+const PUSHALL_MSG = JSON.stringify({ pushing: { sequence_id: '0', command: 'pushall' } });
+
+const SPEED_LABELS = { 1: 'Silent', 2: 'Standard', 3: 'Sport', 4: 'Ludicrous' };
+const GCODE_STATE_MAP = {
+  RUNNING: 'Printing', PAUSE: 'Paused', FINISH: 'Finished',
+  FAILED: 'Failed', IDLE: 'Idle', PREPARE: 'Preparing',
+  SLICING: 'Slicing', DOWNLOADING: 'Downloading',
+};
+
+let printerCache = { online: false, lastFetch: 0 };
+let p1sPollTimer = null;
+
+function p1sParsePayload(raw) {
+  const d = raw.print ?? raw;
+  // Active tray: ams.tray_now is a number (slot index across all AMS units)
+  const trayNow  = d.ams?.tray_now ?? null;
+  let activeTray = null;
+  if (trayNow !== null && trayNow !== 255) {
+    const amsIdx  = Math.floor(trayNow / 4);
+    const trayIdx = trayNow % 4;
+    const amsUnit = (d.ams?.ams ?? [])[amsIdx];
+    activeTray = amsUnit?.tray?.[trayIdx] ?? null;
+  }
+
+  const hexToRgb = (hex) => {
+    if (!hex) return null;
+    const h = hex.replace(/FF$/i, '').padStart(6, '0');
+    return `#${h.slice(0, 6).toUpperCase()}`;
+  };
+
+  const gcodeState = d.gcode_state ?? 'IDLE';
+  return {
+    online:          true,
+    gcode_state:     GCODE_STATE_MAP[gcodeState] ?? gcodeState,
+    job:             d.gcode_file ? d.gcode_file.replace(/\.3mf$/i, '').replace(/\.gcode$/i, '') : null,
+    pct:             d.mc_percent ?? 0,
+    layer:           d.layer_num ?? 0,
+    total_layers:    d.total_layer_num ?? 0,
+    remaining_min:   d.mc_remaining_time ?? null,
+    nozzle_temp:     d.nozzle_temper != null ? Math.round(d.nozzle_temper * 10) / 10 : null,
+    nozzle_target:   d.nozzle_target_temper ?? null,
+    bed_temp:        d.bed_temper != null ? Math.round(d.bed_temper * 10) / 10 : null,
+    bed_target:      d.bed_target_temper ?? null,
+    speed_level:     SPEED_LABELS[d.spd_lvl] ?? 'Standard',
+    active_tray:     trayNow,
+    tray_color:      activeTray ? hexToRgb(activeTray.tray_color) : null,
+    tray_type:       activeTray?.tray_type ?? null,
+    print_error:     d.print_error ?? 0,
+    lastFetch:       Date.now(),
+  };
+}
+
+async function pollP1S() {
+  return new Promise((resolve) => {
+    const timeoutMs = 12000;
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      try { client.end(true); } catch (_) {}
+      clearTimeout(tid);
+      resolve(result);
+    };
+
+    const client = mqtt.connect({
+      host: P1S_HOST,
+      port: P1S_PORT,
+      protocol: 'mqtts',
+      username: P1S_USER,
+      password: P1S_PASS,
+      rejectUnauthorized: false,
+      connectTimeout: 8000,
+      reconnectPeriod: 0,
+    });
+
+    const tid = setTimeout(() => done({ online: false, lastFetch: Date.now() }), timeoutMs);
+
+    client.on('connect', () => {
+      client.subscribe(P1S_REPORT, (err) => {
+        if (err) return done({ online: false, lastFetch: Date.now() });
+        client.publish(P1S_REQ, PUSHALL_MSG);
+      });
+    });
+
+    client.on('message', (_topic, payload) => {
+      try {
+        const raw = JSON.parse(payload.toString());
+        // Wait for a rich payload (pushall response has many keys)
+        if (raw.print && Object.keys(raw.print).length > 5) {
+          done(p1sParsePayload(raw));
+        }
+      } catch (_) {}
+    });
+
+    client.on('error', () => done({ online: false, lastFetch: Date.now() }));
+  });
+}
+
+async function runP1SPoll() {
+  try {
+    const result = await pollP1S();
+    printerCache = result;
+    console.log(`[p1s] polled — online:${result.online} state:${result.gcode_state ?? 'n/a'} pct:${result.pct ?? '-'}%`);
+  } catch (e) {
+    console.error('[p1s] poll error:', e.message);
+    printerCache = { online: false, lastFetch: Date.now() };
+  }
+}
+
+function startP1SPoller() {
+  runP1SPoll();
+  p1sPollTimer = setInterval(runP1SPoll, 15000);
+}
+
+app.get('/api/printer/p1s', optionalAuthMiddleware, (req, res) => {
+  res.json(printerCache);
+});
+
+// ============================================================================
 // Aggregated snapshot — single payload for the v3 frontend's shared data hook.
 // Replaces N per-page pollers with one request. Internally fans out to the
 // existing endpoints (so each section keeps its own auth/sanitization logic)
@@ -2866,6 +3002,7 @@ const SNAP_SECTIONS = {
   minecraft:      '/api/minecraft/status',
   automation:     '/api/automation/status',
   torrents:       '/api/torrents/transfer',
+  printer:        '/api/printer/p1s',
 };
 const SNAP_TTL_MS = { automation: 60000, alerts: 30000, default: 15000 };
 
@@ -2936,6 +3073,10 @@ async function startServer() {
   pollTemps().catch(() => {});
   setInterval(() => pollTemps().catch(() => {}), 30 * 1000);
   console.log('🌡️  Temp poller started (30sec interval)');
+
+  // Start P1S printer MQTT poller (15s interval, serves cached result)
+  startP1SPoller();
+  console.log('🖨️  P1S printer poller started (15s interval)');
 }
 
 startServer().catch(console.error);
