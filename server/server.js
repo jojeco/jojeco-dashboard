@@ -1765,27 +1765,39 @@ const MONITOR_SERVICES = [
   { id: 'ntfy',       name: 'ntfy',       url: 'http://192.168.50.13:8080' },
 ];
 
-const serviceState = {};
+// Hysteresis to stop alert flapping: a service must fail FAIL_THRESHOLD
+// consecutive polls before we declare it DOWN (and alert), and we only send a
+// "recovered" alert if we actually alerted the outage. At the 2min poll
+// interval, 3 strikes = ~6 min sustained failure before Jordan gets pinged.
+// This kills the transient-timeout flap (Plex on the Windows box, Nextcloud
+// under load) that produced DOWN/recovered pairs every ~10 min.
+const FAIL_THRESHOLD = 3;
+const serviceState = {}; // id → { fails, alerted }
 
 async function runHealthMonitor() {
   for (const svc of MONITOR_SERVICES) {
     let online = false;
     try {
-      const r = await fetch(svc.url, { signal: AbortSignal.timeout(4000) });
+      const r = await fetch(svc.url, { signal: AbortSignal.timeout(8000) });
       online = r.status < 500;
     } catch { online = false; }
 
-    const prev = serviceState[svc.id];
-    serviceState[svc.id] = online;
+    const s = serviceState[svc.id] || (serviceState[svc.id] = { fails: 0, alerted: false });
 
-    if (prev === undefined) continue; // skip first run (no prior state)
-
-    if (prev && !online) {
-      console.log(`[monitor] ${svc.name} went DOWN`);
-      fetch(NTFY_URL, { method: 'POST', body: `⚠️ ${svc.name} is DOWN`, headers: { Priority: 'high', Tags: 'warning' } }).catch(() => {});
-    } else if (!prev && online) {
-      console.log(`[monitor] ${svc.name} recovered`);
-      fetch(NTFY_URL, { method: 'POST', body: `✅ ${svc.name} recovered`, headers: { Tags: 'white_check_mark' } }).catch(() => {});
+    if (!online) {
+      s.fails++;
+      if (s.fails >= FAIL_THRESHOLD && !s.alerted) {
+        s.alerted = true;
+        console.log(`[monitor] ${svc.name} DOWN (${s.fails} consecutive)`);
+        fetch(NTFY_URL, { method: 'POST', body: `⚠️ ${svc.name} is DOWN`, headers: { Priority: 'high', Tags: 'warning' } }).catch(() => {});
+      }
+    } else {
+      if (s.alerted) {
+        console.log(`[monitor] ${svc.name} recovered`);
+        fetch(NTFY_URL, { method: 'POST', body: `✅ ${svc.name} recovered`, headers: { Tags: 'white_check_mark' } }).catch(() => {});
+      }
+      s.fails = 0;
+      s.alerted = false;
     }
   }
 }
