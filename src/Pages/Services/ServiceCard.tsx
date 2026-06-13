@@ -67,6 +67,8 @@ export function ServiceCard({ service, onEdit, health, isGuest, sparkline }: Ser
         boxShadow: cardShadow,
         transition: 'box-shadow 150ms, transform 100ms',
         userSelect: 'none',
+        minWidth: 0,        // grid item: don't let content min-width overflow the column
+        overflow: 'hidden',
       }}
       onMouseEnter={e => {
         if (!isGuest) (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-hover)';
@@ -114,7 +116,7 @@ export function ServiceCard({ service, onEdit, health, isGuest, sparkline }: Ser
       </div>
 
       {/* Bottom: tags + sparkline + status + link */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 'auto', minWidth: 0, flexWrap: 'wrap' }}>
         {/* Tags — shadow-ring only, no border rule */}
         {service.tags?.slice(0, 2).map(tag => (
           <span key={tag} style={{
