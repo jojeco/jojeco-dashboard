@@ -1774,13 +1774,21 @@ const MONITOR_SERVICES = [
 const FAIL_THRESHOLD = 3;
 const serviceState = {}; // id → { fails, alerted }
 
+async function checkOnce(url) {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    return r.status < 500;
+  } catch { return false; }
+}
+
 async function runHealthMonitor() {
   for (const svc of MONITOR_SERVICES) {
-    let online = false;
-    try {
-      const r = await fetch(svc.url, { signal: AbortSignal.timeout(8000) });
-      online = r.status < 500;
-    } catch { online = false; }
+    // Retry within a single poll (2 extra tries) before counting a failure —
+    // kills transient-timeout false positives that were flapping the
+    // Nextcloud/Authelia alerts even with the consecutive-poll threshold.
+    let online = await checkOnce(svc.url);
+    if (!online) { await new Promise(r => setTimeout(r, 2000)); online = await checkOnce(svc.url); }
+    if (!online) { await new Promise(r => setTimeout(r, 3000)); online = await checkOnce(svc.url); }
 
     const s = serviceState[svc.id] || (serviceState[svc.id] = { fails: 0, alerted: false });
 
