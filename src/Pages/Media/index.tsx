@@ -27,6 +27,7 @@ import { TorrentList } from './TorrentList';
 import { TdarrPanel } from './TdarrPanel';
 import { RipCard } from './RipCard';
 import { QueuePanel, UpcomingPanel } from './MediaQueue';
+import { BazarrPanel } from './BazarrPanel';
 
 import type { Torrent, TdarrStatus, RipStatus, UpcomingEpisode, UpcomingMovie } from './types';
 
@@ -149,7 +150,7 @@ export default function MediaAndTorrentsPage() {
       <section style={{ minWidth: 0 }}>
         <SectionLabel>Media Queue &amp; Upcoming</SectionLabel>
 
-        {/* Rip + Transcoder row */}
+        {/* Rip + Transcoder + Subtitles row */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
           {/* CD Rip station — hidden when idle */}
           {rip.status !== 'idle' && (
@@ -161,18 +162,26 @@ export default function MediaAndTorrentsPage() {
             </div>
           )}
 
-          {/* Transcoder */}
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <Cpu size={13} style={{ color: 'var(--t3)' }} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Transcoder</span>
-              {tdarr && tdarr.workers.filter(w => w.status === 'Execute' || w.status === 'Processing').length > 0 && (
-                <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(20,184,166,0.12)', color: 'var(--accent)', fontWeight: 600 }}>
-                  ACTIVE
-                </span>
-              )}
+          {/* Transcoder + Subtitles side-by-side on wide, stacked on mobile */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))', gap: 16, alignItems: 'start' }}>
+            {/* Transcoder */}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <Cpu size={13} style={{ color: 'var(--t3)' }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>Transcoder</span>
+                {tdarr && tdarr.workers.filter(w => w.status === 'Execute' || w.status === 'Processing').length > 0 && (
+                  <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(20,184,166,0.12)', color: 'var(--accent)', fontWeight: 600 }}>
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+              <TdarrPanel tdarr={tdarr} />
             </div>
-            <TdarrPanel tdarr={tdarr} />
+
+            {/* Subtitles */}
+            <div style={{ minWidth: 0 }}>
+              <BazarrPanel />
+            </div>
           </div>
         </div>
 

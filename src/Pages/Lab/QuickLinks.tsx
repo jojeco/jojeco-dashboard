@@ -10,6 +10,7 @@ const QUICK_LINKS = [
   { label: 'Radarr',    href: 'http://192.168.50.13:7878',    cat: 'Downloads', icon: '🎞️' },
   { label: 'Sonarr',    href: 'http://192.168.50.13:8989',    cat: 'Downloads', icon: '📺' },
   { label: 'Prowlarr',  href: 'http://192.168.50.13:9696',    cat: 'Downloads', icon: '🔍' },
+  { label: 'Bazarr',    href: 'http://192.168.50.13:6767',    cat: 'Downloads', icon: '💬' },
   { label: 'LibreChat', href: 'https://ai.jojeco.ca',         cat: 'AI',        icon: '🤖' },
   { label: 'LiteLLM',   href: 'http://192.168.50.13:4000/ui', cat: 'AI',        icon: '🧠' },
   { label: 'Grafana',   href: 'http://192.168.50.13:3002',    cat: 'Infra',     icon: '📊' },

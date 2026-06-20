@@ -2,7 +2,7 @@
  * ContainerControls — searchable, filterable container list with
  * restart / stop / start actions. Stop requires confirmation (passed as handler).
  */
-import { RotateCcw, Square, Play, RefreshCw, Search } from 'lucide-react';
+import { RotateCcw, Square, Play, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import type { Container } from './types';
 
@@ -13,6 +13,7 @@ interface ContainerControlsProps {
   onStop: (name: string) => void;   // parent wires confirm dialog
   onStart: (name: string) => void;
   onRefresh: () => void;
+  onPrune: () => void;
 }
 
 export function ContainerControls({
@@ -22,6 +23,7 @@ export function ContainerControls({
   onStop,
   onStart,
   onRefresh,
+  onPrune,
 }: ContainerControlsProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'running' | 'stopped'>('all');
@@ -123,6 +125,15 @@ export function ContainerControls({
           onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--raised)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--t2)'; }}
         >
           <RefreshCw size={11} style={{ flexShrink: 0 }} /> Refresh
+        </button>
+        <button
+          style={{ ...actionBtnStyle('neutral'), padding: '7px 12px', minHeight: 40 }}
+          disabled={loading['prune']}
+          onClick={onPrune}
+          onMouseEnter={e => { if (!loading['prune']) { (e.currentTarget as HTMLButtonElement).style.background = 'var(--raised-2)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--t1)'; } }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--raised)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--t2)'; }}
+        >
+          <Trash2 size={11} style={{ flexShrink: 0 }} /> {loading['prune'] ? 'Pruning…' : 'Prune'}
         </button>
       </div>
 
