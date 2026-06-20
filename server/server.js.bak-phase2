@@ -1,0 +1,3137 @@
+import express from 'express';
+import cors from 'cors';
+import crypto from 'crypto';
+import { readdir, readFile } from 'fs/promises';
+import https from 'https';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import db from './database.js';
+
+const execFileAsync = promisify(execFile);
+
+import {
+  generateToken,
+  authMiddleware,
+  optionalAuthMiddleware,
+  hashPassword,
+  comparePassword,
+  createUser,
+  getUserByEmail,
+  getUserById,
+} from './auth.js';
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// Simple in-memory login rate limiter: max 10 attempts per IP per 15 minutes
+const loginAttempts = new Map();
+const loginRateLimit = (req, res, next) => {
+  const ip = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+  const now = Date.now();
+  const window = 15 * 60 * 1000;
+  const max = 10;
+  const entry = loginAttempts.get(ip) || { count: 0, reset: now + window };
+  if (now > entry.reset) { entry.count = 0; entry.reset = now + window; }
+  entry.count++;
+  loginAttempts.set(ip, entry);
+  if (entry.count > max) return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
+  next();
+};
+
+// trust proxy disabled — req.ip now reflects actual socket IP, not XFF header
+// This prevents the XFF auth bypass where spoofed X-Forwarded-For: 192.168.50.x bypassed lanOrAuth
+
+// LAN bypass middleware: uses socket remoteAddress (not spoofable via XFF)
+// NOTE: do NOT trust 172.* — public traffic arrives via the nginx container's
+// docker IP (172.x), which made every lanOrAuth endpoint publicly readable.
+// True LAN clients hit :3001 directly and keep the bypass; everything routed
+// through the proxy (including dash.jojeco.ca) must present a JWT.
+const lanOrAuth = (req, res, next) => {
+  const ip = (req.socket?.remoteAddress || req.connection?.remoteAddress || '').replace(/^::ffff:/, '');
+  if (
+    ip.startsWith('192.168.50.') ||
+    ip === '::1' ||
+    ip === '127.0.0.1'
+  ) return next();
+  return authMiddleware(req, res, next);
+};
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// ============================================================================
+// AUTH ROUTES
+// ============================================================================
+
+app.post('/api/auth/register', (req, res) => {
+  res.status(403).json({ error: 'Registration is disabled' });
+});
+
+app.post('/api/auth/login', loginRateLimit, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
+    }
+
+    const user = getUserByEmail(email);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const isValid = await comparePassword(password, user.password_hash);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = generateToken(user.id, user.email);
+    const userInfo = { id: user.id, email: user.email, displayName: user.display_name };
+
+    res.json({ user: userInfo, token });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.get('/api/auth/me', authMiddleware, (req, res) => {
+  const user = getUserById(req.user.userId);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  res.json(user);
+});
+
+app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new password required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+
+    const user = getUserByEmail(req.user.email);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const isValid = await comparePassword(currentPassword, user.password_hash);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const newPasswordHash = await hashPassword(newPassword);
+    const stmt = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?');
+    stmt.run(newPasswordHash, Date.now(), user.id);
+
+    res.json({ success: true, message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'Password change failed' });
+  }
+});
+
+// ============================================================================
+// SERVICE ROUTES
+// ============================================================================
+
+app.get('/api/services', optionalAuthMiddleware, (req, res) => {
+  try {
+    let userId = req.user?.userId;
+    if (!userId) {
+      // Guest: serve first user's services
+      const firstUser = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+      if (!firstUser) return res.json([]);
+      userId = firstUser.id;
+    }
+    const stmt = db.prepare('SELECT * FROM services WHERE user_id = ? ORDER BY created_at DESC');
+    const services = stmt.all(userId);
+
+    const parsed = services.map(service => {
+      const s = {
+        ...service,
+        tags: JSON.parse(service.tags || '[]'),
+        isPinned: Boolean(service.is_pinned),
+        lanUrl: service.lan_url,
+        healthCheckUrl: service.health_check_url,
+        healthCheckInterval: service.health_check_interval,
+        createdAt: service.created_at,
+        updatedAt: service.updated_at,
+        userId: service.user_id,
+      };
+      if (req.isGuest) {
+        delete s.url; delete s.lanUrl; delete s.lan_url;
+        delete s.healthCheckUrl; delete s.health_check_url;
+        delete s.userId; delete s.user_id;
+      }
+      return s;
+    });
+
+    res.json(parsed);
+  } catch (error) {
+    console.error('Get services error:', error);
+    res.status(500).json({ error: 'Failed to fetch services' });
+  }
+});
+
+app.post('/api/services', authMiddleware, (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      url,
+      lanUrl,
+      icon,
+      color,
+      tags,
+      isPinned,
+      healthCheckUrl,
+      healthCheckInterval,
+    } = req.body;
+
+    if (!name || !url) {
+      return res.status(400).json({ error: 'Name and URL required' });
+    }
+
+    const id = crypto.randomUUID();
+    const now = Date.now();
+
+    const stmt = db.prepare(`
+      INSERT INTO services (
+        id, user_id, name, description, url, lan_url, icon, color,
+        tags, is_pinned, health_check_url, health_check_interval,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      id,
+      req.user.userId,
+      name,
+      description || '',
+      url,
+      lanUrl || null,
+      icon || 'Server',
+      color || 'bg-blue-500',
+      JSON.stringify(tags || []),
+      isPinned ? 1 : 0,
+      healthCheckUrl || null,
+      healthCheckInterval || 60,
+      now,
+      now
+    );
+
+    res.json({ id, message: 'Service created successfully' });
+  } catch (error) {
+    console.error('Create service error:', error);
+    res.status(500).json({ error: 'Failed to create service' });
+  }
+});
+
+app.put('/api/services/:id', authMiddleware, (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      description,
+      url,
+      lanUrl,
+      icon,
+      color,
+      tags,
+      isPinned,
+      healthCheckUrl,
+      healthCheckInterval,
+    } = req.body;
+
+    // Verify ownership
+    const checkStmt = db.prepare('SELECT user_id FROM services WHERE id = ?');
+    const service = checkStmt.get(id);
+
+    if (!service) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
+
+    if (service.user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const now = Date.now();
+    const stmt = db.prepare(`
+      UPDATE services
+      SET name = ?, description = ?, url = ?, lan_url = ?, icon = ?,
+          color = ?, tags = ?, is_pinned = ?, health_check_url = ?,
+          health_check_interval = ?, updated_at = ?
+      WHERE id = ?
+    `);
+
+    stmt.run(
+      name,
+      description || '',
+      url,
+      lanUrl || null,
+      icon || 'Server',
+      color || 'bg-blue-500',
+      JSON.stringify(tags || []),
+      isPinned ? 1 : 0,
+      healthCheckUrl || null,
+      healthCheckInterval || 60,
+      now,
+      id
+    );
+
+    res.json({ message: 'Service updated successfully' });
+  } catch (error) {
+    console.error('Update service error:', error);
+    res.status(500).json({ error: 'Failed to update service' });
+  }
+});
+
+app.delete('/api/services/:id', authMiddleware, (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify ownership
+    const checkStmt = db.prepare('SELECT user_id FROM services WHERE id = ?');
+    const service = checkStmt.get(id);
+
+    if (!service) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
+
+    if (service.user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const stmt = db.prepare('DELETE FROM services WHERE id = ?');
+    stmt.run(id);
+
+    res.json({ message: 'Service deleted successfully' });
+  } catch (error) {
+    console.error('Delete service error:', error);
+    res.status(500).json({ error: 'Failed to delete service' });
+  }
+});
+
+// ============================================================================
+// METRICS ROUTES
+// ============================================================================
+
+app.post('/api/metrics', authMiddleware, (req, res) => {
+  try {
+    const { serviceId, timestamp, responseTime, statusCode, isOnline } = req.body;
+
+    const stmt = db.prepare(`
+      INSERT INTO service_metrics (service_id, timestamp, response_time, status_code, is_online)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(serviceId, timestamp, responseTime, statusCode, isOnline ? 1 : 0);
+    res.json({ message: 'Metrics saved' });
+  } catch (error) {
+    console.error('Save metrics error:', error);
+    res.status(500).json({ error: 'Failed to save metrics' });
+  }
+});
+
+app.get('/api/metrics/:serviceId', authMiddleware, (req, res) => {
+  try {
+    const { serviceId } = req.params;
+    const { startTime, endTime } = req.query;
+
+    const stmt = db.prepare(`
+      SELECT * FROM service_metrics
+      WHERE service_id = ? AND timestamp >= ? AND timestamp <= ?
+      ORDER BY timestamp ASC
+    `);
+
+    const metrics = stmt.all(serviceId, parseInt(startTime), parseInt(endTime));
+
+    const parsed = metrics.map(m => ({
+      serviceId: m.service_id,
+      timestamp: m.timestamp,
+      responseTime: m.response_time,
+      statusCode: m.status_code,
+      isOnline: Boolean(m.is_online),
+    }));
+
+    res.json(parsed);
+  } catch (error) {
+    console.error('Get metrics error:', error);
+    res.status(500).json({ error: 'Failed to fetch metrics' });
+  }
+});
+
+// ============================================================================
+// HEALTH CHECK ROUTES
+// ============================================================================
+
+app.post('/api/health-checks', authMiddleware, (req, res) => {
+  try {
+    const { serviceId, status, responseTime, statusCode, timestamp, error } = req.body;
+
+    const stmt = db.prepare(`
+      INSERT INTO health_checks (service_id, status, response_time, status_code, timestamp, error)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(serviceId, status, responseTime || null, statusCode || null, timestamp, error || null);
+    res.json({ message: 'Health check saved' });
+  } catch (error) {
+    console.error('Save health check error:', error);
+    res.status(500).json({ error: 'Failed to save health check' });
+  }
+});
+
+app.get('/api/health-checks/:serviceId', authMiddleware, (req, res) => {
+  try {
+    const { serviceId } = req.params;
+    const limit = parseInt(req.query.limit) || 100;
+
+    const stmt = db.prepare(`
+      SELECT * FROM health_checks
+      WHERE service_id = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `);
+
+    const checks = stmt.all(serviceId, limit);
+    res.json(checks);
+  } catch (error) {
+    console.error('Get health checks error:', error);
+    res.status(500).json({ error: 'Failed to fetch health checks' });
+  }
+});
+
+// ============================================================================
+// IMPORT/EXPORT ROUTES
+// ============================================================================
+
+app.get('/api/services/export', authMiddleware, (req, res) => {
+  try {
+    const stmt = db.prepare('SELECT * FROM services WHERE user_id = ?');
+    const services = stmt.all(req.user.userId);
+
+    const exported = services.map(service => ({
+      name: service.name,
+      description: service.description,
+      url: service.url,
+      lanUrl: service.lan_url,
+      icon: service.icon,
+      color: service.color,
+      tags: JSON.parse(service.tags || '[]'),
+      isPinned: Boolean(service.is_pinned),
+      healthCheckUrl: service.health_check_url,
+      healthCheckInterval: service.health_check_interval,
+    }));
+
+    res.json(exported);
+  } catch (error) {
+    console.error('Export error:', error);
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+app.post('/api/services/import', authMiddleware, (req, res) => {
+  try {
+    const { services } = req.body;
+
+    if (!Array.isArray(services)) {
+      return res.status(400).json({ error: 'Services must be an array' });
+    }
+
+    const stmt = db.prepare(`
+      INSERT INTO services (
+        id, user_id, name, description, url, lan_url, icon, color,
+        tags, is_pinned, health_check_url, health_check_interval,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    let imported = 0;
+    const now = Date.now();
+
+    for (const service of services) {
+      const id = crypto.randomUUID();
+      stmt.run(
+        id,
+        req.user.userId,
+        service.name,
+        service.description || '',
+        service.url,
+        service.lanUrl || null,
+        service.icon || 'Server',
+        service.color || 'bg-blue-500',
+        JSON.stringify(service.tags || []),
+        service.isPinned ? 1 : 0,
+        service.healthCheckUrl || null,
+        service.healthCheckInterval || 60,
+        now,
+        now
+      );
+      imported++;
+    }
+
+    res.json({ imported });
+  } catch (error) {
+    console.error('Import error:', error);
+    res.status(500).json({ error: 'Import failed' });
+  }
+});
+
+// ============================================================================
+// SYSTEM METRICS ROUTES (Netdata proxy)
+// Node 18+ built-in fetch is used here — no extra dependency needed.
+// ============================================================================
+
+const NETDATA_URL = process.env.NETDATA_URL || 'http://netdata:19999';
+
+async function fetchNetdata(path) {
+  const res = await fetch(`${NETDATA_URL}${path}`);
+  if (!res.ok) throw new Error(`Netdata responded with ${res.status}`);
+  return res.json();
+}
+
+// Return the numeric value for a named dimension from a Netdata data row.
+// labels: ["time", "dim1", "dim2", ...], data: [timestamp, val1, val2, ...]
+function netdataValue(labels, data, name) {
+  const idx = labels.indexOf(name);
+  return idx > 0 && data ? Math.abs(Number(data[idx])) : 0;
+}
+
+app.get('/api/system/metrics', authMiddleware, async (req, res) => {
+  try {
+    const [cpuData, ramData, diskData, netData] = await Promise.all([
+      fetchNetdata('/api/v1/data?chart=system.cpu&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=system.ram&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=disk_space./&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=system.net&after=-2&points=1&format=json'),
+    ]);
+
+    // CPU: system.cpu shows only non-idle time; sum all dimensions = total usage
+    const cpuRow = cpuData.data?.[0];
+    const cpu = cpuRow
+      ? Math.min(100, cpuRow.slice(1).reduce((sum, v) => sum + Math.abs(Number(v)), 0))
+      : 0;
+
+    // RAM (MB)
+    const ramRow = ramData.data?.[0];
+    const ramUsed     = netdataValue(ramData.labels, ramRow, 'used');
+    const ramFree     = netdataValue(ramData.labels, ramRow, 'free');
+    const ramCached   = netdataValue(ramData.labels, ramRow, 'cached');
+    const ramBuffers  = netdataValue(ramData.labels, ramRow, 'buffers');
+    const ramTotal    = ramUsed + ramFree + ramCached + ramBuffers;
+
+    // Disk (GiB) — root partition
+    const diskRow      = diskData.data?.[0];
+    const diskUsed     = netdataValue(diskData.labels, diskRow, 'used');
+    const diskAvail    = netdataValue(diskData.labels, diskRow, 'avail');
+    const diskReserved = netdataValue(diskData.labels, diskRow, 'reserved_for_root');
+    const diskTotal    = diskUsed + diskAvail + diskReserved;
+
+    // Network (kbits/s) — Netdata uses negative for sent
+    const netRow      = netData.data?.[0];
+    const netDownload = netdataValue(netData.labels, netRow, 'received');
+    const netUpload   = netdataValue(netData.labels, netRow, 'sent');
+
+    res.json({
+      cpu: Math.round(cpu * 10) / 10,
+      memory: {
+        used:    Math.round(ramUsed),
+        total:   Math.round(ramTotal),
+        percent: ramTotal > 0 ? Math.round((ramUsed / ramTotal) * 1000) / 10 : 0,
+      },
+      disk: {
+        used:    Math.round(diskUsed * 10) / 10,
+        total:   Math.round(diskTotal * 10) / 10,
+        percent: diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 1000) / 10 : 0,
+      },
+      network: {
+        download: Math.round(netDownload * 10) / 10,
+        upload:   Math.round(netUpload * 10) / 10,
+      },
+    });
+  } catch (error) {
+    console.error('Netdata metrics error:', error.message);
+    res.status(503).json({ error: 'System metrics unavailable. Is Netdata running?' });
+  }
+});
+
+app.get('/api/system/history', authMiddleware, async (req, res) => {
+  try {
+    const points = Math.min(parseInt(req.query.points) || 60, 300);
+    const data = await fetchNetdata(
+      `/api/v1/data?chart=system.cpu&after=-${points}&points=${points}&format=json`
+    );
+
+    const history = (data.data || []).map(row => ({
+      timestamp: row[0] * 1000, // Netdata timestamps are seconds; convert to ms
+      cpu: Math.round(
+        Math.min(100, row.slice(1).reduce((sum, v) => sum + Math.abs(Number(v)), 0)) * 10
+      ) / 10,
+    }));
+
+    res.json(history);
+  } catch (error) {
+    console.error('Netdata history error:', error.message);
+    res.status(503).json({ error: 'System history unavailable' });
+  }
+});
+
+// ============================================================================
+// MULTI-SERVER METRICS
+// ============================================================================
+
+function parsePromValues(text, metric) {
+  const results = [];
+  for (const line of text.split('\n')) {
+    if (line.startsWith('#') || !line.trim()) continue;
+    if (!line.startsWith(metric + '{') && !line.startsWith(metric + ' ')) continue;
+    const labelStr = line.match(/\{([^}]*)\}/)?.[1] || '';
+    const value = parseFloat(line.split(' ').slice(-1)[0]);
+    const labels = {};
+    for (const m of (labelStr.match(/(\w+)="([^"]*)"/g) || [])) {
+      const eq = m.indexOf('='); labels[m.slice(0, eq)] = m.slice(eq + 2, -1);
+    }
+    results.push({ labels, value });
+  }
+  return results;
+}
+
+async function fetchServer1() {
+  try {
+    const res = await fetch('http://192.168.50.10:9182/metrics', { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error('windows_exporter error');
+    const text = await res.text();
+
+    // CPU: use load1-equivalent via processor_utility rate approximation — fall back to WMI load
+    const load1 = parsePromValues(text, 'windows_cpu_processor_performance_total')
+      .filter(m => m.labels.core !== '_Total' && m.labels.mode === 'privileged').length > 0
+      ? null : null;
+    // Use idle time approach: sum idle / sum total per core
+    const idleVals = parsePromValues(text, 'windows_cpu_time_total').filter(m => m.labels.mode === 'idle');
+    const allVals  = parsePromValues(text, 'windows_cpu_time_total');
+    const cores    = new Set(idleVals.map(m => m.labels.core)).size || 1;
+    const idleSum  = idleVals.reduce((s, m) => s + m.value, 0);
+    const totalSum = allVals.reduce((s, m) => s + m.value, 0);
+    const cpuPct   = totalSum > 0 ? Math.min(100, Math.round((1 - idleSum / totalSum) * 1000) / 10) : 0;
+
+    // Memory
+    const memAvail = parsePromValues(text, 'windows_memory_available_bytes')[0]?.value ?? 0;
+    const memLimit = parsePromValues(text, 'windows_memory_commit_limit')[0]?.value ?? 0;
+    const memTotal = memLimit;
+    const memUsed  = memTotal - memAvail;
+
+    // Disks — dynamic detection, all volumes > 512MB, exclude hidden raw volumes
+    const diskSizes = parsePromValues(text, 'windows_logical_disk_size_bytes').filter(m => m.value > 536870912 && isRealMount(m.labels.volume));
+    const diskFrees = parsePromValues(text, 'windows_logical_disk_free_bytes');
+    const disks = diskSizes.map(s => {
+      const freeEntry = diskFrees.find(f => f.labels.volume === s.labels.volume);
+      const free = freeEntry?.value ?? 0;
+      const used = s.value - free;
+      return { drive: s.labels.volume, used: Math.round(used / 1024 / 1024 / 1024 * 10) / 10, total: Math.round(s.value / 1024 / 1024 / 1024 * 10) / 10, percent: Math.round((used / s.value) * 1000) / 10 };
+    });
+
+    // CPU + GPU temps from OhmGraphite (port 9101, v0.37.0 running as service)
+    const temps = [];
+    try {
+      const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
+      if (ohmRes.ok) {
+        const ohmText = await ohmRes.text();
+        const cpuPkg = parsePromValues(ohmText, 'ohm_cpu_celsius').find(m => m.labels.sensor === 'CPU Package');
+        if (cpuPkg) temps.push({ type: 'CPU Package', value: Math.round(cpuPkg.value * 10) / 10 });
+        const gpuCore = parsePromValues(ohmText, 'ohm_gpunvidia_celsius').find(m => m.labels.sensor === 'GPU Core');
+        if (gpuCore) temps.push({ type: 'GPU Core', value: Math.round(gpuCore.value * 10) / 10 });
+      }
+    } catch {}
+
+    return {
+      id: 'server1', name: 'Server 1 (Plex)', host: '192.168.50.10', os: 'Windows 10', online: true, cpu: cpuPct,
+      memory: { used: Math.round(memUsed / 1024 / 1024), total: Math.round(memTotal / 1024 / 1024), percent: memTotal > 0 ? Math.round((memUsed / memTotal) * 1000) / 10 : 0 },
+      disks,
+      disk: disks[0] ?? null,
+      temps,
+    };
+  } catch {
+    return { id: 'server1', name: 'Server 1 (Plex)', host: '192.168.50.10', os: 'Windows 10', online: false, temps: [] };
+  }
+}
+
+async function fetchServer2() {
+  try {
+    const [cpuData, ramData, diskData] = await Promise.all([
+      fetchNetdata('/api/v1/data?chart=system.cpu&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=system.ram&after=-2&points=1&format=json'),
+      fetchNetdata('/api/v1/data?chart=disk_space./&after=-2&points=1&format=json'),
+    ]);
+    const cpuRow = cpuData.data?.[0];
+    const cpu = cpuRow ? Math.min(100, Math.round(cpuRow.slice(1).reduce((s, v) => s + Math.abs(Number(v)), 0) * 10) / 10) : 0;
+    const ramRow = ramData.data?.[0];
+    const ramUsed = netdataValue(ramData.labels, ramRow, 'used');
+    const ramFree = netdataValue(ramData.labels, ramRow, 'free');
+    const ramCached = netdataValue(ramData.labels, ramRow, 'cached');
+    const ramBuffers = netdataValue(ramData.labels, ramRow, 'buffers');
+    const ramTotal = ramUsed + ramFree + ramCached + ramBuffers;
+    const diskRow = diskData.data?.[0];
+    const diskUsed = netdataValue(diskData.labels, diskRow, 'used');
+    const diskAvail = netdataValue(diskData.labels, diskRow, 'avail');
+    const diskReserved = netdataValue(diskData.labels, diskRow, 'reserved_for_root');
+    const diskTotal = diskUsed + diskAvail + diskReserved;
+    let temps = [];
+    try {
+      const zones = await readdir('/sys/class/thermal');
+      const thermalZones = zones.filter(z => z.startsWith('thermal_zone'));
+      const raw = await Promise.all(thermalZones.map(async z => {
+        const [type, temp] = await Promise.all([
+          readFile(`/sys/class/thermal/${z}/type`, 'utf8').catch(() => 'unknown'),
+          readFile(`/sys/class/thermal/${z}/temp`, 'utf8').catch(() => '0'),
+        ]);
+        return { type: type.trim(), value: Math.round(parseInt(temp.trim()) / 100) / 10 };
+      }));
+      temps = raw.filter(t => t.value > 0 && t.value < 120);
+    } catch {}
+    return {
+      id: 'server2', name: 'Server 2 (Docker)', host: '192.168.50.13', os: 'Ubuntu LXC', online: true, cpu,
+      memory: { used: Math.round(ramUsed), total: Math.round(ramTotal), percent: ramTotal > 0 ? Math.round((ramUsed / ramTotal) * 1000) / 10 : 0 },
+      disk: { used: Math.round(diskUsed * 10) / 10, total: Math.round(diskTotal * 10) / 10, percent: diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 1000) / 10 : 0 },
+      temps,
+    };
+  } catch {
+    return { id: 'server2', name: 'Server 2 (Docker)', host: '192.168.50.13', os: 'Ubuntu LXC', online: false, temps: [] };
+  }
+}
+
+async function fetchServer3() {
+  try {
+    const res = await fetch('http://192.168.50.12:9100/metrics', { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error('node_exporter error');
+    const text = await res.text();
+    const load1 = parsePromValues(text, 'node_load1')[0]?.value ?? 0;
+    const cpuCores = new Set(parsePromValues(text, 'node_cpu_seconds_total').map(m => m.labels.cpu)).size || 1;
+    const cpu = Math.min(100, Math.round((load1 / cpuCores) * 1000) / 10);
+    const memTotal = parsePromValues(text, 'node_memory_MemTotal_bytes')[0]?.value ?? 0;
+    const memAvail = parsePromValues(text, 'node_memory_MemAvailable_bytes')[0]?.value ?? 0;
+    const memUsed = memTotal - memAvail;
+    const SKIP_FSTYPES = new Set(['cifs', 'smb3', 'nfs', 'nfs4', 'tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'sysfs', 'proc', 'cgroup', 'cgroup2', 'pstore', 'efivarfs']);
+    const diskSizeEntries = parsePromValues(text, 'node_filesystem_size_bytes').filter(m => !SKIP_FSTYPES.has(m.labels.fstype) && m.value > 5368709120 && isRealMount(m.labels.mountpoint));
+    const diskAvailEntries = parsePromValues(text, 'node_filesystem_avail_bytes');
+    const seenSizes = new Set();
+    const disks = diskSizeEntries.filter(m => {
+      const key = Math.round(m.value / 1e9);
+      if (seenSizes.has(key)) return false;
+      seenSizes.add(key);
+      return true;
+    }).map(m => {
+      const avail = diskAvailEntries.find(a => a.labels.mountpoint === m.labels.mountpoint && a.labels.device === m.labels.device)?.value ?? 0;
+      const used = m.value - avail;
+      return { label: m.labels.mountpoint, used: Math.round(used / 1024 / 1024 / 1024 * 10) / 10, total: Math.round(m.value / 1024 / 1024 / 1024 * 10) / 10, percent: Math.round((used / m.value) * 1000) / 10 };
+    });
+    const coreTemps = parsePromValues(text, 'node_hwmon_temp_celsius').filter(m => m.labels.chip === 'platform_coretemp_0' && m.value > 0 && m.value < 120);
+    const pkgTemp = coreTemps.find(m => m.labels.sensor === 'temp1');
+    const temps = pkgTemp ? [{ type: 'x86_pkg_temp', value: pkgTemp.value }] : coreTemps.slice(0, 1).map(t => ({ type: 'cpu', value: t.value }));
+    return {
+      id: 'server3', name: 'Server 3 (Media)', host: '192.168.50.12', os: 'Ubuntu 24.04', online: true, cpu,
+      memory: { used: Math.round(memUsed / 1024 / 1024), total: Math.round(memTotal / 1024 / 1024), percent: memTotal > 0 ? Math.round((memUsed / memTotal) * 1000) / 10 : 0 },
+      disks,
+      disk: disks[0] ?? null,
+      temps,
+    };
+  } catch {
+    return { id: 'server3', name: 'Server 3 (Media)', host: '192.168.50.12', os: 'Ubuntu 24.04', online: false, temps: [] };
+  }
+}
+
+app.get('/api/system/servers', authMiddleware, async (req, res) => {
+  const servers = await Promise.all([fetchServer1(), fetchServer2(), fetchServer3()]);
+  res.json(servers);
+});
+
+// ============================================================================
+// QBITTORRENT PROXY ROUTES
+// ============================================================================
+
+const QBT_URL = process.env.QBT_URL || 'http://192.168.50.13:9091';
+const QBT_USER = process.env.QBT_USER || 'admin';
+const QBT_PASS = process.env.QBT_PASS || 'jojeco2026';
+let qbtSid = null;
+let qbtCookieName = 'SID';
+
+async function qbtLogin() {
+  const res = await fetch(`${QBT_URL}/api/v2/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': QBT_URL },
+    body: `username=${QBT_USER}&password=${QBT_PASS}`,
+  });
+  const cookies = res.headers.get('set-cookie') || '';
+  // qBittorrent changed cookie name to QBT_SID_{PORT} in newer versions
+  const match = cookies.match(/([A-Z_]*SID[^=]*)=([^;]+)/);
+  if (match) { qbtCookieName = match[1]; qbtSid = match[2]; return true; }
+  return false;
+}
+
+async function qbtFetch(path, options = {}) {
+  const headers = { 'Referer': QBT_URL, ...(options.headers || {}) };
+  if (qbtSid) headers['Cookie'] = `${qbtCookieName}=${qbtSid}`;
+  const res = await fetch(`${QBT_URL}${path}`, { ...options, headers });
+  if (res.status === 403) {
+    await qbtLogin();
+    const retryHeaders = { 'Cookie': `${qbtCookieName}=${qbtSid}`, 'Referer': QBT_URL, ...(options.headers || {}) };
+    return fetch(`${QBT_URL}${path}`, { ...options, headers: retryHeaders });
+  }
+  return res;
+}
+
+app.get('/api/torrents/list', authMiddleware, async (req, res) => {
+  try {
+    const r = await qbtFetch('/api/v2/torrents/info?sort=added_on&reverse=true');
+    res.json(await r.json());
+  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
+});
+
+app.get('/api/torrents/transfer', authMiddleware, async (req, res) => {
+  try {
+    const r = await qbtFetch('/api/v2/transfer/info');
+    res.json(await r.json());
+  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
+});
+
+app.post('/api/torrents/add', authMiddleware, async (req, res) => {
+  try {
+    const { urls, savepath } = req.body;
+    const body = new URLSearchParams({ urls, savepath: savepath || '/media/Downloads' });
+    const r = await qbtFetch('/api/v2/torrents/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    res.json({ result: await r.text() });
+  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
+});
+
+app.post('/api/torrents/:action', authMiddleware, async (req, res) => {
+  const { action } = req.params;
+  if (!['pause', 'resume', 'delete', 'recheck'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+  try {
+    const { hashes, deleteFiles } = req.body;
+    const params = new URLSearchParams({ hashes: Array.isArray(hashes) ? hashes.join('|') : hashes });
+    if (action === 'delete') params.append('deleteFiles', deleteFiles ? 'true' : 'false');
+    const r = await qbtFetch(`/api/v2/torrents/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    res.json({ result: await r.text() });
+  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
+});
+
+// ============================================================================
+// DOCKER PROXY ROUTES (via Docker socket)
+// ============================================================================
+
+import http from 'http';
+
+function dockerRequest(path, method = 'GET', body = null) {
+  return new Promise((resolve, reject) => {
+    const options = { socketPath: '/var/run/docker.sock', path, method, headers: { 'Content-Type': 'application/json' } };
+    const req = http.request(options, dres => {
+      let data = '';
+      dres.on('data', chunk => data += chunk);
+      dres.on('end', () => {
+        try { resolve({ status: dres.statusCode, body: JSON.parse(data) }); }
+        catch { resolve({ status: dres.statusCode, body: data }); }
+      });
+    });
+    req.on('error', reject);
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+app.get('/api/docker/containers', optionalAuthMiddleware, async (req, res) => {
+  try {
+    const showAll = req.query.all === '1';
+    const r = await dockerRequest(`/containers/json?all=${showAll ? '1' : '0'}`);
+    const containers = r.body.map(c => ({
+      id: c.Id.slice(0, 12),
+      name: c.Names[0]?.replace('/', '') || c.Id.slice(0, 12),
+      image: c.Image,
+      status: c.Status,
+      state: c.State,
+      health: c.Status?.includes('(healthy)') ? 'healthy'
+            : c.Status?.includes('(unhealthy)') ? 'unhealthy'
+            : c.Status?.includes('(health: starting)') ? 'starting'
+            : 'none',
+      ports: c.Ports.filter(p => p.PublicPort).map(p => `${p.PublicPort}`),
+      created: c.Created,
+      compose_project: c.Labels?.['com.docker.compose.project'] || null,
+    }));
+    res.json(containers.sort((a, b) => a.name.localeCompare(b.name)));
+  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
+});
+
+app.post('/api/docker/containers/:id/:action', authMiddleware, async (req, res) => {
+  const { id, action } = req.params;
+  if (!['start', 'stop', 'restart'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+  try {
+    const r = await dockerRequest(`/containers/${id}/${action}`, 'POST');
+    res.json({ result: r.status === 204 ? 'ok' : r.body });
+  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
+});
+
+// Prune: stopped containers + dangling images + unused networks + build cache (like
+// `docker system prune -f`), then fstrim to release space back to the LVM thin pool.
+app.post('/api/docker/prune', authMiddleware, async (req, res) => {
+  try {
+    let reclaimed = 0;
+    const calls = [
+      '/containers/prune',
+      `/images/prune?filters=${encodeURIComponent('{"dangling":["true"]}')}`,
+      '/networks/prune',
+      '/build/prune',
+    ];
+    for (const p of calls) {
+      try { const r = await dockerRequest(p, 'POST'); reclaimed += (r.body && r.body.SpaceReclaimed) || 0; } catch (e) { /* skip */ }
+    }
+    try { require('child_process').execSync('fstrim / 2>/dev/null', { timeout: 60000 }); } catch (e) { /* fstrim needs host caps; ignore if unavailable */ }
+    res.json({ message: `Pruned — reclaimed ${(reclaimed / 1e9).toFixed(2)} GB`, reclaimed });
+  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
+});
+
+app.get('/api/docker/containers/:id/logs', authMiddleware, async (req, res) => {
+  try {
+    const lines = Math.min(parseInt(req.query.lines) || 100, 500);
+    const options = { socketPath: '/var/run/docker.sock', path: `/containers/${req.params.id}/logs?stdout=1&stderr=1&tail=${lines}`, method: 'GET' };
+    const dreq = http.request(options, dres => {
+      let raw = Buffer.alloc(0);
+      dres.on('data', chunk => { raw = Buffer.concat([raw, chunk]); });
+      dres.on('end', () => {
+        const logLines = [];
+        let i = 0;
+        while (i + 8 <= raw.length) {
+          const size = raw.readUInt32BE(i + 4);
+          if (i + 8 + size > raw.length) break;
+          logLines.push(raw.slice(i + 8, i + 8 + size).toString('utf8').trimEnd());
+          i += 8 + size;
+        }
+        res.json({ logs: logLines.join('\n') });
+      });
+    });
+    dreq.on('error', () => res.status(503).json({ error: 'Docker socket unavailable' }));
+    dreq.end();
+  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
+});
+
+// ============================================================================
+// MEDIA PROXY ROUTES (Sonarr + Radarr)
+// ============================================================================
+
+const SONARR_URL = process.env.SONARR_URL || 'http://192.168.50.13:8989';
+const SONARR_KEY = process.env.SONARR_KEY || 'ec7a0e9ece5a4cca9ca0047b4a4ec57b';
+const RADARR_URL = process.env.RADARR_URL || 'http://192.168.50.13:7878';
+const RADARR_KEY = process.env.RADARR_KEY || 'bb4d373c02874e19982410059dd56c28';
+const BAZARR_URL = process.env.BAZARR_URL || 'http://192.168.50.13:6767';
+const BAZARR_KEY = process.env.BAZARR_KEY || 'ed47b01913f45582cff2d9f243e4c93c';
+
+async function arrFetch(baseUrl, apiKey, path) {
+  const r = await fetch(`${baseUrl}/api/v3${path}`, { headers: { 'X-Api-Key': apiKey } });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+
+app.get('/api/media/queue', authMiddleware, async (req, res) => {
+  try {
+    const [sq, rq] = await Promise.allSettled([
+      arrFetch(SONARR_URL, SONARR_KEY, '/queue?pageSize=50&includeUnknownSeriesItems=false&includeSeries=true&includeEpisode=true'),
+      arrFetch(RADARR_URL, RADARR_KEY, '/queue?pageSize=50&includeUnknownMovieItems=false&includeMovie=true'),
+    ]);
+    res.json({
+      sonarr: sq.status === 'fulfilled' ? sq.value.records || [] : [],
+      radarr: rq.status === 'fulfilled' ? rq.value.records || [] : [],
+    });
+  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
+});
+
+app.get('/api/media/stats', authMiddleware, async (req, res) => {
+  try {
+    const [ss, rs, sq, rq] = await Promise.allSettled([
+      arrFetch(SONARR_URL, SONARR_KEY, '/wanted/missing?pageSize=1'),
+      arrFetch(RADARR_URL, RADARR_KEY, '/wanted/missing?pageSize=1'),
+      arrFetch(SONARR_URL, SONARR_KEY, '/queue?pageSize=1'),
+      arrFetch(RADARR_URL, RADARR_KEY, '/queue?pageSize=1'),
+    ]);
+    res.json({
+      sonarr: { missing: ss.status === 'fulfilled' ? ss.value.totalRecords || 0 : null, queued: sq.status === 'fulfilled' ? sq.value.totalRecords || 0 : null },
+      radarr: { missing: rs.status === 'fulfilled' ? rs.value.totalRecords || 0 : null, queued: rq.status === 'fulfilled' ? rq.value.totalRecords || 0 : null },
+    });
+  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
+});
+
+app.get('/api/bazarr/wanted', authMiddleware, async (req, res) => {
+  try {
+    const r = await fetch(`${BAZARR_URL}/api/episodes/wanted?start=0&length=5`, {
+      headers: { 'X-API-KEY': BAZARR_KEY },
+    });
+    if (!r.ok) throw new Error(`${r.status}`);
+    const data = await r.json();
+    // Also fetch totals for history count
+    const h = await fetch(`${BAZARR_URL}/api/episodes/history?start=0&length=1`, {
+      headers: { 'X-API-KEY': BAZARR_KEY },
+    });
+    const hist = h.ok ? await h.json() : {};
+    res.json({
+      wanted: data.total || 0,
+      recent: (data.data || []).slice(0, 5).map(e => ({
+        series: e.seriesTitle,
+        episode: e.episode_number,
+      })),
+      downloaded: hist.total || 0,
+    });
+  } catch (e) { res.status(503).json({ error: 'Bazarr unavailable' }); }
+});
+
+app.get('/api/media/upcoming', optionalAuthMiddleware, async (req, res) => {
+  try {
+    const today = new Date();
+    const end = new Date(today); end.setDate(today.getDate() + 45);
+    const startStr = today.toISOString().slice(0, 10);
+    const endStr = end.toISOString().slice(0, 10);
+    const [cal, movies] = await Promise.allSettled([
+      arrFetch(SONARR_URL, SONARR_KEY, `/calendar?start=${startStr}&end=${endStr}&includeSeries=true`),
+      arrFetch(RADARR_URL, RADARR_KEY, '/movie?monitored=true'),
+    ]);
+    const episodes = (cal.status === 'fulfilled' && Array.isArray(cal.value) ? cal.value : []).map(ep => ({
+      type: 'episode',
+      id: ep.id,
+      title: ep.series?.title || 'Unknown',
+      episode: `S${String(ep.seasonNumber).padStart(2,'0')}E${String(ep.episodeNumber).padStart(2,'0')}`,
+      episodeTitle: ep.title || '',
+      airDate: ep.airDateUtc || ep.airDate || '',
+      hasFile: ep.hasFile || false,
+      network: ep.series?.network || '',
+    }));
+    const upcomingMovies = (movies.status === 'fulfilled' && Array.isArray(movies.value) ? movies.value : [])
+      .filter(m => {
+        const release = m.digitalRelease || m.physicalRelease || m.inCinemas;
+        if (!release) return false;
+        const d = new Date(release);
+        return d >= today && d <= end;
+      })
+      .map(m => ({
+        type: 'movie',
+        id: m.id,
+        title: m.title,
+        year: m.year,
+        digitalRelease: m.digitalRelease || null,
+        physicalRelease: m.physicalRelease || null,
+        inCinemas: m.inCinemas || null,
+        studio: m.studio || '',
+      }));
+    res.json({ episodes, movies: upcomingMovies });
+  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
+});
+
+// ============================================================================
+// SEED DEFAULT SERVICES
+// ============================================================================
+
+const DEFAULT_SERVICES = [
+  { name: 'Plex',        description: 'Media server',           url: 'http://192.168.50.10:32400/web', icon: 'Film',     color: 'bg-yellow-500', tags: ['media'] },
+  { name: 'Overseerr',   description: 'Media requests',         url: 'https://seerr.jojeco.ca',        icon: 'Film',     color: 'bg-blue-500',   tags: ['media'] },
+  { name: 'Sonarr',      description: 'TV show manager',        url: 'http://192.168.50.13:8989',      icon: 'Monitor',  color: 'bg-teal-500',   tags: ['media', 'arr'] },
+  { name: 'Radarr',      description: 'Movie manager',          url: 'http://192.168.50.13:7878',      icon: 'Film',     color: 'bg-orange-500', tags: ['media', 'arr'] },
+  { name: 'Prowlarr',    description: 'Indexer manager',        url: 'http://192.168.50.13:9696',      icon: 'Radio',    color: 'bg-purple-500', tags: ['media', 'arr'] },
+  { name: 'Bazarr',     description: 'Subtitle manager',       url: 'http://192.168.50.13:6767',      icon: 'Subtitles', color: 'bg-violet-500', tags: ['media', 'arr'] },
+  { name: 'qBittorrent', description: 'Torrent client',         url: 'http://192.168.50.13:9091',      icon: 'Download', color: 'bg-green-500',  tags: ['download'] },
+  { name: 'Navidrome',   description: 'Music streaming',        url: 'https://navidrome.jojeco.ca',    icon: 'Music',    color: 'bg-pink-500',   tags: ['media', 'music'] },
+  { name: 'Portainer',   description: 'Docker management',      url: 'http://192.168.50.13:9000',      icon: 'Box',      color: 'bg-cyan-500',   tags: ['infra'] },
+  { name: 'Grafana',     description: 'Metrics & monitoring',   url: 'http://192.168.50.13:3002',      icon: 'Activity', color: 'bg-red-500',    tags: ['infra', 'monitoring'] },
+  { name: 'LiteLLM',     description: 'AI model gateway',       url: 'http://192.168.50.13:4000/ui',   icon: 'Cpu',      color: 'bg-indigo-500', tags: ['ai'] },
+  { name: 'Open WebUI',  description: 'AI chat interface',      url: 'https://ai.jojeco.ca',           icon: 'MessageSquare', color: 'bg-blue-600', tags: ['ai'] },
+  { name: 'Proxmox',     description: 'Hypervisor',             url: 'https://192.168.50.11:8006',      icon: 'Server',   color: 'bg-gray-500',   tags: ['infra'] },
+];
+
+app.post('/api/services/seed', authMiddleware, (req, res) => {
+  try {
+    const existing = db.prepare('SELECT COUNT(*) as count FROM services WHERE user_id = ?').get(req.user.userId);
+    if (existing.count > 0 && !req.body.force) {
+      return res.json({ skipped: true, message: 'Services already exist. Send force:true to overwrite.' });
+    }
+
+    const stmt = db.prepare(`
+      INSERT INTO services (id, user_id, name, description, url, lan_url, icon, color, tags, is_pinned, health_check_url, health_check_interval, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const now = Date.now();
+    let inserted = 0;
+    for (const s of DEFAULT_SERVICES) {
+      stmt.run(crypto.randomUUID(), req.user.userId, s.name, s.description, s.url, null, s.icon, s.color, JSON.stringify(s.tags), 0, s.url, 60, now, now);
+      inserted++;
+    }
+    res.json({ inserted });
+  } catch (error) {
+    console.error('Seed error:', error);
+    res.status(500).json({ error: 'Seed failed' });
+  }
+});
+
+// ============================================================================
+// CD RIP STATUS ROUTE
+// ============================================================================
+
+const RIP_STATUS_URL = process.env.RIP_STATUS_URL || 'http://192.168.50.10:9998';
+
+app.get('/api/rip/status', authMiddleware, async (req, res) => {
+  try {
+    const r = await fetch(`${RIP_STATUS_URL}/`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error(`${r.status}`);
+    const text = await r.text();
+    // Strip UTF-8 BOM that PowerShell Set-Content adds
+    const clean = text.startsWith('\uFEFF') ? text.slice(1) : text;
+    res.json(JSON.parse(clean));
+  } catch {
+    res.json({ status: 'idle', album: '', track: 0, total: 0, percent: 0, trackName: '', updatedAt: '' });
+  }
+});
+
+// ============================================================================
+// TDARR ROUTE
+
+const TDARR_URL = 'http://192.168.50.13:8265';
+
+app.get('/api/tdarr/status', authMiddleware, async (req, res) => {
+  try {
+    const [statsRes, nodesRes] = await Promise.allSettled([
+      fetch(`${TDARR_URL}/api/v2/cruddb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { collection: 'StatisticsJSONDB', mode: 'getAll', docID: 'statistics' } }),
+        signal: AbortSignal.timeout(5000),
+      }),
+      fetch(`${TDARR_URL}/api/v2/get-nodes`, { signal: AbortSignal.timeout(5000) }),
+    ]);
+
+    const stats = statsRes.status === 'fulfilled' && statsRes.value.ok
+      ? (await statsRes.value.json())[0] : null;
+
+    const nodesRaw = nodesRes.status === 'fulfilled' && nodesRes.value.ok
+      ? await nodesRes.value.json() : {};
+
+    const workers = [];
+    for (const node of Object.values(nodesRaw)) {
+      const n = node;
+      for (const w of Object.values(n.workers || {})) {
+        if (w.status !== 'No tasks') {
+          workers.push({
+            node: n.nodeName,
+            type: w.workerType,
+            status: w.status,
+            file: w.file ? w.file.split('/').pop() : '',
+            percentage: Math.round(w.percentage || 0),
+            fps: w.fps || 0,
+          });
+        }
+      }
+    }
+
+    res.json({
+      total: stats?.totalFileCount || 0,
+      transcoded: stats?.totalTranscodeCount || 0,
+      transcodeQueue: stats?.table0Count || 0,
+      noAction: stats?.table2Count || 0,       // table2 = no action needed (already correct format)
+      transcodeErrors: stats?.table3Count || 0, // table3 = transcode errors
+      healthErrors: stats?.table5Count || 0,
+      healthOk: stats?.table6Count || 0,
+      tdarrScore: parseFloat(stats?.tdarrScore || 0),
+      sizeDiffGB: stats ? Math.round((stats.sizeDiff || 0) * 10) / 10 : 0,
+      workers,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to reach Tdarr' });
+  }
+});
+
+// ============================================================================
+// AI CHAT ROUTE
+// ============================================================================
+
+const LITELLM_URL = 'http://192.168.50.13:4000/v1/chat/completions';
+const LITELLM_KEY = 'cafe9800069dd9fe49e4337a3a062fc8e10a747e9d12739cbdff0f8b44ce74e9';
+
+app.post('/api/ai/chat', authMiddleware, async (req, res) => {
+  const { model = 'local-smart', messages, max_tokens = 2000, temperature = 0.7 } = req.body;
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages array required' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  try {
+    const upstream = await fetch(LITELLM_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LITELLM_KEY}`,
+      },
+      body: JSON.stringify({ model, messages, stream: true, max_tokens, temperature }),
+      signal: AbortSignal.timeout(180000),
+    });
+
+    if (!upstream.ok) {
+      const errText = await upstream.text();
+      res.write(`data: {"error":"LiteLLM ${upstream.status}: ${errText.slice(0,200)}"}\n\n`);
+      res.end();
+      return;
+    }
+
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value, { stream: true }));
+    }
+    res.end();
+  } catch (err) {
+    res.write(`data: {"error":"${String(err.message).replace(/"/g, "'")}"}\n\n`);
+    res.end();
+  }
+});
+
+// ============================================================================
+// LAB OVERVIEW ROUTES
+// ============================================================================
+
+const LAB_MACHINES = [
+  { id: 'server1', name: 'Server 1', host: '192.168.50.10', role: 'Plex + Games',    os: 'Windows 10',  always_on: true,  gpu_label: 'GTX 1060' },
+  { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'LLM Node',        os: 'Ubuntu',      always_on: true,  gpu_label: 'GTX 1060 Max-Q' },
+  { id: 'server2', name: 'Server 2', host: '192.168.50.13', role: 'Docker Host',     os: 'Debian LXC',  always_on: true,  gpu_label: null },
+  { id: 'macmini', name: 'Mac Mini', host: '192.168.50.30', role: 'DNS + Monitor',   os: 'macOS',       always_on: true,  gpu_label: null },
+  { id: 'jopc',    name: 'JoPc',     host: '192.168.50.20', role: 'RTX 3080 Ti',     os: 'Windows',     always_on: false, gpu_label: 'RTX 3080 Ti' },
+  { id: 'macbook', name: 'MacBook',  host: '192.168.50.40', role: 'M4 (burst)',      os: 'macOS',       always_on: false, gpu_label: null },
+];
+
+const SKIP_FS_PATHS = new Set(['/etc/hostname', '/etc/hosts', '/etc/resolv.conf']);
+// macOS APFS internal volumes to skip (not user-facing)
+const SKIP_FS_PREFIXES = ['/etc/', '/proc/', '/sys/', '/dev/', '/run/', '/System/Volumes/VM', '/System/Volumes/Preboot', '/System/Volumes/Recovery', '/System/Volumes/Hardware', '/System/Volumes/Update', '/private/var/'];
+// Windows hidden volume pattern (e.g., HarddiskVolume3)
+const WIN_RAW_VOLUME_RE = /^HarddiskVolume\d+$/i;
+
+function isRealMount(path) {
+  if (SKIP_FS_PATHS.has(path)) return false;
+  if (SKIP_FS_PREFIXES.some(p => path.startsWith(p))) return false;
+  if (/\.[a-z]+$/.test(path)) return false; // file path with extension
+  if (WIN_RAW_VOLUME_RE.test(path)) return false; // Windows hidden volumes
+  return true;
+}
+
+function dedupeDisks(fsArray) {
+  const seen = new Set();
+  return fsArray.filter(d => {
+    const key = `${d.size}:${Math.round(d.used / 1e9)}`; // same size+used = same disk shown twice
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function fetchLabGlancesDetailed(host) {
+  const base = `http://${host}:61208/api/4`;
+  const g = (path) => fetch(`${base}${path}`, { signal: AbortSignal.timeout(4000) })
+    .then(r => r.ok ? r.json() : null).catch(() => null);
+  const [cpu, mem, fs, sensors, gpu] = await Promise.all([g('/cpu'), g('/mem'), g('/fs'), g('/sensors'), g('/gpu')]);
+  if (!cpu && !mem) throw new Error('offline');
+
+  const rawDisks = (fs ?? []).filter(d => d.size > 5368709120 && isRealMount(d.mnt_point));
+  const disks = dedupeDisks(rawDisks).map(d => ({
+    label: d.mnt_point,
+    used: d.used,
+    size: d.size,
+    percent: d.percent,
+  }));
+
+  // Prefer discrete GPU (NVIDIA/AMD) over integrated Intel
+  const allGpus = Array.isArray(gpu) ? gpu : [];
+  const discrete = allGpus.find(g => !g.name?.toLowerCase().includes('intel') && !g.name?.toLowerCase().includes('uhd'));
+  const gpuEntry = discrete ?? allGpus[0] ?? null;
+  const gpuData = gpuEntry ? {
+    name: gpuEntry.name || gpuEntry.gpu_id || 'GPU',
+    temp: gpuEntry.temperature ?? null,
+    utilization: gpuEntry.proc ?? null,
+    mem_percent: gpuEntry.mem ?? null,
+    nvenc_util: gpuEntry.encoder_proc ?? null,
+  } : null;
+
+  // Only include actual temperature sensors (not battery %, fan speed, etc.)
+  const TEMP_TYPES = new Set(['temperature_core', 'temperature', 'temperature_alarm']);
+  const allTemps = (sensors ?? [])
+    .filter(s => TEMP_TYPES.has(s.type) && s.value > 0 && s.value < 105)
+    .map(s => s.value);
+  const maxTemp = allTemps.length > 0 ? Math.round(Math.max(...allTemps) * 10) / 10 : null;
+
+  return {
+    online: true,
+    cpu: cpu?.total != null ? Math.round(cpu.total * 10) / 10 : null,
+    mem: mem ? { used: mem.used, total: mem.total, percent: mem.percent } : null,
+    disks,
+    gpu: gpuData,
+    temp: maxTemp,
+  };
+}
+
+async function fetchLabServer1Detailed() {
+  // Always prefer OhmGraphite for CPU/GPU temp on S1 (Glances sensors return unreliable ACPI thermalzone values on Windows)
+  try {
+    const data = await fetchLabGlancesDetailed('192.168.50.10');
+    try {
+      const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
+      if (ohmRes.ok) {
+        const ohmText = await ohmRes.text();
+        const cpuPkg = parsePromValues(ohmText, 'ohm_cpu_celsius').find(m => m.labels.sensor === 'CPU Package');
+        if (cpuPkg) data.temp = Math.round(cpuPkg.value * 10) / 10;
+        const gpuCore = parsePromValues(ohmText, 'ohm_gpunvidia_celsius').find(m => m.labels.sensor === 'GPU Core');
+        if (gpuCore && data.gpu) data.gpu.temp = Math.round(gpuCore.value * 10) / 10;
+        const nvencSensor = parsePromValues(ohmText, 'ohm_gpunvidia_load_percent').find(m => m.labels.sensor === 'GPU Video Engine');
+        if (nvencSensor && data.gpu) data.gpu.nvenc_util = Math.round(nvencSensor.value * 10) / 10;
+      }
+    } catch {}
+    return data;
+  } catch {
+    // Fall back to windows_exporter with dynamic drive detection
+    try {
+      const res = await fetch('http://192.168.50.10:9182/metrics', { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error('no metrics');
+      const text = await res.text();
+
+      const idleVals = parsePromValues(text, 'windows_cpu_time_total').filter(m => m.labels.mode === 'idle');
+      const allVals  = parsePromValues(text, 'windows_cpu_time_total');
+      const idleSum  = idleVals.reduce((s, m) => s + m.value, 0);
+      const totalSum = allVals.reduce((s, m) => s + m.value, 0);
+      const cpuPct   = totalSum > 0 ? Math.min(100, Math.round((1 - idleSum / totalSum) * 1000) / 10) : 0;
+
+      const memAvail = parsePromValues(text, 'windows_memory_available_bytes')[0]?.value ?? 0;
+      const memLimit = parsePromValues(text, 'windows_memory_commit_limit')[0]?.value ?? 0;
+      const memUsed  = memLimit - memAvail;
+
+      // Dynamic drive detection — all volumes > 512MB, exclude hidden raw volumes
+      const diskSizes = parsePromValues(text, 'windows_logical_disk_size_bytes')
+        .filter(m => m.value > 536870912 && isRealMount(m.labels.volume));
+      const diskFrees = parsePromValues(text, 'windows_logical_disk_free_bytes');
+      const disks = diskSizes.map(s => {
+        const free = diskFrees.find(f => f.labels.volume === s.labels.volume)?.value ?? 0;
+        const used = s.value - free;
+        return { label: s.labels.volume, used, size: s.value, percent: Math.round((used / s.value) * 1000) / 10 };
+      });
+
+      const thermalVals = parsePromValues(text, 'windows_thermalzone_temperature_celsius');
+      const temps = thermalVals.map(t => t.value).filter(t => t > 0 && t < 120);
+      const maxTemp = temps.length > 0 ? Math.round(Math.max(...temps) * 10) / 10 : null;
+
+      // GPU + CPU temp from OHM (port 9101) — thermalzone temps are ACPI values (~28°C), not real CPU temps
+      let gpuTemp = null;
+      let cpuTempOhm = null;
+      let nvencUtil = null;
+      try {
+        const ohmRes = await fetch('http://192.168.50.10:9101/metrics', { signal: AbortSignal.timeout(3000) });
+        if (ohmRes.ok) {
+          const ohmText = await ohmRes.text();
+          const gpuCoreSensor = parsePromValues(ohmText, 'ohm_gpunvidia_celsius').find(m => m.labels.sensor === 'GPU Core');
+          if (gpuCoreSensor) gpuTemp = Math.round(gpuCoreSensor.value * 10) / 10;
+          const cpuPkg = parsePromValues(ohmText, 'ohm_cpu_celsius').find(m => m.labels.sensor === 'CPU Package');
+          if (cpuPkg) cpuTempOhm = Math.round(cpuPkg.value * 10) / 10;
+          const nvencSensor = parsePromValues(ohmText, 'ohm_gpunvidia_load_percent').find(m => m.labels.sensor === 'GPU Video Engine');
+          if (nvencSensor) nvencUtil = Math.round(nvencSensor.value * 10) / 10;
+        }
+      } catch {}
+
+      const gpu = gpuTemp !== null ? { name: 'GTX 1060 6GB', temp: gpuTemp, utilization: null, mem_percent: null, nvenc_util: nvencUtil ?? null } : null;
+      return { online: true, cpu: cpuPct, mem: { used: memUsed, total: memLimit, percent: memLimit > 0 ? Math.round((memUsed / memLimit) * 1000) / 10 : 0 }, disks, gpu, temp: cpuTempOhm ?? maxTemp };
+    } catch {
+      return { online: false };
+    }
+  }
+}
+
+async function fetchLabBurstMachine(host) {
+  // Online = Ollama responds
+  try {
+    await fetch(`http://${host}:11434`, { signal: AbortSignal.timeout(2500) });
+    // Try Glances for full metrics
+    try {
+      return await fetchLabGlancesDetailed(host);
+    } catch {
+      return { online: true, cpu: null, mem: null, disks: [], gpu: null, temp: null };
+    }
+  } catch {
+    return { online: false };
+  }
+}
+
+const CRITICAL_SERVICES = [
+  { id: 'plex',       name: 'Plex',       url: 'http://192.168.50.10:32400/identity' },
+  { id: 'adguard',    name: 'AdGuard',    url: 'http://192.168.50.30:3000' },
+  { id: 'ollama',     name: 'Ollama',     url: 'http://192.168.50.12:11434' },
+  { id: 'prometheus', name: 'Prometheus', url: 'http://192.168.50.13:9090/-/healthy' },
+];
+
+async function fetchTailscaleStatus() {
+  try {
+    const { stdout } = await execFileAsync('ssh', [
+      '-i', '/root/.ssh/jojeco_lab_key',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'ConnectTimeout=4',
+      '-o', 'BatchMode=yes',
+      'jj@192.168.50.30',
+      '/usr/local/bin/tailscale status --json'
+    ], { timeout: 6000 });
+    const data = JSON.parse(stdout);
+    const self = data.Self ?? {};
+    const peers = Object.values(data.Peer ?? {});
+    const onlinePeers = peers.filter(p => !p.Offline);
+    return {
+      online: self.Online !== false,
+      ip: (self.TailscaleIPs ?? [])[0] ?? null,
+      peers: peers.length,
+      onlinePeers: onlinePeers.length,
+      peerList: peers.map(p => ({ name: p.HostName, online: !p.Offline, ip: (p.TailscaleIPs??[])[0] })),
+    };
+  } catch {
+    return { online: false, ip: null, peers: 0, onlinePeers: 0, peerList: [] };
+  }
+}
+
+async function fetchLVMThinPool() {
+  try {
+    const r = await fetch('http://192.168.50.13:9090/api/v1/query?query=node_lvm_thin_pool_data_percent%7Blv%3D%22data%22%2Cvg%3D%22pve%22%7D', { signal: AbortSignal.timeout(4000) });
+    const d = await r.json();
+    const val = d?.data?.result?.[0]?.value?.[1];
+    return val !== undefined ? parseFloat(val) : null;
+  } catch { return null; }
+}
+
+async function fetchClaudeRunning() {
+  try {
+    // Use 5-minute average to avoid false positives during brief restarts
+    const r = await fetch('http://192.168.50.13:9090/api/v1/query?query=avg_over_time(jojeco_claude_running%5B5m%5D)', { signal: AbortSignal.timeout(4000) });
+    const d = await r.json();
+    const val = d?.data?.result?.[0]?.value?.[1];
+    return val !== undefined ? parseInt(val) === 1 : null;
+  } catch { return null; }
+}
+
+async function fetchLabServer2Detailed() {
+  // Glances on S2 (CT100 LXC) can't see host filesystem — use Glances for CPU/RAM/temp
+  // Pull real disk info from node_exporter (port 9100) which runs on the host with full fs access
+  const glances = await fetchLabGlancesDetailed('192.168.50.13').catch(() => null);
+  if (!glances) return { online: false };
+
+  let disks = [];
+  try {
+    const neRes = await fetch('http://192.168.50.13:9100/metrics', { signal: AbortSignal.timeout(4000) });
+    if (neRes.ok) {
+      const text = await neRes.text();
+      const SKIP_FSTYPES_S2 = new Set(['tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'sysfs', 'proc', 'cgroup', 'cgroup2', 'pstore', 'efivarfs', 'ramfs']);
+      const sizeEntries = parsePromValues(text, 'node_filesystem_size_bytes')
+        .filter(m => !SKIP_FSTYPES_S2.has(m.labels.fstype) && m.value > 5368709120 && isRealMount(m.labels.mountpoint));
+      const availEntries = parsePromValues(text, 'node_filesystem_avail_bytes');
+      const seen = new Set();
+      disks = sizeEntries.filter(m => {
+        const key = Math.round(m.value / 1e9);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).map(m => {
+        const avail = availEntries.find(a => a.labels.mountpoint === m.labels.mountpoint)?.value ?? 0;
+        const used = m.value - avail;
+        return { label: m.labels.mountpoint, used, size: m.value, percent: Math.round((used / m.value) * 1000) / 10 };
+      });
+    }
+  } catch {}
+
+  return { ...glances, disks };
+}
+
+app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
+  const [s1, s2, s3, mini, jopc, macbook, services, tailscale, lvmThinPool, claudeRunning] = await Promise.all([
+    fetchLabServer1Detailed(),
+    fetchLabServer2Detailed(),
+    fetchLabGlancesDetailed('192.168.50.12').catch(() => ({ online: false })),
+    fetchLabGlancesDetailed('192.168.50.30').catch(() => ({ online: false })),
+    fetchLabBurstMachine('192.168.50.20'),
+    fetchLabBurstMachine('192.168.50.40'),
+    Promise.all(CRITICAL_SERVICES.map(async s => {
+      try {
+        const r = await fetch(s.url, { signal: AbortSignal.timeout(3000) });
+        return { ...s, online: r.ok || r.status < 500 };
+      } catch { return { ...s, online: false }; }
+    })),
+    fetchTailscaleStatus(),
+    fetchLVMThinPool(),
+    fetchClaudeRunning(),
+  ]);
+
+  const machineData = [s1, s3, s2, mini, jopc, macbook];
+  const machines = LAB_MACHINES.map((m, i) => ({ ...m, ...machineData[i] }));
+
+  // Compute health
+  const issues = [];
+  machines.filter(m => m.always_on).forEach(m => {
+    if (!m.online) issues.push({ severity: 'critical', message: `${m.name} is offline` });
+  });
+  services.forEach(s => {
+    if (!s.online) issues.push({ severity: 'critical', message: `${s.name} is down` });
+  });
+  if (!tailscale.online) issues.push({ severity: 'critical', message: 'Tailscale is down' });
+  machines.filter(m => m.online).forEach(m => {
+    (m.disks ?? []).forEach(d => {
+      const sizeBytes = d.size ?? d.total ?? 0;
+      const freeBytes = sizeBytes - (d.used ?? 0);
+      const freeGB = freeBytes / 1e9;
+      const freePct = sizeBytes > 0 ? (freeBytes / sizeBytes) * 100 : 100;
+      const diskName = d.label ?? d.drive ?? 'disk';
+      // Large drives (>2TB): alert on absolute free space (<200GB warn, <50GB critical)
+      // Smaller drives: alert on percentage (<15% warn, <5% critical)
+      const isLarge = sizeBytes > 2e12;
+      const warn = isLarge ? freeGB < 200 : freePct < 15;
+      const crit = isLarge ? freeGB < 50  : freePct < 5;
+      if (sizeBytes > 0 && warn) {
+        const detail = isLarge ? `${freeGB.toFixed(0)}GB free` : `${freePct.toFixed(0)}% free`;
+        issues.push({ severity: crit ? 'critical' : 'degraded', message: `${m.name} ${diskName} low: ${detail}` });
+      }
+    });
+    if (m.cpu > 90) issues.push({ severity: 'degraded', message: `${m.name} CPU at ${m.cpu.toFixed(0)}%` });
+    if (m.gpu?.temp > 80) issues.push({ severity: 'degraded', message: `${m.name} GPU temp ${m.gpu.temp}°C` });
+    if (m.temp > 85) issues.push({ severity: 'degraded', message: `${m.name} CPU temp ${m.temp}°C` });
+  });
+  if (lvmThinPool !== null) {
+    if (lvmThinPool > 85) issues.push({ severity: 'critical', message: `LVM thin pool CRITICAL: ${lvmThinPool.toFixed(1)}% — run docker system prune NOW` });
+    else if (lvmThinPool > 70) issues.push({ severity: 'degraded', message: `LVM thin pool high: ${lvmThinPool.toFixed(1)}%` });
+  }
+  if (claudeRunning === false) issues.push({ severity: 'critical', message: 'Claude Code agent is NOT running — check jojeco-agent service' });
+
+  const status = issues.some(i => i.severity === 'critical') ? 'critical'
+               : issues.length > 0 ? 'degraded'
+               : 'healthy';
+
+  const serviceMap = Object.fromEntries(services.map(s => [s.id, s.online]));
+  serviceMap.tailscale = tailscale.online;
+
+  const safeMachines = req.isGuest ? machines.map(({ host, ...rest }) => rest) : machines;
+  res.json({ machines: safeMachines, status, issues, services: serviceMap, tailscale, lvmThinPool, claudeRunning });
+});
+
+const LAB_PROCESS_HOSTS = {
+  server1: { host: '192.168.50.10', os: 'windows' },
+  server2: { host: '192.168.50.13', os: 'linux' },
+  server3: { host: '192.168.50.12', os: 'linux' },
+  macmini: { host: '192.168.50.30', os: 'linux' },
+  jopc:    { host: '192.168.50.20', os: 'windows' },
+  macbook: { host: '192.168.50.40', os: 'linux' },
+};
+
+app.get('/api/lab/processes/:machineId', optionalAuthMiddleware, async (req, res) => {
+  const entry = LAB_PROCESS_HOSTS[req.params.machineId];
+  if (!entry) return res.status(404).json({ error: 'unknown machine' });
+
+  try {
+    const base = `http://${entry.host}:61208/api/4`;
+    const r = await fetch(`${base}/processlist`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error('glances offline');
+    const list = await r.json();
+    const processes = (Array.isArray(list) ? list : [])
+      .map(p => ({ pid: p.pid, name: p.name, cpu: p.cpu_percent ?? 0, mem: p.memory_percent ?? 0 }))
+      .sort((a, b) => b.cpu - a.cpu)
+      .slice(0, 15);
+    return res.json({ machine_id: req.params.machineId, processes });
+  } catch {
+    return res.json({ machine_id: req.params.machineId, processes: [] });
+  }
+});
+
+// ============================================================================
+// OPS DASHBOARD ROUTES
+// ============================================================================
+
+const GLANCES_NODES = [
+  { id: 'server1', name: 'Server 1', host: '192.168.50.10', role: 'Plex + Games' },
+  { id: 'server2', name: 'Server 2', host: '192.168.50.13', role: 'Docker Host' },
+  { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'LLM Node' },
+  { id: 'macmini', name: 'Mac Mini', host: '192.168.50.30', role: 'DNS + Monitor' },
+];
+
+const OLLAMA_NODES = [
+  { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'GTX 1060 Max-Q' },
+  { id: 'server1', name: 'Server 1', host: '192.168.50.10', role: 'GTX 1060' },
+  { id: 'macbook', name: 'MacBook M4', host: '192.168.50.40', role: 'M4 (burst)' },
+  { id: 'jopc',    name: 'JoPc',      host: '192.168.50.20', role: 'RTX 3080 Ti (burst)' },
+];
+
+async function fetchGlances(host) {
+  const base = `http://${host}:61208/api/4`;
+  const g = (path) => fetch(`${base}${path}`, { signal: AbortSignal.timeout(4000) }).then(r => r.json()).catch(() => null);
+  const [cpu, mem, fs, sensors] = await Promise.all([g('/cpu'), g('/mem'), g('/fs'), g('/sensors')]);
+  if (!cpu && !mem) throw new Error('offline');
+  return {
+    cpu: cpu?.total ?? null,
+    mem: mem ? { used: mem.used, total: mem.total, percent: mem.percent } : null,
+    fs: (fs ?? []).map(d => ({ mnt_point: d.mnt_point, used: d.used, size: d.size, percent: d.percent })),
+    sensors: (sensors ?? []).filter(s => s.value > 0 && s.value < 120).map(s => ({ label: s.label, value: s.value })),
+  };
+}
+
+app.get('/api/ops/glances', authMiddleware, async (req, res) => {
+  const results = await Promise.all(GLANCES_NODES.map(async node => {
+    try {
+      const data = await fetchGlances(node.host);
+      return { ...node, online: true, ...data };
+    } catch {
+      return { ...node, online: false };
+    }
+  }));
+  res.json(results);
+});
+
+app.get('/api/ops/fleet', optionalAuthMiddleware, async (req, res) => {
+  const nodes = await Promise.all(OLLAMA_NODES.map(async node => {
+    try {
+      const r = await fetch(`http://${node.host}:11434/api/tags`, { signal: AbortSignal.timeout(3000) });
+      if (!r.ok) throw new Error('not ok');
+      const data = await r.json();
+      const models = (data.models || []).map(m => ({ name: m.name, size: m.size }));
+      return { ...node, online: true, models };
+    } catch {
+      return { ...node, online: false, models: [] };
+    }
+  }));
+
+  let litellm = { online: false, spend: null };
+  try {
+    const [healthRes, spendRes] = await Promise.all([
+      fetch(`http://192.168.50.13:4000/health/readiness`, {
+        headers: { Authorization: `Bearer ${LITELLM_KEY}` },
+        signal: AbortSignal.timeout(3000),
+      }),
+      fetch(`http://192.168.50.13:4000/global/spend`, {
+        headers: { Authorization: `Bearer ${LITELLM_KEY}` },
+        signal: AbortSignal.timeout(3000),
+      }),
+    ]);
+    const health = await healthRes.json().catch(() => ({}));
+    const spend = spendRes.ok ? await spendRes.json().catch(() => ({})) : {};
+    litellm = { online: health.status === 'connected' || health.status === 'healthy', spend: spend.spend ?? null };
+  } catch {}
+
+  res.json({ nodes, litellm });
+});
+
+// Public stats for jojeco.ca (no auth)
+app.get('/api/public/stats', async (req, res) => {
+  try {
+    const firstUser = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+    const count = firstUser
+      ? db.prepare('SELECT COUNT(*) as n FROM services WHERE user_id = ?').get(firstUser.id)?.n ?? 0
+      : 0;
+    res.json({ online_services: count });
+  } catch { res.json({ online_services: null }); }
+});
+
+// Server-side health checks — browser can't reach LAN IPs, API can
+const serverHealthCache = new Map(); // serviceId -> {status, responseTime, checkedAt}
+
+app.get('/api/services/health', optionalAuthMiddleware, async (req, res) => {
+  let userId = req.user?.userId;
+  if (!userId) {
+    const firstUser = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+    if (!firstUser) return res.json({});
+    userId = firstUser.id;
+  }
+
+  const services = db.prepare(
+    'SELECT id, url, lan_url, health_check_url, health_check_interval FROM services WHERE user_id = ?'
+  ).all(userId);
+
+  const CACHE_TTL = 60_000;
+  const results = {};
+
+  await Promise.all(services.map(async svc => {
+    const checkUrl = svc.health_check_url || svc.lan_url || svc.url;
+    if (!checkUrl) { results[svc.id] = { status: 'unknown' }; return; }
+
+    const cached = serverHealthCache.get(svc.id);
+    if (cached && Date.now() - cached.checkedAt < CACHE_TTL) {
+      results[svc.id] = cached; return;
+    }
+
+    const start = Date.now();
+    try {
+      const statusCode = await new Promise((resolve, reject) => {
+        const parsed = new URL(checkUrl);
+        const isHttps = parsed.protocol === 'https:';
+        const lib = isHttps ? https : null;
+        if (!lib) {
+          // HTTP — use fetch
+          fetch(checkUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+            .then(r => resolve(r.status)).catch(reject);
+          return;
+        }
+        const req = https.request({
+          hostname: parsed.hostname,
+          port: parsed.port || 443,
+          path: parsed.pathname + (parsed.search || ''),
+          method: 'HEAD',
+          timeout: 5000,
+          rejectUnauthorized: false,
+        }, res => { res.resume(); resolve(res.statusCode); });
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+        req.on('error', reject);
+        req.end();
+      });
+      // Any HTTP response means the server is reachable — only connection failures = offline
+      const result = { status: 'online', responseTime: Date.now() - start, checkedAt: Date.now() };
+      serverHealthCache.set(svc.id, result);
+      results[svc.id] = result;
+    } catch {
+      const result = { status: 'offline', checkedAt: Date.now() };
+      serverHealthCache.set(svc.id, result);
+      results[svc.id] = result;
+    }
+  }));
+
+  res.json(results);
+});
+
+// ============================================================================
+// CHAOS PAGE — REAL LAB SERVICE HEALTH
+// ============================================================================
+
+const CHAOS_SERVICES = [
+  // Core infrastructure
+  { id: 'dashboard-api',  name: 'Dashboard API',  category: 'Core',    url: 'http://192.168.50.13:3001', dependsOn: [] },
+  { id: 'authelia',       name: 'Authelia SSO',   category: 'Core',    url: 'http://192.168.50.13:9091', dependsOn: ['authelia-redis'] },
+  { id: 'authelia-redis', name: 'Auth Redis',     category: 'Core',    url: 'http://192.168.50.13:6380', dependsOn: [] },
+  { id: 'adguard',        name: 'AdGuard DNS',    category: 'Core',    url: 'http://192.168.50.13:3100', dependsOn: [] },
+  // Media
+  { id: 'plex',           name: 'Plex',           category: 'Media',   url: 'http://192.168.50.10:32400', dependsOn: [] },
+  { id: 'sonarr',         name: 'Sonarr',         category: 'Media',   url: 'http://192.168.50.13:8989', dependsOn: [] },
+  { id: 'radarr',         name: 'Radarr',         category: 'Media',   url: 'http://192.168.50.13:7878', dependsOn: [] },
+  { id: 'tdarr',          name: 'Tdarr',          category: 'Media',   url: 'http://192.168.50.13:8265', dependsOn: [] },
+  { id: 'bazarr',         name: 'Bazarr',         category: 'Media',   url: 'http://192.168.50.13:6767', dependsOn: [] },
+  // Storage & cloud
+  { id: 'nextcloud',      name: 'Nextcloud',      category: 'Storage', url: 'http://192.168.50.13:8880', dependsOn: ['nextcloud-redis', 'nextcloud-db'] },
+  { id: 'nextcloud-redis',name: 'NC Redis',       category: 'Storage', url: 'http://192.168.50.13:6379', dependsOn: [] },
+  { id: 'nextcloud-db',   name: 'NC MariaDB',     category: 'Storage', url: 'http://192.168.50.13:3306', dependsOn: [] },
+  // AI
+  { id: 'litellm',        name: 'LiteLLM',        category: 'AI',      url: 'http://192.168.50.13:4000', dependsOn: ['litellm-db'] },
+  { id: 'litellm-db',     name: 'LiteLLM DB',     category: 'AI',      url: 'http://192.168.50.13:5432', dependsOn: [] },
+  { id: 'ollama',         name: 'Ollama',         category: 'AI',      url: 'http://192.168.50.13:11434', dependsOn: [] },
+  // Monitoring
+  { id: 'prometheus',     name: 'Prometheus',     category: 'Monitoring', url: 'http://192.168.50.13:9090', dependsOn: [] },
+  { id: 'grafana',        name: 'Grafana',        category: 'Monitoring', url: 'http://192.168.50.13:3000', dependsOn: ['prometheus'] },
+  { id: 'netdata',        name: 'Netdata',        category: 'Monitoring', url: 'http://192.168.50.13:19999', dependsOn: [] },
+  // Notifications & comms
+  { id: 'ntfy',           name: 'ntfy',           category: 'Comms',   url: 'http://192.168.50.13:8080', dependsOn: [] },
+];
+
+app.get('/api/chaos/services', optionalAuthMiddleware, async (req, res) => {
+  const results = await Promise.all(CHAOS_SERVICES.map(async svc => {
+    const start = Date.now();
+    try {
+      const r = await fetch(svc.url, { signal: AbortSignal.timeout(4000) });
+      const latency = Date.now() - start;
+      const online = r.status < 500;
+      return { ...svc, online, latency, status: online ? 'healthy' : 'degraded' };
+    } catch {
+      return { ...svc, online: false, latency: null, status: 'down' };
+    }
+  }));
+  res.json(results);
+});
+
+// ── Chaos Agent proxy ────────────────────────────────────────────────────────
+
+const CHAOS_AGENT_URL    = 'http://jojeco-chaos-agent:9999';
+const CHAOS_AGENT_SECRET = process.env.CHAOS_SECRET || '';
+
+async function chaosProxy(path, options = {}) {
+  const res = await fetch(`${CHAOS_AGENT_URL}${path}`, {
+    ...options,
+    headers: { 'X-Chaos-Token': CHAOS_AGENT_SECRET, 'Content-Type': 'application/json', ...(options.headers || {}) },
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw Object.assign(new Error(err.detail || 'agent error'), { status: res.status, detail: err.detail });
+  }
+  return res.json();
+}
+
+app.get('/api/chaos/agent/status', authMiddleware, async (req, res) => {
+  try { res.json(await chaosProxy('/status')); }
+  catch (e) { res.status(e.status || 503).json({ error: e.message }); }
+});
+
+app.post('/api/chaos/agent/run/:module', authMiddleware, async (req, res) => {
+  try {
+    const result = await chaosProxy(`/run/${req.params.module}`, { method: 'POST', body: JSON.stringify(req.body) });
+    res.json(result);
+  } catch (e) { res.status(e.status || 503).json({ error: e.message, detail: e.detail }); }
+});
+
+app.post('/api/chaos/agent/abort', authMiddleware, async (req, res) => {
+  try { res.json(await chaosProxy('/abort', { method: 'POST' })); }
+  catch (e) { res.status(e.status || 503).json({ error: e.message }); }
+});
+
+// ============================================================================
+// START SERVER
+// ============================================================================
+
+// ============================================================================
+// BACKGROUND HEALTH MONITOR — fires ntfy alerts on state changes
+// ============================================================================
+
+const NTFY_URL = 'http://192.168.50.13:8080/jojeco-alerts';
+const MONITOR_SERVICES = [
+  { id: 'plex',       name: 'Plex',       url: 'http://192.168.50.10:32400' },
+  { id: 'nextcloud',  name: 'Nextcloud',  url: 'http://192.168.50.13:8880' },
+  { id: 'authelia',   name: 'Authelia',   url: 'http://192.168.50.13:9091' },
+  { id: 'sonarr',     name: 'Sonarr',     url: 'http://192.168.50.13:8989' },
+  { id: 'radarr',     name: 'Radarr',     url: 'http://192.168.50.13:7878' },
+  { id: 'bazarr',     name: 'Bazarr',     url: 'http://192.168.50.13:6767' },
+  { id: 'litellm',    name: 'LiteLLM',    url: 'http://192.168.50.13:4000' },
+  { id: 'ollama',     name: 'Ollama',     url: 'http://192.168.50.13:11434' },
+  { id: 'ntfy',       name: 'ntfy',       url: 'http://192.168.50.13:8080' },
+];
+
+// Hysteresis to stop alert flapping: a service must fail FAIL_THRESHOLD
+// consecutive polls before we declare it DOWN (and alert), and we only send a
+// "recovered" alert if we actually alerted the outage. At the 2min poll
+// interval, 3 strikes = ~6 min sustained failure before Jordan gets pinged.
+// This kills the transient-timeout flap (Plex on the Windows box, Nextcloud
+// under load) that produced DOWN/recovered pairs every ~10 min.
+const FAIL_THRESHOLD = 3;
+const serviceState = {}; // id → { fails, alerted }
+
+async function checkOnce(url) {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    return r.status < 500;
+  } catch { return false; }
+}
+
+async function runHealthMonitor() {
+  for (const svc of MONITOR_SERVICES) {
+    // Retry within a single poll (2 extra tries) before counting a failure —
+    // kills transient-timeout false positives that were flapping the
+    // Nextcloud/Authelia alerts even with the consecutive-poll threshold.
+    let online = await checkOnce(svc.url);
+    if (!online) { await new Promise(r => setTimeout(r, 2000)); online = await checkOnce(svc.url); }
+    if (!online) { await new Promise(r => setTimeout(r, 3000)); online = await checkOnce(svc.url); }
+
+    const s = serviceState[svc.id] || (serviceState[svc.id] = { fails: 0, alerted: false });
+
+    if (!online) {
+      s.fails++;
+      if (s.fails >= FAIL_THRESHOLD && !s.alerted) {
+        s.alerted = true;
+        console.log(`[monitor] ${svc.name} DOWN (${s.fails} consecutive)`);
+        fetch(NTFY_URL, { method: 'POST', body: `⚠️ ${svc.name} is DOWN`, headers: { Priority: 'high', Tags: 'warning' } }).catch(() => {});
+      }
+    } else {
+      if (s.alerted) {
+        console.log(`[monitor] ${svc.name} recovered`);
+        fetch(NTFY_URL, { method: 'POST', body: `✅ ${svc.name} recovered`, headers: { Tags: 'white_check_mark' } }).catch(() => {});
+      }
+      s.fails = 0;
+      s.alerted = false;
+    }
+  }
+}
+
+// ============================================================================
+// OLLAMA ACTIVE SESSIONS
+// ============================================================================
+
+app.get('/api/lab/ollama/ps', optionalAuthMiddleware, async (req, res) => {
+  const results = await Promise.all(OLLAMA_NODES.map(async node => {
+    try {
+      const r = await fetch(`http://${node.host}:11434/api/ps`, { signal: AbortSignal.timeout(3000) });
+      if (!r.ok) return { id: node.id, active: [] };
+      const data = await r.json();
+      return { id: node.id, active: (data.models || []).map(m => ({ name: m.name, size_vram: m.size_vram })) };
+    } catch { return { id: node.id, active: [] }; }
+  }));
+  res.json(results);
+});
+
+// ============================================================================
+// TEMP HISTORY
+// ============================================================================
+
+app.get('/api/lab/temps/history', optionalAuthMiddleware, (req, res) => {
+  const { machine, hours = '24' } = req.query;
+  const windowMs = Math.min(parseInt(hours) || 24, 168) * 60 * 60 * 1000;
+  const since = Date.now() - windowMs;
+  try {
+    if (machine) {
+      const rows = db.prepare('SELECT timestamp, cpu_temp, gpu_temp FROM temp_history WHERE machine_id = ? AND timestamp > ? ORDER BY timestamp ASC').all(machine, since);
+      return res.json(rows);
+    }
+    const ids = ['server1','server2','server3','macmini','jopc','macbook'];
+    const result = {};
+    for (const id of ids) {
+      result[id] = db.prepare('SELECT timestamp, cpu_temp, gpu_temp FROM temp_history WHERE machine_id = ? AND timestamp > ? ORDER BY timestamp ASC').all(id, since);
+    }
+    res.json(result);
+  } catch { res.status(500).json({ error: 'DB error' }); }
+});
+
+async function pollTemps() {
+  const now = Date.now();
+  const tasks = [
+    { id: 'server1', fn: () => fetchLabServer1Detailed() },
+    { id: 'server2', fn: () => fetchLabServer2Detailed() },
+    { id: 'server3', fn: () => fetchLabGlancesDetailed('192.168.50.12').catch(() => ({ online: false })) },
+    { id: 'macmini', fn: () => fetchLabGlancesDetailed('192.168.50.30').catch(() => ({ online: false })) },
+    { id: 'jopc',    fn: () => fetchLabBurstMachine('192.168.50.20') },
+    { id: 'macbook', fn: () => fetchLabBurstMachine('192.168.50.40') },
+  ];
+  await Promise.allSettled(tasks.map(async ({ id, fn }) => {
+    try {
+      const data = await fn();
+      if (!data.online) return;
+      const cpuTemp = data.temp ?? null;
+      const gpuTemp = data.gpu?.temp ?? null;
+      if (cpuTemp !== null || gpuTemp !== null) {
+        db.prepare('INSERT INTO temp_history (machine_id, timestamp, cpu_temp, gpu_temp) VALUES (?,?,?,?)').run(id, now, cpuTemp, gpuTemp);
+      }
+    } catch {}
+  }));
+  db.prepare('DELETE FROM temp_history WHERE timestamp < ?').run(now - 180 * 24 * 60 * 60 * 1000);
+}
+
+// ============================================================================
+// SERVER CONTROLS
+// ============================================================================
+
+const SSH_KEY = '/root/.ssh/jojeco_lab_key';
+const SSH_OPTS = ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=6', '-o', 'BatchMode=yes'];
+
+const MACHINES = {
+  server1:  { ip: '192.168.50.10', user: 'jojeco717', os: 'windows', mac: '50:3d:d1:37:6d:bb', label: 'Server 1' },
+  server2:  { ip: '192.168.50.11', user: 'root',      os: 'linux',   mac: '10:5a:95:21:00:82', label: 'Server 2 (Proxmox)' },
+  server3:  { ip: '192.168.50.12', user: 'jojeco',    os: 'linux',   mac: '90:20:3a:1a:37:21', label: 'Server 3' },
+  macmini:  { ip: '192.168.50.30', user: 'jj',        os: 'macos',   mac: '0c:4d:e9:c7:07:69', label: 'Mac Mini' },
+  jopc:     { ip: '192.168.50.20', user: 'sshuser',   os: 'windows', mac: process.env.JOPC_MAC  || '',                   label: 'JoPc' },
+  macbook:  { ip: '192.168.50.40', user: 'jojeco',   os: 'macos',   mac: process.env.JOMAC_MAC || '76:86:2B:1E:45:C6', label: 'JoMac' },
+  ainspc:   { ip: '192.168.50.220', user: 'ainsl',   os: 'windows', mac: '',                                            label: "Ainsley's PC" },
+};
+
+async function sshRun(machine, cmd) {
+  const m = MACHINES[machine];
+  if (!m) throw new Error(`Unknown machine: ${machine}`);
+  const { stdout, stderr } = await execFileAsync('ssh', [
+    '-i', SSH_KEY, ...SSH_OPTS, `${m.user}@${m.ip}`, cmd
+  ], { timeout: 15000 });
+  return { stdout: stdout.trim(), stderr: stderr.trim() };
+}
+
+// POST /api/controls/server/:machine/restart
+app.post('/api/controls/server/:machine/restart', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m) return res.status(400).json({ error: 'Unknown machine' });
+  try {
+    const cmd = m.os === 'windows' ? 'shutdown /r /t 5' :
+                m.os === 'macos'   ? 'sudo shutdown -r +0' :
+                                     'reboot';
+    await sshRun(machine, cmd);
+    res.json({ ok: true, message: `Restart command sent to ${m.label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/server/:machine/shutdown
+app.post('/api/controls/server/:machine/shutdown', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m) return res.status(400).json({ error: 'Unknown machine' });
+  try {
+    const cmd = m.os === 'windows' ? 'shutdown /s /t 5' :
+                m.os === 'macos'   ? 'sudo shutdown -h +0' :
+                                     'shutdown -h now';
+    await sshRun(machine, cmd);
+    res.json({ ok: true, message: `Shutdown command sent to ${m.label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/server/:machine/wake
+app.post('/api/controls/server/:machine/wake', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m || !m.mac) return res.status(400).json({ error: 'Unknown machine or no MAC address' });
+  try {
+    await execFileAsync('wakeonlan', [m.mac], { timeout: 5000 });
+    res.json({ ok: true, message: `Wake-on-LAN packet sent to ${m.label} (${m.mac})` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/container/:name/restart
+app.post('/api/controls/container/:name/restart', authMiddleware, async (req, res) => {
+  const { name } = req.params;
+  // Whitelist: don't allow restarting nginx-proxy-manager or portainer from here (too risky)
+  const blocked = ['nginx-proxy-manager', 'portainer', 'cloudflared'];
+  if (blocked.includes(name)) return res.status(403).json({ error: 'This container cannot be restarted from the dashboard' });
+  try {
+    const { stdout } = await execFileAsync('docker', ['restart', name], { timeout: 30000 });
+    res.json({ ok: true, message: `Restarted ${name}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/container/:name/stop
+app.post('/api/controls/container/:name/stop', authMiddleware, async (req, res) => {
+  const { name } = req.params;
+  const blocked = ['nginx-proxy-manager', 'portainer', 'cloudflared', 'jojeco-dashboard-api'];
+  if (blocked.includes(name)) return res.status(403).json({ error: 'This container cannot be stopped from the dashboard' });
+  try {
+    await execFileAsync('docker', ['stop', name], { timeout: 30000 });
+    res.json({ ok: true, message: `Stopped ${name}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/container/:name/start
+app.post('/api/controls/container/:name/start', authMiddleware, async (req, res) => {
+  const { name } = req.params;
+  try {
+    await execFileAsync('docker', ['start', name], { timeout: 30000 });
+    res.json({ ok: true, message: `Started ${name}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/tdarr/:node/enable|disable — toggle Tdarr node via SSH schtasks
+app.post('/api/controls/tdarr/:node/:action', authMiddleware, async (req, res) => {
+  const { node, action } = req.params;
+  if (!['enable', 'disable'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+  const nodeMap = {
+    jopc:   'jopc',
+    ainspc: 'ainspc',
+  };
+  const machine = nodeMap[node];
+  if (!machine) return res.status(400).json({ error: 'Unknown Tdarr node' });
+  const flag = action === 'enable' ? '/ENABLE' : '/DISABLE';
+  try {
+    await sshRun(machine, `schtasks /Change /TN TdarrNode ${flag}`);
+    res.json({ ok: true, message: `Tdarr node ${action}d on ${MACHINES[machine].label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// In-memory job tracker for trigger status
+const triggerJobs = {};
+const triggerProcesses = {}; // track child processes so we can kill them
+
+// POST /api/controls/trigger/:action
+app.post('/api/controls/trigger/:action', authMiddleware, async (req, res) => {
+  const { action } = req.params;
+  const scripts = {
+    'health':        '/opt/jojeco-agent/scripts/dep-watcher.sh',
+    'backup':        '/opt/jojeco-agent/scripts/gdrive-backup.sh',
+    'snapshot':      '/opt/jojeco-agent/scripts/weekly-update.sh',
+    'claude-server3': '/opt/jojeco-agent/scripts/start-claude-fallback.sh server3',
+    'claude-server1': '/opt/jojeco-agent/scripts/start-claude-fallback.sh server1',
+    'sync-context':  '/opt/jojeco-agent/scripts/sync-context.sh',
+  };
+  if (!scripts[action]) return res.status(400).json({ error: 'Unknown action' });
+
+  // Kill any already-running instance of this action
+  if (triggerProcesses[action]) {
+    try { triggerProcesses[action].kill('SIGTERM'); } catch (_) {}
+    delete triggerProcesses[action];
+  }
+
+  const startedAt = Date.now();
+  triggerJobs[action] = { status: 'running', startedAt, finishedAt: null, output: null, error: null };
+
+  const { exec } = await import('child_process');
+  const child = exec(scripts[action], { timeout: 300000 }, (err, stdout, stderr) => {
+    delete triggerProcesses[action];
+    const out = (stdout || '').trim().split('\n').slice(-8).join('\n');
+    if (err && err.signal === 'SIGTERM') {
+      triggerJobs[action] = { status: 'aborted', startedAt, finishedAt: Date.now(), output: 'Aborted by user', error: null };
+    } else if (err) {
+      triggerJobs[action] = { status: 'error', startedAt, finishedAt: Date.now(), output: out || stderr?.trim() || err.message, error: err.message };
+    } else {
+      triggerJobs[action] = { status: 'done', startedAt, finishedAt: Date.now(), output: out, error: null };
+    }
+  });
+  triggerProcesses[action] = child;
+
+  res.json({ ok: true, message: `Triggered: ${action}` });
+});
+
+// POST /api/controls/trigger/:action/abort — kill a running trigger
+app.post('/api/controls/trigger/:action/abort', authMiddleware, (req, res) => {
+  const { action } = req.params;
+  const child = triggerProcesses[action];
+  if (!child) return res.status(404).json({ error: 'No running job for this action' });
+  try {
+    child.kill('SIGTERM');
+    delete triggerProcesses[action];
+    triggerJobs[action] = { ...triggerJobs[action], status: 'aborted', finishedAt: Date.now(), output: 'Aborted by user' };
+    res.json({ ok: true, message: `Aborted: ${action}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/claude/ct100/restart — restart Claude on this machine (CT100)
+// SSHes to the host to send SIGTERM — wrapper catches it and relaunches
+app.post('/api/controls/claude/ct100/restart', authMiddleware, async (req, res) => {
+  const { execFile } = await import('child_process');
+  execFile('ssh', [
+    '-i', '/root/.ssh/jojeco_lab_key',
+    '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes',
+    'jobot@192.168.50.13',
+    'pkill -SIGTERM -f "claude --dangerously" 2>/dev/null; true'
+  ], { timeout: 10000 }, (err) => {
+    res.json({ ok: true, message: 'Restart signal sent to Claude (CT100) — will resume in ~5s' });
+  });
+});
+
+// POST /api/controls/claude/ct100/stop — stop Claude on CT100 entirely
+app.post('/api/controls/claude/ct100/stop', authMiddleware, async (req, res) => {
+  const { execFile } = await import('child_process');
+  execFile('ssh', [
+    '-i', '/root/.ssh/jojeco_lab_key',
+    '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes',
+    'jobot@192.168.50.13',
+    'pkill -SIGTERM -f "claude-wrapper.sh" 2>/dev/null; pkill -9 -f "claude --dangerously" 2>/dev/null; true'
+  ], { timeout: 10000 }, (err) => {
+    res.json({ ok: true, message: 'Claude stopped on CT100' });
+  });
+});
+
+// POST /api/controls/claude/:machine/stop — kill Claude on a remote machine
+app.post('/api/controls/claude/:machine/stop', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m) return res.status(400).json({ error: 'Unknown machine' });
+  try {
+    const cmd = m.os === 'windows'
+      ? 'powershell -Command \"Stop-Process -Name claude -Force -ErrorAction SilentlyContinue; Write-Output done\"'
+      : 'pkill -f claude 2>/dev/null; pkill -f claude-code 2>/dev/null; echo done';
+    await sshRun(machine, cmd);
+    res.json({ ok: true, message: `Claude stopped on ${m.label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/controls/claude/:machine/restart — restart Claude on a remote machine
+app.post('/api/controls/claude/:machine/restart', authMiddleware, async (req, res) => {
+  const { machine } = req.params;
+  const m = MACHINES[machine];
+  if (!m) return res.status(400).json({ error: 'Unknown machine' });
+  try {
+    await sshRun(machine, 'pkill -f claude 2>/dev/null; sleep 2; nohup /opt/jojeco-agent/scripts/start-claude-fallback.sh > /tmp/claude-restart.log 2>&1 &');
+    res.json({ ok: true, message: `Claude restarting on ${m.label}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/controls/trigger-status — returns status of all tracked trigger jobs
+app.get('/api/controls/trigger-status', authMiddleware, (req, res) => {
+  const result = {};
+  for (const [k, v] of Object.entries(triggerJobs)) {
+    result[k] = { ...v, canAbort: !!triggerProcesses[k] };
+  }
+  res.json(result);
+});
+
+// GET /api/controls/server-status — pings all machines via TCP
+app.get('/api/controls/server-status', authMiddleware, async (req, res) => {
+  const net = await import('net');
+  const targets = [
+    { id: 'server1', host: '192.168.50.10', port: 22 },
+    { id: 'server2', host: '192.168.50.11', port: 22 },
+    { id: 'server3', host: '192.168.50.12', port: 22 },
+    { id: 'macmini', host: '192.168.50.30', port: 22 },
+    { id: 'jopc',    host: '192.168.50.20', port: 22 },
+  ];
+  const results = await Promise.all(targets.map(t => new Promise(resolve => {
+    const sock = new net.default.Socket();
+    const done = (online) => { sock.destroy(); resolve({ id: t.id, online }); };
+    sock.setTimeout(1500);
+    sock.connect(t.port, t.host, () => done(true));
+    sock.on('error', () => done(false));
+    sock.on('timeout', () => done(false));
+  })));
+  const status = {};
+  results.forEach(r => { status[r.id] = r.online; });
+  res.json(status);
+});
+
+// GET /api/controls/containers - list all containers with status for controls UI
+app.get('/api/controls/containers', authMiddleware, async (req, res) => {
+  try {
+    const { stdout } = await execFileAsync('docker', [
+      'ps', '-a', '--format', '{{.Names}}\t{{.Status}}\t{{.Image}}'
+    ], { timeout: 10000 });
+    const containers = stdout.trim().split('\n').filter(Boolean).map(line => {
+      const [name, status, image] = line.split('\t');
+      const running = status?.startsWith('Up');
+      const healthy = status?.includes('healthy') ? 'healthy' : status?.includes('unhealthy') ? 'unhealthy' : null;
+      return { name, status, running, healthy, image };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    res.json(containers);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================================
+// NTFY ALERT FEED
+// ============================================================================
+
+const NTFY_BASE = process.env.NTFY_URL || 'http://192.168.50.13:8080';
+const NTFY_TOPIC = 'jojeco-alerts';
+
+app.get('/api/alerts/recent', authMiddleware, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+  try {
+    const r = await fetch(`${NTFY_BASE}/${NTFY_TOPIC}/json?poll=1&since=48h`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return res.status(502).json({ error: 'ntfy unreachable' });
+    const text = await r.text();
+    const messages = text.trim().split('\n').filter(Boolean).map(line => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).filter(m => m && m.event === 'message').reverse().slice(0, limit).map(m => ({
+      id: m.id,
+      time: m.time,
+      title: m.title || null,
+      message: m.message,
+      priority: m.priority || 3,
+      tags: m.tags || [],
+    }));
+    res.json(messages);
+  } catch (e) {
+    res.status(502).json({ error: 'Failed to fetch alerts', detail: e.message });
+  }
+});
+
+// ============================================================================
+// AUTOMATION STATUS
+// ============================================================================
+
+app.get('/api/automation/status', authMiddleware, async (req, res) => {
+  const jobs = [
+    { id: 'backup',    label: 'GDrive Backup',    logFile: '/host/log/jojeco-gdrive-backup.log',  schedule: 'Daily 2:00 AM',   maxAgeHours: 26 },
+    { id: 'depwatch',  label: 'Dependency Watcher', logFile: '/host/log/jojeco-dep-watcher.log',   schedule: 'Every 5 min',     maxAgeHours: 0.2 },
+    { id: 'update',    label: 'Weekly Update',     logFile: '/host/log/jojeco-weekly-update.log',  schedule: 'Sunday 3:00 AM',  maxAgeHours: 200 },
+  ];
+
+  const results = await Promise.all(jobs.map(async (job) => {
+    try {
+      const { stdout } = await execFileAsync('tail', ['-n', '30', job.logFile], { timeout: 3000 });
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      // Find last timestamp anywhere in log
+      let lastRunTs = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const m = lines[i].match(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/);
+        if (m) { lastRunTs = new Date(m[1]).getTime(); break; }
+        const m2 = lines[i].match(/(\w{3} \w{3} +\d+ \d{2}:\d{2}:\d{2} \w+ \d{4})/); // "Mon Apr 20 10:08:08 UTC 2026"
+        if (m2) { lastRunTs = new Date(m2[1]).getTime(); break; }
+      }
+      const lastRun = lastRunTs ? new Date(lastRunTs).toISOString() : null;
+      const stale = lastRunTs ? (Date.now() - lastRunTs) > job.maxAgeHours * 3600000 : true;
+      const hasError = lines.some(l => /error|fail|fatal/i.test(l) && !/0 errors|attempt \d+\/\d+ succeeded/i.test(l));
+      const healthy = !stale && !hasError;
+      return { ...job, status: hasError ? 'error' : stale ? 'stale' : 'ok', healthy, lastRun, lastRunTs, lastLines: lines.slice(-5) };
+    } catch {
+      return { ...job, status: 'unknown', healthy: false, lastRun: null, lastRunTs: null, lastLines: [] };
+    }
+  }));
+
+  res.json(results);
+});
+
+// ============================================================================
+// UPDATE CHECKER
+// ============================================================================
+
+// Cache update check results in memory (expensive to fetch from registry)
+let updateCache = { checked: null, results: [] };
+
+async function getRemoteDigest(imageRef) {
+  // Parse registry/repo/tag from imageRef
+  let registry = 'registry-1.docker.io';
+  let repo = imageRef.split('@')[0]; // strip any existing digest
+  let tag = 'latest';
+
+  // Split tag
+  const lastColon = repo.lastIndexOf(':');
+  const lastSlash = repo.lastIndexOf('/');
+  if (lastColon > lastSlash) {
+    tag = repo.slice(lastColon + 1);
+    repo = repo.slice(0, lastColon);
+  }
+
+  // Handle non-Docker Hub registries
+  if (repo.includes('.') && repo.indexOf('.') < (repo.indexOf('/') > -1 ? repo.indexOf('/') : Infinity)) {
+    const slashIdx = repo.indexOf('/');
+    registry = repo.slice(0, slashIdx);
+    repo = repo.slice(slashIdx + 1);
+  } else if (!repo.includes('/')) {
+    repo = `library/${repo}`; // Docker Hub official images
+  }
+
+  const headers = { Accept: 'application/vnd.docker.distribution.manifest.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' };
+
+  if (registry === 'registry-1.docker.io') {
+    try {
+      const authRes = await fetch(`https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull`, { signal: AbortSignal.timeout(8000) });
+      if (authRes.ok) {
+        const { token } = await authRes.json();
+        headers.Authorization = `Bearer ${token}`;
+      }
+    } catch { /* proceed without auth */ }
+  }
+
+  const manifestRes = await fetch(`https://${registry}/v2/${repo}/manifests/${tag}`, { headers, signal: AbortSignal.timeout(10000) });
+  if (!manifestRes.ok) return null;
+  return manifestRes.headers.get('docker-content-digest');
+}
+
+async function checkContainerUpdates() {
+  const r = await dockerRequest('/containers/json?all=0');
+  const containers = r.body || [];
+
+  const results = await Promise.allSettled(containers.map(async (c) => {
+    const name = c.Names[0]?.replace('/', '') || c.Id.slice(0, 12);
+    const image = c.Image;
+
+    // Skip containers without a proper image tag (sha256 refs)
+    if (image.startsWith('sha256:') || !image) return null;
+
+    // Get local image digest
+    const imgR = await dockerRequest(`/images/${encodeURIComponent(image)}/json`);
+    const localDigests = imgR.body?.RepoDigests || [];
+    const localDigest = localDigests[0]?.split('@')[1] || null;
+
+    // Get remote digest
+    let remoteDigest = null;
+    try { remoteDigest = await getRemoteDigest(image); } catch { /* ignore */ }
+
+    const updateAvailable = localDigest && remoteDigest && localDigest !== remoteDigest;
+
+    return {
+      id: c.Id.slice(0, 12),
+      name,
+      image,
+      localDigest: localDigest ? localDigest.slice(0, 19) : null,
+      remoteDigest: remoteDigest ? remoteDigest.slice(0, 19) : null,
+      updateAvailable: updateAvailable || false,
+      canCheck: !!(localDigest && remoteDigest),
+    };
+  }));
+
+  return results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean);
+}
+
+app.get('/api/updates/available', authMiddleware, async (req, res) => {
+  const force = req.query.force === '1';
+  const cacheAgeMs = 30 * 60 * 1000; // 30 min cache
+  if (!force && updateCache.checked && (Date.now() - updateCache.checked) < cacheAgeMs) {
+    return res.json({ checked: updateCache.checked, results: updateCache.results, cached: true });
+  }
+  try {
+    const results = await checkContainerUpdates();
+    updateCache = { checked: Date.now(), results };
+    res.json({ checked: updateCache.checked, results, cached: false });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/updates/apply', authMiddleware, async (req, res) => {
+  const { containers: names } = req.body;
+  if (!Array.isArray(names) || names.length === 0) return res.status(400).json({ error: 'containers array required' });
+
+  // Start async job
+  const jobId = `update-${Date.now()}`;
+  triggerJobs[jobId] = { status: 'running', startedAt: Date.now(), finishedAt: null, output: null, error: null };
+  res.json({ jobId, message: 'Update started' });
+
+  (async () => {
+    const lines = [];
+    for (const name of names) {
+      try {
+        // Get image for this container
+        const cR = await dockerRequest(`/containers/${name}/json`);
+        const image = cR.body?.Config?.Image;
+        if (!image) { lines.push(`${name}: could not find image`); continue; }
+
+        lines.push(`Pulling ${image}...`);
+        // Pull new image
+        await new Promise((resolve, reject) => {
+          const opts = { socketPath: '/var/run/docker.sock', path: `/images/create?fromImage=${encodeURIComponent(image)}`, method: 'POST' };
+          const req2 = http.request(opts, dres => { dres.resume(); dres.on('end', resolve); });
+          req2.on('error', reject);
+          req2.end();
+        });
+
+        // Restart container to pick up new image
+        await dockerRequest(`/containers/${name}/restart`, 'POST');
+        lines.push(`${name}: updated and restarted`);
+      } catch (e) {
+        lines.push(`${name}: failed — ${e.message}`);
+      }
+    }
+    updateCache = { checked: null, results: [] }; // invalidate cache
+    triggerJobs[jobId] = { status: 'done', startedAt: triggerJobs[jobId].startedAt, finishedAt: Date.now(), output: lines.join('\n'), error: null };
+  })().catch(e => {
+    triggerJobs[jobId] = { ...triggerJobs[jobId], status: 'error', finishedAt: Date.now(), error: e.message };
+  });
+});
+
+// ============================================================================
+// SERVER-SIDE SERVICE HEALTH POLLER
+// ============================================================================
+
+// Cache of latest health result per serviceId
+const serviceHealthCache = new Map();
+
+async function runServiceHealthPoller() {
+  try {
+    // Fetch all services across all users
+    const services = db.prepare('SELECT id, name, url, health_check_url, health_check_interval FROM services').all();
+    await Promise.allSettled(services.map(async (svc) => {
+      const checkUrl = svc.health_check_url || svc.url;
+      if (!checkUrl) return;
+      const startTime = Date.now();
+      let status = 'offline';
+      let statusCode = null;
+      let responseTime = null;
+      let error = null;
+      try {
+        const isPrivateHttps = checkUrl.startsWith('https://') && /https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(checkUrl);
+        if (isPrivateHttps) {
+          // Use https module with rejectUnauthorized:false for internal self-signed certs
+          await new Promise((resolve, reject) => {
+            const req = https.request(checkUrl, { method: 'HEAD', rejectUnauthorized: false, timeout: 8000 }, (res) => {
+              statusCode = res.statusCode;
+              // 401/403/405/501 mean the service IS running but rejected our unauthed HEAD
+              status = (res.statusCode < 500 || res.statusCode === 501) ? 'online' : 'offline';
+              resolve();
+            });
+            req.on('error', (e) => { error = e.message?.slice(0, 100); reject(e); });
+            req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+            req.end();
+          });
+        } else {
+          const r = await fetch(checkUrl, { method: 'HEAD', signal: AbortSignal.timeout(8000) });
+          statusCode = r.status;
+          // 401/403/405/501 mean the service IS running but rejected our unauthed HEAD
+          status = (r.status < 500 || r.status === 501) ? 'online' : 'offline';
+        }
+        responseTime = Date.now() - startTime;
+      } catch (e) {
+        responseTime = Date.now() - startTime;
+        error = e.message?.slice(0, 100);
+        status = 'offline';
+      }
+      const ts = Date.now();
+      serviceHealthCache.set(svc.id, { serviceId: svc.id, name: svc.name, status, statusCode, responseTime, error, checkedAt: ts });
+      // Persist to health_checks table (keep last 288 per service = 24h at 5min intervals)
+      db.prepare('INSERT INTO health_checks (service_id, status, response_time, status_code, timestamp, error) VALUES (?,?,?,?,?,?)').run(svc.id, status, responseTime, statusCode, ts, error);
+      db.prepare('DELETE FROM health_checks WHERE service_id = ? AND timestamp < ?').run(svc.id, Date.now() - 7 * 24 * 3600000);
+    }));
+  } catch { /* don't crash the server */ }
+}
+
+app.get('/api/health/services', authMiddleware, (req, res) => {
+  const results = Array.from(serviceHealthCache.values());
+  res.json({ checkedAt: Date.now(), services: results });
+});
+
+app.get('/api/health/services/:serviceId/history', authMiddleware, (req, res) => {
+  const { serviceId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit) || 288, 1000);
+  const rows = db.prepare('SELECT status, response_time, status_code, timestamp, error FROM health_checks WHERE service_id = ? ORDER BY timestamp DESC LIMIT ?').all(serviceId, limit);
+  const total = rows.length;
+  const online = rows.filter(r => r.status === 'online').length;
+  const uptimePct = total > 0 ? Math.round((online / total) * 1000) / 10 : null;
+  const avgResponseTime = rows.filter(r => r.response_time).length > 0
+    ? Math.round(rows.filter(r => r.response_time).reduce((s, r) => s + r.response_time, 0) / rows.filter(r => r.response_time).length)
+    : null;
+  res.json({ serviceId, uptimePct, avgResponseTime, history: rows });
+});
+
+// ============================================================================
+// FAILOVER / HA ROUTES
+// ============================================================================
+
+const S2_HOST = '192.168.50.11';
+const S3_HOST = '192.168.50.12';
+const SYNC_LOG_PATH = '/var/log/s3-volume-sync.log';
+const FAILOVER_ACTIVE_FILE = '/mnt/data/lab/failover/.active';
+
+async function tcpCheck(host, port, timeoutMs = 3000) {
+  const net = await import('net');
+  return new Promise(resolve => {
+    const sock = new net.default.Socket();
+    const done = (ok) => { sock.destroy(); resolve(ok); };
+    sock.setTimeout(timeoutMs);
+    sock.connect(port, host, () => done(true));
+    sock.on('error', () => done(false));
+    sock.on('timeout', () => done(false));
+  });
+}
+
+// GET /api/failover/status
+app.get('/api/failover/status', lanOrAuth, async (req, res) => {
+  try {
+    const [s2_online, s3_online] = await Promise.all([
+      tcpCheck(S2_HOST, 22),
+      tcpCheck(S3_HOST, 22),
+    ]);
+
+    // Check failover active: look for state file on S3 or docker ps grep
+    let failover_active = false;
+    let watchdog_status = 'unknown';
+    let last_sync = null;
+
+    // SSH to S3 for watchdog + failover state (only if S3 is online)
+    if (s3_online) {
+      try {
+        const { stdout: wdOut } = await execFileAsync('ssh', [
+          '-i', SSH_KEY, ...SSH_OPTS, `jojeco@${S3_HOST}`,
+          'systemctl is-active jojeco-watchdog 2>/dev/null || echo inactive'
+        ], { timeout: 10000 });
+        watchdog_status = wdOut.trim();
+      } catch { watchdog_status = 'unreachable'; }
+
+      try {
+        const { stdout: foOut } = await execFileAsync('ssh', [
+          '-i', SSH_KEY, ...SSH_OPTS, `jojeco@${S3_HOST}`,
+          `test -f ${FAILOVER_ACTIVE_FILE} && echo yes || docker ps 2>/dev/null | grep -q failover && echo yes || echo no`
+        ], { timeout: 10000 });
+        failover_active = foOut.trim() === 'yes';
+      } catch { failover_active = false; }
+    }
+
+    // Read last sync log line (local file, mounted into container)
+    try {
+      const { stdout: logOut } = await execFileAsync('tail', ['-n', '1', SYNC_LOG_PATH], { timeout: 3000 });
+      last_sync = logOut.trim() || null;
+    } catch { last_sync = null; }
+
+    res.json({ s2_online, s3_online, failover_active, watchdog_status, last_sync });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/failover/activate
+app.post('/api/failover/activate', authMiddleware, async (req, res) => {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      '/opt/jojeco-agent/scripts/lab-failover.sh', ['activate'],
+      { timeout: 120000 }
+    );
+    res.json({ success: true, output: (stdout + stderr).trim() });
+  } catch (e) {
+    res.status(500).json({ success: false, output: (e.stdout || '') + (e.stderr || ''), error: e.message });
+  }
+});
+
+// POST /api/failover/deactivate
+app.post('/api/failover/deactivate', authMiddleware, async (req, res) => {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      '/opt/jojeco-agent/scripts/lab-failover.sh', ['deactivate'],
+      { timeout: 120000 }
+    );
+    res.json({ success: true, output: (stdout + stderr).trim() });
+  } catch (e) {
+    res.status(500).json({ success: false, output: (e.stdout || '') + (e.stderr || ''), error: e.message });
+  }
+});
+
+// POST /api/failover/sync-now — fire and forget
+app.post('/api/failover/sync-now', authMiddleware, async (req, res) => {
+  const { exec } = await import('child_process');
+  exec('/opt/jojeco-agent/scripts/s3-volume-sync.sh >> /var/log/s3-volume-sync.log 2>&1 &');
+  res.json({ success: true, message: 'Volume sync started' });
+});
+
+// ============================================================================
+// BACKUP STATUS ROUTE
+// ============================================================================
+
+const BACKUP_LOG_PATH = '/host/log/jojeco-gdrive-backup.log';
+
+app.get('/api/backup-status', lanOrAuth, async (req, res) => {
+  try {
+    const { stdout } = await execFileAsync('tail', ['-n', '40', BACKUP_LOG_PATH], { timeout: 3000 });
+    const lines = stdout.trim().split('\n').filter(Boolean);
+
+    // Find last run timestamp
+    let lastRun = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = lines[i].match(/=== Backup (started|complete) (\d{4}-\d{2}-\d{2})/);
+      if (m) { lastRun = m[2]; break; }
+    }
+
+    // Find time from last session header
+    let lastRunTime = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = lines[i].match(/\[(\d{2}:\d{2}:\d{2})\] === Backup started/);
+      if (m) { lastRunTime = m[1]; break; }
+    }
+
+    // Check for errors in last session (lines after last "Backup started")
+    let sessionStart = 0;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/=== Backup started/.test(lines[i])) { sessionStart = i; break; }
+    }
+    const sessionLines = lines.slice(sessionStart);
+    const hasError = sessionLines.some(l => /error|fail|FAILED/i.test(l) && !/0 errors/i.test(l));
+    const completed = sessionLines.some(l => /=== Backup complete|✅ Backup complete/i.test(l));
+
+    const status = hasError ? 'error' : completed ? 'ok' : lastRun ? 'unknown' : 'never';
+    const lastRunFull = lastRun && lastRunTime ? `${lastRun} ${lastRunTime}` : lastRun || null;
+
+    // Get last few meaningful lines
+    const message = sessionLines.filter(l => l.trim() && !/^$/.test(l)).slice(-6).join('\n');
+
+    res.json({ lastRun: lastRunFull, status, message });
+  } catch (e) {
+    res.json({ lastRun: null, status: 'unknown', message: 'Log not found or unreadable' });
+  }
+});
+
+// ============================================================================
+// 7-DAY SPARKLINE DATA
+// ============================================================================
+
+app.get('/api/health/sparklines', authMiddleware, (req, res) => {
+  try {
+    const since7d = Date.now() - 7 * 24 * 3600000;
+    const services = db.prepare('SELECT id, name FROM services').all();
+    const result = {};
+    for (const svc of services) {
+      // Get hourly buckets of uptime % over last 7 days
+      const rows = db.prepare(
+        'SELECT timestamp, status FROM health_checks WHERE service_id = ? AND timestamp > ? ORDER BY timestamp ASC'
+      ).all(svc.id, since7d);
+
+      if (rows.length === 0) { result[svc.id] = []; continue; }
+
+      // Group into 24 buckets (one per 7h period = 7 days)
+      const bucketMs = 7 * 24 * 3600000 / 24;
+      const now = Date.now();
+      const buckets = Array.from({ length: 24 }, (_, i) => {
+        const bucketEnd = now - (23 - i) * bucketMs;
+        const bucketStart = bucketEnd - bucketMs;
+        const inBucket = rows.filter(r => r.timestamp >= bucketStart && r.timestamp < bucketEnd);
+        if (inBucket.length === 0) return null;
+        const online = inBucket.filter(r => r.status === 'online').length;
+        return Math.round((online / inBucket.length) * 100);
+      });
+      result[svc.id] = buckets;
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch sparkline data' });
+  }
+});
+
+// ============================================================================
+// ADGUARD STATS PROXY
+// ============================================================================
+
+const ADGUARD_URL = process.env.ADGUARD_URL || 'http://192.168.50.30:3000';
+const ADGUARD_USER = process.env.ADGUARD_USER || '';
+const ADGUARD_PASS = process.env.ADGUARD_PASS || '';
+
+async function adguardFetch(path) {
+  const auth = Buffer.from(`${ADGUARD_USER}:${ADGUARD_PASS}`).toString('base64');
+  const r = await fetch(`${ADGUARD_URL}${path}`, {
+    headers: { Authorization: `Basic ${auth}` },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!r.ok) throw new Error(`AdGuard API ${r.status}`);
+  return r.json();
+}
+
+app.get('/api/adguard/stats', authMiddleware, async (req, res) => {
+  try {
+    const stats = await adguardFetch('/control/stats');
+    res.json({
+      totalQueries: stats.num_dns_queries,
+      blockedQueries: stats.num_blocked_filtering,
+      blockedPercent: stats.num_dns_queries > 0
+        ? ((stats.num_blocked_filtering / stats.num_dns_queries) * 100).toFixed(1)
+        : '0',
+      avgProcessingTime: stats.avg_processing_time
+        ? (stats.avg_processing_time * 1000).toFixed(1)
+        : null,
+      topBlocked: (stats.top_blocked_domains || []).slice(0, 5),
+      topClients: (stats.top_clients || []).slice(0, 5),
+    });
+  } catch (e) {
+    res.status(502).json({ error: 'AdGuard unreachable', detail: e.message });
+  }
+});
+
+app.get('/api/adguard/status', authMiddleware, async (req, res) => {
+  try {
+    const status = await adguardFetch('/control/status');
+    res.json({
+      running: status.running,
+      protectionEnabled: status.protection_enabled,
+      version: status.version,
+    });
+  } catch (e) {
+    res.status(502).json({ error: 'AdGuard unreachable', detail: e.message });
+  }
+});
+
+// ============================================================================
+// JARVIS VOICE API PROXY
+// ============================================================================
+
+const JARVIS_API_URL = 'http://192.168.50.13:8300';
+const JARVIS_KEY = 'jojeco-jarvis-2026';
+
+app.post('/api/jarvis/voice', authMiddleware, async (req, res) => {
+  try {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', async () => {
+      const body = Buffer.concat(chunks);
+      const upstream = await fetch(`${JARVIS_API_URL}/voice`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${JARVIS_KEY}`, 'Content-Type': req.headers['content-type'] },
+        body,
+      });
+      res.status(upstream.status);
+      ['X-Transcript', 'X-Reply', 'Content-Type'].forEach(h => {
+        const v = upstream.headers.get(h); if (v) res.set(h, v);
+      });
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.send(buf);
+    });
+  } catch (e) { res.status(500).json({ error: String(e) }); }
+});
+
+app.post('/api/jarvis/text', authMiddleware, async (req, res) => {
+  try {
+    const upstream = await fetch(`${JARVIS_API_URL}/text`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${JARVIS_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    });
+    res.status(upstream.status);
+    const ct = upstream.headers.get('Content-Type') || '';
+    if (ct.includes('audio')) {
+      res.set('Content-Type', ct);
+      const xr = upstream.headers.get('X-Reply'); if (xr) res.set('X-Reply', xr);
+      res.send(Buffer.from(await upstream.arrayBuffer()));
+    } else {
+      res.json(await upstream.json());
+    }
+  } catch (e) { res.status(500).json({ error: String(e) }); }
+});
+
+app.get('/api/jarvis/health', lanOrAuth, async (req, res) => {
+  try {
+    const upstream = await fetch(`${JARVIS_API_URL}/health`);
+    res.json(await upstream.json());
+  } catch { res.status(503).json({ error: 'Jarvis API unreachable' }); }
+});
+
+app.get('/api/jarvis/history/:sessionId', authMiddleware, async (req, res) => {
+  try {
+    const upstream = await fetch(`${JARVIS_API_URL}/history/${req.params.sessionId}`, {
+      headers: { 'Authorization': `Bearer ${JARVIS_KEY}` }
+    });
+    res.json(await upstream.json());
+  } catch { res.status(502).json({ error: 'Jarvis API unreachable' }); }
+});
+
+app.delete('/api/jarvis/history/:sessionId', authMiddleware, async (req, res) => {
+  try {
+    const upstream = await fetch(`${JARVIS_API_URL}/history/${req.params.sessionId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${JARVIS_KEY}` }
+    });
+    res.json(await upstream.json());
+  } catch { res.status(502).json({ error: 'Jarvis API unreachable' }); }
+});
+
+// ============================================================================
+// MINECRAFT PROXY
+// ============================================================================
+
+app.get('/api/minecraft/status', lanOrAuth, async (req, res) => {
+  try {
+    const r = await fetch('http://192.168.50.10:8765/status', { signal: AbortSignal.timeout(4000) });
+    const data = await r.json();
+    res.json(data);
+  } catch {
+    res.status(502).json({ error: 'MC API unreachable' });
+  }
+});
+
+// ============================================================================
+// KIOSK API ROUTES — proxy sensitive calls server-side to avoid CORS/auth issues
+// ============================================================================
+
+const KIOSK_UPTIME_KUMA_URL   = process.env.KIOSK_UPTIME_KUMA_URL   || 'http://192.168.50.30:3001';
+const KIOSK_GRAFANA_URL       = process.env.KIOSK_GRAFANA_URL        || 'http://192.168.50.13:3002';
+const KIOSK_GRAFANA_USER      = process.env.KIOSK_GRAFANA_USER       || 'admin';
+const KIOSK_GRAFANA_PASS      = process.env.KIOSK_GRAFANA_PASS       || 'jojeco2026';
+const KIOSK_PI_AP_IP          = process.env.KIOSK_PI_AP_IP           || '192.168.50.31';
+
+// LiteLLM spend — proxy through server to keep bearer token off the browser
+app.get('/api/kiosk/litellm-spend', optionalAuthMiddleware, async (req, res) => {
+  try {
+    const r = await fetch('http://192.168.50.13:4000/global/spend', {
+      headers: { Authorization: `Bearer ${LITELLM_KEY}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) return res.json({ spend: null, error: `LiteLLM HTTP ${r.status}` });
+    const data = await r.json();
+    res.json({ spend: data.spend ?? null });
+  } catch (e) {
+    res.json({ spend: null, error: e.message });
+  }
+});
+
+// Uptime Kuma — scrape the metrics endpoint (public, no auth)
+app.get('/api/kiosk/uptime-kuma', optionalAuthMiddleware, async (req, res) => {
+  try {
+    // Try /metrics endpoint first (Prometheus format)
+    const r = await fetch(`${KIOSK_UPTIME_KUMA_URL}/metrics`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const text = await r.text();
+
+    // Parse monitor_status lines: monitor_status{...} 1|0
+    const lines = text.split('\n');
+    let up = 0, down = 0;
+    for (const line of lines) {
+      if (line.startsWith('monitor_status{')) {
+        const val = parseFloat(line.split(' ').pop());
+        if (!isNaN(val)) { val >= 1 ? up++ : down++; }
+      }
+    }
+    const total = up + down;
+    res.json({ total, up, down });
+  } catch (e) {
+    // Fallback: try status page API
+    try {
+      const r2 = await fetch(`${KIOSK_UPTIME_KUMA_URL}/api/status-page/default`, { signal: AbortSignal.timeout(5000) });
+      if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
+      const data = await r2.json();
+      const monitors = data?.publicGroupList?.flatMap(g => g.monitorList) ?? [];
+      const up2   = monitors.filter(m => m.uptime && parseFloat(m.uptime) > 0).length;
+      const down2 = monitors.length - up2;
+      res.json({ total: monitors.length, up: up2, down: down2 });
+    } catch (e2) {
+      res.json({ total: 0, up: 0, down: 0, error: e2.message });
+    }
+  }
+});
+
+// Grafana alerts — proxy with Basic auth
+app.get('/api/kiosk/grafana-alerts', optionalAuthMiddleware, async (req, res) => {
+  try {
+    const auth = Buffer.from(`${KIOSK_GRAFANA_USER}:${KIOSK_GRAFANA_PASS}`).toString('base64');
+    const r = await fetch(`${KIOSK_GRAFANA_URL}/api/alerting/alerts`, {
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const alerts = Array.isArray(data) ? data.map(a => ({
+      id: String(a.id ?? a.uid ?? Math.random()),
+      name: a.name ?? a.title ?? a.labels?.alertname ?? 'Unknown alert',
+      state: a.state ?? a.status?.state ?? 'unknown',
+    })) : [];
+    res.json(alerts);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+// Pi AP reachability — server-side ping/fetch (no CORS issues)
+app.get('/api/kiosk/pi-ap', optionalAuthMiddleware, async (req, res) => {
+  try {
+    // Try to reach the Pi on a known lightweight endpoint
+    const r = await fetch(`http://${KIOSK_PI_AP_IP}`, { signal: AbortSignal.timeout(3000) });
+    res.json({ status: 'up', code: r.status });
+  } catch {
+    // Not reachable — could be offline or just no HTTP server, try ping-style with a tiny fetch
+    res.json({ status: 'down' });
+  }
+});
+
+// ============================================================================
+// ============================================================================
+// BAMBU P1S PRINTER — MQTT STATUS POLLER
+// ============================================================================
+// Background: connects once to the printer's MQTT broker (TLS, self-signed cert)
+// every 15 s, fires pushall, waits for the rich status payload, then caches it.
+// Requests to /api/printer/p1s serve the last cached value instantly (no blocking).
+// READ-ONLY: we only subscribe + publish pushall. No control commands.
+
+import mqtt from 'mqtt';
+
+const P1S_HOST   = '192.168.50.228';
+const P1S_PORT   = 8883;
+const P1S_USER   = 'bblp';
+const P1S_PASS   = '583f2d55';
+const P1S_SN     = '01P00C5C1203051';
+const P1S_REPORT = `device/${P1S_SN}/report`;
+const P1S_REQ    = `device/${P1S_SN}/request`;
+const PUSHALL_MSG = JSON.stringify({ pushing: { sequence_id: '0', command: 'pushall' } });
+
+const SPEED_LABELS = { 1: 'Silent', 2: 'Standard', 3: 'Sport', 4: 'Ludicrous' };
+const GCODE_STATE_MAP = {
+  RUNNING: 'Printing', PAUSE: 'Paused', FINISH: 'Finished',
+  FAILED: 'Failed', IDLE: 'Idle', PREPARE: 'Preparing',
+  SLICING: 'Slicing', DOWNLOADING: 'Downloading',
+};
+
+let printerCache = { online: false, lastFetch: 0 };
+let p1sPollTimer = null;
+
+function p1sParsePayload(raw) {
+  const d = raw.print ?? raw;
+  // Active tray: ams.tray_now is a number (slot index across all AMS units)
+  const trayNow  = d.ams?.tray_now ?? null;
+  let activeTray = null;
+  if (trayNow !== null && trayNow !== 255) {
+    const amsIdx  = Math.floor(trayNow / 4);
+    const trayIdx = trayNow % 4;
+    const amsUnit = (d.ams?.ams ?? [])[amsIdx];
+    activeTray = amsUnit?.tray?.[trayIdx] ?? null;
+  }
+
+  const hexToRgb = (hex) => {
+    if (!hex) return null;
+    const h = hex.replace(/FF$/i, '').padStart(6, '0');
+    return `#${h.slice(0, 6).toUpperCase()}`;
+  };
+
+  const gcodeState = d.gcode_state ?? 'IDLE';
+  return {
+    online:          true,
+    gcode_state:     GCODE_STATE_MAP[gcodeState] ?? gcodeState,
+    job:             d.gcode_file ? d.gcode_file.replace(/\.3mf$/i, '').replace(/\.gcode$/i, '') : null,
+    pct:             d.mc_percent ?? 0,
+    layer:           d.layer_num ?? 0,
+    total_layers:    d.total_layer_num ?? 0,
+    remaining_min:   d.mc_remaining_time ?? null,
+    nozzle_temp:     d.nozzle_temper != null ? Math.round(d.nozzle_temper * 10) / 10 : null,
+    nozzle_target:   d.nozzle_target_temper ?? null,
+    bed_temp:        d.bed_temper != null ? Math.round(d.bed_temper * 10) / 10 : null,
+    bed_target:      d.bed_target_temper ?? null,
+    speed_level:     SPEED_LABELS[d.spd_lvl] ?? 'Standard',
+    active_tray:     trayNow,
+    tray_color:      activeTray ? hexToRgb(activeTray.tray_color) : null,
+    tray_type:       activeTray?.tray_type ?? null,
+    print_error:     d.print_error ?? 0,
+    lastFetch:       Date.now(),
+  };
+}
+
+async function pollP1S() {
+  return new Promise((resolve) => {
+    const timeoutMs = 12000;
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      try { client.end(true); } catch (_) {}
+      clearTimeout(tid);
+      resolve(result);
+    };
+
+    const client = mqtt.connect({
+      host: P1S_HOST,
+      port: P1S_PORT,
+      protocol: 'mqtts',
+      username: P1S_USER,
+      password: P1S_PASS,
+      rejectUnauthorized: false,
+      connectTimeout: 8000,
+      reconnectPeriod: 0,
+    });
+
+    const tid = setTimeout(() => done({ online: false, lastFetch: Date.now() }), timeoutMs);
+
+    client.on('connect', () => {
+      client.subscribe(P1S_REPORT, (err) => {
+        if (err) return done({ online: false, lastFetch: Date.now() });
+        client.publish(P1S_REQ, PUSHALL_MSG);
+      });
+    });
+
+    client.on('message', (_topic, payload) => {
+      try {
+        const raw = JSON.parse(payload.toString());
+        // Wait for a rich payload (pushall response has many keys)
+        if (raw.print && Object.keys(raw.print).length > 5) {
+          done(p1sParsePayload(raw));
+        }
+      } catch (_) {}
+    });
+
+    client.on('error', () => done({ online: false, lastFetch: Date.now() }));
+  });
+}
+
+async function runP1SPoll() {
+  try {
+    const result = await pollP1S();
+    printerCache = result;
+    console.log(`[p1s] polled — online:${result.online} state:${result.gcode_state ?? 'n/a'} pct:${result.pct ?? '-'}%`);
+  } catch (e) {
+    console.error('[p1s] poll error:', e.message);
+    printerCache = { online: false, lastFetch: Date.now() };
+  }
+}
+
+function startP1SPoller() {
+  runP1SPoll();
+  p1sPollTimer = setInterval(runP1SPoll, 15000);
+}
+
+app.get('/api/printer/p1s', optionalAuthMiddleware, (req, res) => {
+  res.json(printerCache);
+});
+
+// ============================================================================
+// Aggregated snapshot — single payload for the v3 frontend's shared data hook.
+// Replaces N per-page pollers with one request. Internally fans out to the
+// existing endpoints (so each section keeps its own auth/sanitization logic)
+// with a short-TTL shared cache so concurrent clients don't multiply load on
+// lab machines. Phase 3 refactor will inline these instead of looping back.
+// ============================================================================
+
+const snapshotCache = new Map(); // `${section}:${auth|guest}` → { at, data }
+const SNAP_SECTIONS = {
+  lab:            '/api/lab/overview',
+  servicesHealth: '/api/services/health',
+  docker:         '/api/docker/containers',
+  fleet:          '/api/ops/fleet',
+  ollama:         '/api/lab/ollama/ps',
+  media:          '/api/media/queue',
+  system:         '/api/system/metrics',
+  serverStatus:   '/api/controls/server-status',
+  alerts:         '/api/alerts/recent',
+  minecraft:      '/api/minecraft/status',
+  automation:     '/api/automation/status',
+  torrents:       '/api/torrents/transfer',
+  printer:        '/api/printer/p1s',
+};
+const SNAP_TTL_MS = { automation: 60000, alerts: 30000, default: 15000 };
+
+app.get('/api/snapshot', optionalAuthMiddleware, async (req, res) => {
+  const wanted = (req.query.sections ? String(req.query.sections).split(',') : Object.keys(SNAP_SECTIONS))
+    .filter(s => SNAP_SECTIONS[s]);
+  const auth = req.headers.authorization || '';
+  const scope = auth ? 'auth' : 'guest';
+  const out = {};
+  await Promise.all(wanted.map(async (s) => {
+    const ttl = SNAP_TTL_MS[s] || SNAP_TTL_MS.default;
+    const key = `${s}:${scope}`;
+    const hit = snapshotCache.get(key);
+    if (hit && Date.now() - hit.at < ttl) { out[s] = hit.data; return; }
+    try {
+      const r = await fetch(`http://127.0.0.1:${PORT}${SNAP_SECTIONS[s]}`, {
+        headers: auth ? { authorization: auth } : {},
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = r.ok ? await r.json() : null;
+      out[s] = data;
+      if (data !== null) snapshotCache.set(key, { at: Date.now(), data });
+    } catch {
+      out[s] = hit ? hit.data : null; // serve stale over nothing
+    }
+  }));
+  res.json({ at: Date.now(), sections: out });
+});
+
+// ============================================================================
+
+async function startServer() {
+  await db.init();
+
+  // Migrate: ensure temp_history table exists
+  db.prepare('CREATE TABLE IF NOT EXISTS temp_history (id INTEGER PRIMARY KEY AUTOINCREMENT, machine_id TEXT NOT NULL, timestamp INTEGER NOT NULL, cpu_temp REAL, gpu_temp REAL)').run();
+
+  // Seed default admin user if users table is empty
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  const adminUserId = process.env.ADMIN_USER_ID;
+  if (adminEmail && adminPassword && adminUserId) {
+    const existing = db.prepare('SELECT COUNT(*) as count FROM users').get();
+    if (existing.count === 0) {
+      const hash = await hashPassword(adminPassword);
+      const now = Date.now();
+      db.prepare('INSERT INTO users (id, email, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(adminUserId, adminEmail, hash, 'Jordan', now, now);
+      console.log(`✅ Admin user seeded: ${adminEmail} (id: ${adminUserId})`);
+    }
+  }
+
+  app.listen(PORT, () => {
+    console.log(`🚀 JojeCo Dashboard API running on port ${PORT}`);
+    console.log(`📊 Database: ${db.name}`);
+  });
+
+  // Prime initial state, then poll every 2 minutes
+  await runHealthMonitor();
+  setInterval(runHealthMonitor, 2 * 60 * 1000);
+  console.log('🔍 Health monitor started (2min interval)');
+
+  // Service health poller — checks all user-registered services every 5 min
+  runServiceHealthPoller().catch(() => {});
+  setInterval(() => runServiceHealthPoller().catch(() => {}), 5 * 60 * 1000);
+  console.log('🩺 Service health poller started (5min interval)');
+
+  // Start temp polling every 30 seconds
+  pollTemps().catch(() => {});
+  setInterval(() => pollTemps().catch(() => {}), 30 * 1000);
+  console.log('🌡️  Temp poller started (30sec interval)');
+
+  // Start P1S printer MQTT poller (15s interval, serves cached result)
+  startP1SPoller();
+  console.log('🖨️  P1S printer poller started (15s interval)');
+}
+
+startServer().catch(console.error);
