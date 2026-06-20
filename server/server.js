@@ -884,6 +884,25 @@ app.post('/api/docker/containers/:id/:action', authMiddleware, async (req, res) 
   } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
 });
 
+// Prune: stopped containers + dangling images + unused networks + build cache (like
+// `docker system prune -f`), then fstrim to release space back to the LVM thin pool.
+app.post('/api/docker/prune', authMiddleware, async (req, res) => {
+  try {
+    let reclaimed = 0;
+    const calls = [
+      '/containers/prune',
+      `/images/prune?filters=${encodeURIComponent('{"dangling":["true"]}')}`,
+      '/networks/prune',
+      '/build/prune',
+    ];
+    for (const p of calls) {
+      try { const r = await dockerRequest(p, 'POST'); reclaimed += (r.body && r.body.SpaceReclaimed) || 0; } catch (e) { /* skip */ }
+    }
+    try { require('child_process').execSync('fstrim / 2>/dev/null', { timeout: 60000 }); } catch (e) { /* fstrim needs host caps; ignore if unavailable */ }
+    res.json({ message: `Pruned — reclaimed ${(reclaimed / 1e9).toFixed(2)} GB`, reclaimed });
+  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
+});
+
 app.get('/api/docker/containers/:id/logs', authMiddleware, async (req, res) => {
   try {
     const lines = Math.min(parseInt(req.query.lines) || 100, 500);
@@ -916,6 +935,8 @@ const SONARR_URL = process.env.SONARR_URL || 'http://192.168.50.13:8989';
 const SONARR_KEY = process.env.SONARR_KEY || 'REDACTED';
 const RADARR_URL = process.env.RADARR_URL || 'http://192.168.50.13:7878';
 const RADARR_KEY = process.env.RADARR_KEY || 'REDACTED';
+const BAZARR_URL = process.env.BAZARR_URL || 'http://192.168.50.13:6767';
+const BAZARR_KEY = process.env.BAZARR_KEY || 'REDACTED';
 
 async function arrFetch(baseUrl, apiKey, path) {
   const r = await fetch(`${baseUrl}/api/v3${path}`, { headers: { 'X-Api-Key': apiKey } });
@@ -949,6 +970,29 @@ app.get('/api/media/stats', authMiddleware, async (req, res) => {
       radarr: { missing: rs.status === 'fulfilled' ? rs.value.totalRecords || 0 : null, queued: rq.status === 'fulfilled' ? rq.value.totalRecords || 0 : null },
     });
   } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
+});
+
+app.get('/api/bazarr/wanted', authMiddleware, async (req, res) => {
+  try {
+    const r = await fetch(`${BAZARR_URL}/api/episodes/wanted?start=0&length=5`, {
+      headers: { 'X-API-KEY': BAZARR_KEY },
+    });
+    if (!r.ok) throw new Error(`${r.status}`);
+    const data = await r.json();
+    // Also fetch totals for history count
+    const h = await fetch(`${BAZARR_URL}/api/episodes/history?start=0&length=1`, {
+      headers: { 'X-API-KEY': BAZARR_KEY },
+    });
+    const hist = h.ok ? await h.json() : {};
+    res.json({
+      wanted: data.total || 0,
+      recent: (data.data || []).slice(0, 5).map(e => ({
+        series: e.seriesTitle,
+        episode: e.episode_number,
+      })),
+      downloaded: hist.total || 0,
+    });
+  } catch (e) { res.status(503).json({ error: 'Bazarr unavailable' }); }
 });
 
 app.get('/api/media/upcoming', optionalAuthMiddleware, async (req, res) => {
@@ -1002,6 +1046,7 @@ const DEFAULT_SERVICES = [
   { name: 'Sonarr',      description: 'TV show manager',        url: 'http://192.168.50.13:8989',      icon: 'Monitor',  color: 'bg-teal-500',   tags: ['media', 'arr'] },
   { name: 'Radarr',      description: 'Movie manager',          url: 'http://192.168.50.13:7878',      icon: 'Film',     color: 'bg-orange-500', tags: ['media', 'arr'] },
   { name: 'Prowlarr',    description: 'Indexer manager',        url: 'http://192.168.50.13:9696',      icon: 'Radio',    color: 'bg-purple-500', tags: ['media', 'arr'] },
+  { name: 'Bazarr',     description: 'Subtitle manager',       url: 'http://192.168.50.13:6767',      icon: 'Subtitles', color: 'bg-violet-500', tags: ['media', 'arr'] },
   { name: 'qBittorrent', description: 'Torrent client',         url: 'http://192.168.50.13:9091',      icon: 'Download', color: 'bg-green-500',  tags: ['download'] },
   { name: 'Navidrome',   description: 'Music streaming',        url: 'https://navidrome.jojeco.ca',    icon: 'Music',    color: 'bg-pink-500',   tags: ['media', 'music'] },
   { name: 'Portainer',   description: 'Docker management',      url: 'http://192.168.50.13:9000',      icon: 'Box',      color: 'bg-cyan-500',   tags: ['infra'] },
@@ -1679,6 +1724,7 @@ const CHAOS_SERVICES = [
   { id: 'sonarr',         name: 'Sonarr',         category: 'Media',   url: 'http://192.168.50.13:8989', dependsOn: [] },
   { id: 'radarr',         name: 'Radarr',         category: 'Media',   url: 'http://192.168.50.13:7878', dependsOn: [] },
   { id: 'tdarr',          name: 'Tdarr',          category: 'Media',   url: 'http://192.168.50.13:8265', dependsOn: [] },
+  { id: 'bazarr',         name: 'Bazarr',         category: 'Media',   url: 'http://192.168.50.13:6767', dependsOn: [] },
   // Storage & cloud
   { id: 'nextcloud',      name: 'Nextcloud',      category: 'Storage', url: 'http://192.168.50.13:8880', dependsOn: ['nextcloud-redis', 'nextcloud-db'] },
   { id: 'nextcloud-redis',name: 'NC Redis',       category: 'Storage', url: 'http://192.168.50.13:6379', dependsOn: [] },
@@ -1760,6 +1806,7 @@ const MONITOR_SERVICES = [
   { id: 'authelia',   name: 'Authelia',   url: 'http://192.168.50.13:9091' },
   { id: 'sonarr',     name: 'Sonarr',     url: 'http://192.168.50.13:8989' },
   { id: 'radarr',     name: 'Radarr',     url: 'http://192.168.50.13:7878' },
+  { id: 'bazarr',     name: 'Bazarr',     url: 'http://192.168.50.13:6767' },
   { id: 'litellm',    name: 'LiteLLM',    url: 'http://192.168.50.13:4000' },
   { id: 'ollama',     name: 'Ollama',     url: 'http://192.168.50.13:11434' },
   { id: 'ntfy',       name: 'ntfy',       url: 'http://192.168.50.13:8080' },

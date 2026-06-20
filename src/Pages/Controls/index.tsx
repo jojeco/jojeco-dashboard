@@ -342,6 +342,21 @@ export default function ControlsPage() {
     setLoad(key, false);
   }
 
+  function handlePrune() {
+    withConfirm(
+      'Prune Docker',
+      'Remove unused Docker data (stopped containers, dangling images, build cache) and trim the disk to free thin-pool space?',
+      async () => {
+        setLoad('prune', true);
+        const { ok, data } = await authPost('/docker/prune');
+        toast(ok ? String(data.message || 'Pruned') : String(data.error || 'Prune failed'), ok);
+        if (ok) await loadContainers();
+        setLoad('prune', false);
+      },
+      'Prune',
+    );
+  }
+
   function handleContainerStop(name: string) {
     withConfirm(
       `Stop ${name}`,
@@ -562,6 +577,7 @@ export default function ControlsPage() {
           onStop={handleContainerStop}
           onStart={name => containerAction(name, 'start')}
           onRefresh={loadContainers}
+          onPrune={handlePrune}
         />
       </section>
 
