@@ -1795,7 +1795,7 @@ const MONITOR_SERVICES = [
   { id: 'radarr',     name: 'Radarr',     url: 'http://192.168.50.13:7878' },
   { id: 'bazarr',     name: 'Bazarr',     url: 'http://192.168.50.13:6767' },
   { id: 'litellm',    name: 'LiteLLM',    url: 'http://192.168.50.13:4000' },
-  { id: 'ollama',     name: 'Ollama',     url: 'http://192.168.50.13:11434' },
+  { id: 'ollama',     name: 'Ollama',     url: 'http://192.168.50.12:11434' },
   { id: 'ntfy',       name: 'ntfy',       url: 'http://192.168.50.13:8080' },
 ];
 
