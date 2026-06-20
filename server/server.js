@@ -1,11 +1,14 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
+import http from 'http';
 import { readdir, readFile } from 'fs/promises';
 import https from 'https';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import db from './database.js';
+import { dockerRequest } from './lib/docker.js';
+import { SSH_KEY, SSH_OPTS, MACHINES, sshRun } from './lib/ssh.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -835,24 +838,7 @@ app.post('/api/torrents/:action', authMiddleware, async (req, res) => {
 // DOCKER PROXY ROUTES (via Docker socket)
 // ============================================================================
 
-import http from 'http';
-
-function dockerRequest(path, method = 'GET', body = null) {
-  return new Promise((resolve, reject) => {
-    const options = { socketPath: '/var/run/docker.sock', path, method, headers: { 'Content-Type': 'application/json' } };
-    const req = http.request(options, dres => {
-      let data = '';
-      dres.on('data', chunk => data += chunk);
-      dres.on('end', () => {
-        try { resolve({ status: dres.statusCode, body: JSON.parse(data) }); }
-        catch { resolve({ status: dres.statusCode, body: data }); }
-      });
-    });
-    req.on('error', reject);
-    if (body) req.write(JSON.stringify(body));
-    req.end();
-  });
-}
+// dockerRequest() lives in ./lib/docker.js (Phase 3 shared client layer)
 
 app.get('/api/docker/containers', optionalAuthMiddleware, async (req, res) => {
   try {
@@ -1924,27 +1910,8 @@ async function pollTemps() {
 // SERVER CONTROLS
 // ============================================================================
 
-const SSH_KEY = '/root/.ssh/jojeco_lab_key';
-const SSH_OPTS = ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=6', '-o', 'BatchMode=yes'];
-
-const MACHINES = {
-  server1:  { ip: '192.168.50.10', user: 'jojeco717', os: 'windows', mac: '50:3d:d1:37:6d:bb', label: 'Server 1' },
-  server2:  { ip: '192.168.50.11', user: 'root',      os: 'linux',   mac: '10:5a:95:21:00:82', label: 'Server 2 (Proxmox)' },
-  server3:  { ip: '192.168.50.12', user: 'jojeco',    os: 'linux',   mac: '90:20:3a:1a:37:21', label: 'Server 3' },
-  macmini:  { ip: '192.168.50.30', user: 'jj',        os: 'macos',   mac: '0c:4d:e9:c7:07:69', label: 'Mac Mini' },
-  jopc:     { ip: '192.168.50.20', user: 'sshuser',   os: 'windows', mac: process.env.JOPC_MAC  || '',                   label: 'JoPc' },
-  macbook:  { ip: '192.168.50.40', user: 'jojeco',   os: 'macos',   mac: process.env.JOMAC_MAC || '76:86:2B:1E:45:C6', label: 'JoMac' },
-  ainspc:   { ip: '192.168.50.220', user: 'ainsl',   os: 'windows', mac: '',                                            label: "Ainsley's PC" },
-};
-
-async function sshRun(machine, cmd) {
-  const m = MACHINES[machine];
-  if (!m) throw new Error(`Unknown machine: ${machine}`);
-  const { stdout, stderr } = await execFileAsync('ssh', [
-    '-i', SSH_KEY, ...SSH_OPTS, `${m.user}@${m.ip}`, cmd
-  ], { timeout: 15000 });
-  return { stdout: stdout.trim(), stderr: stderr.trim() };
-}
+// SSH_KEY, SSH_OPTS, MACHINES and sshRun() live in ./lib/ssh.js
+// (Phase 3 shared lab-machine client layer)
 
 // POST /api/controls/server/:machine/restart
 app.post('/api/controls/server/:machine/restart', authMiddleware, async (req, res) => {
