@@ -8,138 +8,42 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import db from './database.js';
 import { dockerRequest } from './lib/docker.js';
-import { SSH_KEY, SSH_OPTS, MACHINES, sshRun } from './lib/ssh.js';
+import { SSH_KEY, SSH_OPTS } from './lib/ssh.js';
+import authRoutes from './routes/auth.js';
+import dockerRoutes from './routes/docker.js';
+import mediaRoutes from './routes/media.js';
+import torrentsRoutes from './routes/torrents.js';
+import jarvisRoutes from './routes/jarvis.js';
+import chaosRoutes from './routes/chaos.js';
+import adguardRoutes from './routes/adguard.js';
+import kioskRoutes from './routes/kiosk.js';
+import controlsRoutes from './routes/controls.js';
+import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
 
 import {
-  generateToken,
-  verifyToken,
   authMiddleware,
   optionalAuthMiddleware,
   hashPassword,
-  comparePassword,
-  createUser,
-  getUserByEmail,
-  getUserById,
 } from './auth.js';
+import { lanOrAuth, sseAuthMiddleware } from './lib/middleware.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Simple in-memory login rate limiter: max 10 attempts per IP per 15 minutes
-const loginAttempts = new Map();
-const loginRateLimit = (req, res, next) => {
-  const ip = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
-  const now = Date.now();
-  const window = 15 * 60 * 1000;
-  const max = 10;
-  const entry = loginAttempts.get(ip) || { count: 0, reset: now + window };
-  if (now > entry.reset) { entry.count = 0; entry.reset = now + window; }
-  entry.count++;
-  loginAttempts.set(ip, entry);
-  if (entry.count > max) return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
-  next();
-};
-
 // trust proxy disabled — req.ip now reflects actual socket IP, not XFF header
 // This prevents the XFF auth bypass where spoofed X-Forwarded-For: 192.168.50.x bypassed lanOrAuth
-
-// LAN bypass middleware: uses socket remoteAddress (not spoofable via XFF)
-// NOTE: do NOT trust 172.* — public traffic arrives via the nginx container's
-// docker IP (172.x), which made every lanOrAuth endpoint publicly readable.
-// True LAN clients hit :3001 directly and keep the bypass; everything routed
-// through the proxy (including dash.jojeco.ca) must present a JWT.
-const lanOrAuth = (req, res, next) => {
-  const ip = (req.socket?.remoteAddress || req.connection?.remoteAddress || '').replace(/^::ffff:/, '');
-  if (
-    ip.startsWith('192.168.50.') ||
-    ip === '::1' ||
-    ip === '127.0.0.1'
-  ) return next();
-  return authMiddleware(req, res, next);
-};
+// lanOrAuth + sseAuthMiddleware live in ./lib/middleware.js (Phase 3 route split)
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
 // ============================================================================
-// AUTH ROUTES
+// AUTH ROUTES — extracted to ./routes/auth.js (Phase 3 route split)
 // ============================================================================
-
-app.post('/api/auth/register', (req, res) => {
-  res.status(403).json({ error: 'Registration is disabled' });
-});
-
-app.post('/api/auth/login', loginRateLimit, async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password required' });
-    }
-
-    const user = getUserByEmail(email);
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const isValid = await comparePassword(password, user.password_hash);
-    if (!isValid) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const token = generateToken(user.id, user.email);
-    const userInfo = { id: user.id, email: user.email, displayName: user.display_name };
-
-    res.json({ user: userInfo, token });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-app.get('/api/auth/me', authMiddleware, (req, res) => {
-  const user = getUserById(req.user.userId);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-  res.json(user);
-});
-
-app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ error: 'Current and new password required' });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'New password must be at least 6 characters' });
-    }
-
-    const user = getUserByEmail(req.user.email);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const isValid = await comparePassword(currentPassword, user.password_hash);
-    if (!isValid) {
-      return res.status(401).json({ error: 'Current password is incorrect' });
-    }
-
-    const newPasswordHash = await hashPassword(newPassword);
-    const stmt = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?');
-    stmt.run(newPasswordHash, Date.now(), user.id);
-
-    res.json({ success: true, message: 'Password changed successfully' });
-  } catch (error) {
-    console.error('Change password error:', error);
-    res.status(500).json({ error: 'Password change failed' });
-  }
-});
+app.use(authRoutes);
 
 // ============================================================================
 // SERVICE ROUTES
@@ -757,271 +661,19 @@ app.get('/api/system/servers', authMiddleware, async (req, res) => {
 });
 
 // ============================================================================
-// QBITTORRENT PROXY ROUTES
+// QBITTORRENT PROXY ROUTES — extracted to ./routes/torrents.js (Phase 3 split)
 // ============================================================================
-
-const QBT_URL = process.env.QBT_URL || 'http://192.168.50.13:9091';
-const QBT_USER = process.env.QBT_USER || 'admin';
-const QBT_PASS = process.env.QBT_PASS || 'REDACTED';
-let qbtSid = null;
-let qbtCookieName = 'SID';
-
-async function qbtLogin() {
-  const res = await fetch(`${QBT_URL}/api/v2/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': QBT_URL },
-    body: `username=${QBT_USER}&password=${QBT_PASS}`,
-  });
-  const cookies = res.headers.get('set-cookie') || '';
-  // qBittorrent changed cookie name to QBT_SID_{PORT} in newer versions
-  const match = cookies.match(/([A-Z_]*SID[^=]*)=([^;]+)/);
-  if (match) { qbtCookieName = match[1]; qbtSid = match[2]; return true; }
-  return false;
-}
-
-async function qbtFetch(path, options = {}) {
-  const headers = { 'Referer': QBT_URL, ...(options.headers || {}) };
-  if (qbtSid) headers['Cookie'] = `${qbtCookieName}=${qbtSid}`;
-  const res = await fetch(`${QBT_URL}${path}`, { ...options, headers });
-  if (res.status === 403) {
-    await qbtLogin();
-    const retryHeaders = { 'Cookie': `${qbtCookieName}=${qbtSid}`, 'Referer': QBT_URL, ...(options.headers || {}) };
-    return fetch(`${QBT_URL}${path}`, { ...options, headers: retryHeaders });
-  }
-  return res;
-}
-
-app.get('/api/torrents/list', authMiddleware, async (req, res) => {
-  try {
-    const r = await qbtFetch('/api/v2/torrents/info?sort=added_on&reverse=true');
-    res.json(await r.json());
-  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
-});
-
-app.get('/api/torrents/transfer', authMiddleware, async (req, res) => {
-  try {
-    const r = await qbtFetch('/api/v2/transfer/info');
-    res.json(await r.json());
-  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
-});
-
-app.post('/api/torrents/add', authMiddleware, async (req, res) => {
-  try {
-    const { urls, savepath } = req.body;
-    const body = new URLSearchParams({ urls, savepath: savepath || '/media/Downloads' });
-    const r = await qbtFetch('/api/v2/torrents/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
-    res.json({ result: await r.text() });
-  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
-});
-
-app.post('/api/torrents/:action', authMiddleware, async (req, res) => {
-  const { action } = req.params;
-  if (!['pause', 'resume', 'delete', 'recheck'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
-  try {
-    const { hashes, deleteFiles } = req.body;
-    const params = new URLSearchParams({ hashes: Array.isArray(hashes) ? hashes.join('|') : hashes });
-    if (action === 'delete') params.append('deleteFiles', deleteFiles ? 'true' : 'false');
-    const r = await qbtFetch(`/api/v2/torrents/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-    });
-    res.json({ result: await r.text() });
-  } catch (e) { res.status(503).json({ error: 'qBittorrent unavailable' }); }
-});
+app.use(torrentsRoutes);
 
 // ============================================================================
-// DOCKER PROXY ROUTES (via Docker socket)
+// DOCKER PROXY ROUTES — extracted to ./routes/docker.js (Phase 3 route split)
 // ============================================================================
-
-// dockerRequest() lives in ./lib/docker.js (Phase 3 shared client layer)
-
-app.get('/api/docker/containers', optionalAuthMiddleware, async (req, res) => {
-  try {
-    const showAll = req.query.all === '1';
-    const r = await dockerRequest(`/containers/json?all=${showAll ? '1' : '0'}`);
-    const containers = r.body.map(c => ({
-      id: c.Id.slice(0, 12),
-      name: c.Names[0]?.replace('/', '') || c.Id.slice(0, 12),
-      image: c.Image,
-      status: c.Status,
-      state: c.State,
-      health: c.Status?.includes('(healthy)') ? 'healthy'
-            : c.Status?.includes('(unhealthy)') ? 'unhealthy'
-            : c.Status?.includes('(health: starting)') ? 'starting'
-            : 'none',
-      ports: c.Ports.filter(p => p.PublicPort).map(p => `${p.PublicPort}`),
-      created: c.Created,
-      compose_project: c.Labels?.['com.docker.compose.project'] || null,
-    }));
-    res.json(containers.sort((a, b) => a.name.localeCompare(b.name)));
-  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
-});
-
-app.post('/api/docker/containers/:id/:action', authMiddleware, async (req, res) => {
-  const { id, action } = req.params;
-  if (!['start', 'stop', 'restart'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
-  try {
-    const r = await dockerRequest(`/containers/${id}/${action}`, 'POST');
-    res.json({ result: r.status === 204 ? 'ok' : r.body });
-  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
-});
-
-// Prune: stopped containers + dangling images + unused networks + build cache (like
-// `docker system prune -f`), then fstrim to release space back to the LVM thin pool.
-app.post('/api/docker/prune', authMiddleware, async (req, res) => {
-  try {
-    let reclaimed = 0;
-    const calls = [
-      '/containers/prune',
-      `/images/prune?filters=${encodeURIComponent('{"dangling":["true"]}')}`,
-      '/networks/prune',
-      '/build/prune',
-    ];
-    for (const p of calls) {
-      try { const r = await dockerRequest(p, 'POST'); reclaimed += (r.body && r.body.SpaceReclaimed) || 0; } catch (e) { /* skip */ }
-    }
-    try { require('child_process').execSync('fstrim / 2>/dev/null', { timeout: 60000 }); } catch (e) { /* fstrim needs host caps; ignore if unavailable */ }
-    res.json({ message: `Pruned — reclaimed ${(reclaimed / 1e9).toFixed(2)} GB`, reclaimed });
-  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
-});
-
-app.get('/api/docker/containers/:id/logs', authMiddleware, async (req, res) => {
-  try {
-    const lines = Math.min(parseInt(req.query.lines) || 100, 500);
-    const options = { socketPath: '/var/run/docker.sock', path: `/containers/${req.params.id}/logs?stdout=1&stderr=1&tail=${lines}`, method: 'GET' };
-    const dreq = http.request(options, dres => {
-      let raw = Buffer.alloc(0);
-      dres.on('data', chunk => { raw = Buffer.concat([raw, chunk]); });
-      dres.on('end', () => {
-        const logLines = [];
-        let i = 0;
-        while (i + 8 <= raw.length) {
-          const size = raw.readUInt32BE(i + 4);
-          if (i + 8 + size > raw.length) break;
-          logLines.push(raw.slice(i + 8, i + 8 + size).toString('utf8').trimEnd());
-          i += 8 + size;
-        }
-        res.json({ logs: logLines.join('\n') });
-      });
-    });
-    dreq.on('error', () => res.status(503).json({ error: 'Docker socket unavailable' }));
-    dreq.end();
-  } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
-});
+app.use(dockerRoutes);
 
 // ============================================================================
-// MEDIA PROXY ROUTES (Sonarr + Radarr)
+// MEDIA PROXY ROUTES — extracted to ./routes/media.js (Phase 3 route split)
 // ============================================================================
-
-const SONARR_URL = process.env.SONARR_URL || 'http://192.168.50.13:8989';
-const SONARR_KEY = process.env.SONARR_KEY || 'REDACTED';
-const RADARR_URL = process.env.RADARR_URL || 'http://192.168.50.13:7878';
-const RADARR_KEY = process.env.RADARR_KEY || 'REDACTED';
-const BAZARR_URL = process.env.BAZARR_URL || 'http://192.168.50.13:6767';
-const BAZARR_KEY = process.env.BAZARR_KEY || 'REDACTED';
-
-async function arrFetch(baseUrl, apiKey, path) {
-  const r = await fetch(`${baseUrl}/api/v3${path}`, { headers: { 'X-Api-Key': apiKey } });
-  if (!r.ok) throw new Error(`${r.status}`);
-  return r.json();
-}
-
-app.get('/api/media/queue', authMiddleware, async (req, res) => {
-  try {
-    const [sq, rq] = await Promise.allSettled([
-      arrFetch(SONARR_URL, SONARR_KEY, '/queue?pageSize=50&includeUnknownSeriesItems=false&includeSeries=true&includeEpisode=true'),
-      arrFetch(RADARR_URL, RADARR_KEY, '/queue?pageSize=50&includeUnknownMovieItems=false&includeMovie=true'),
-    ]);
-    res.json({
-      sonarr: sq.status === 'fulfilled' ? sq.value.records || [] : [],
-      radarr: rq.status === 'fulfilled' ? rq.value.records || [] : [],
-    });
-  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
-});
-
-app.get('/api/media/stats', authMiddleware, async (req, res) => {
-  try {
-    const [ss, rs, sq, rq] = await Promise.allSettled([
-      arrFetch(SONARR_URL, SONARR_KEY, '/wanted/missing?pageSize=1'),
-      arrFetch(RADARR_URL, RADARR_KEY, '/wanted/missing?pageSize=1'),
-      arrFetch(SONARR_URL, SONARR_KEY, '/queue?pageSize=1'),
-      arrFetch(RADARR_URL, RADARR_KEY, '/queue?pageSize=1'),
-    ]);
-    res.json({
-      sonarr: { missing: ss.status === 'fulfilled' ? ss.value.totalRecords || 0 : null, queued: sq.status === 'fulfilled' ? sq.value.totalRecords || 0 : null },
-      radarr: { missing: rs.status === 'fulfilled' ? rs.value.totalRecords || 0 : null, queued: rq.status === 'fulfilled' ? rq.value.totalRecords || 0 : null },
-    });
-  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
-});
-
-app.get('/api/bazarr/wanted', authMiddleware, async (req, res) => {
-  try {
-    const r = await fetch(`${BAZARR_URL}/api/episodes/wanted?start=0&length=5`, {
-      headers: { 'X-API-KEY': BAZARR_KEY },
-    });
-    if (!r.ok) throw new Error(`${r.status}`);
-    const data = await r.json();
-    // Also fetch totals for history count
-    const h = await fetch(`${BAZARR_URL}/api/episodes/history?start=0&length=1`, {
-      headers: { 'X-API-KEY': BAZARR_KEY },
-    });
-    const hist = h.ok ? await h.json() : {};
-    res.json({
-      wanted: data.total || 0,
-      recent: (data.data || []).slice(0, 5).map(e => ({
-        series: e.seriesTitle,
-        episode: e.episode_number,
-      })),
-      downloaded: hist.total || 0,
-    });
-  } catch (e) { res.status(503).json({ error: 'Bazarr unavailable' }); }
-});
-
-app.get('/api/media/upcoming', optionalAuthMiddleware, async (req, res) => {
-  try {
-    const today = new Date();
-    const end = new Date(today); end.setDate(today.getDate() + 45);
-    const startStr = today.toISOString().slice(0, 10);
-    const endStr = end.toISOString().slice(0, 10);
-    const [cal, movies] = await Promise.allSettled([
-      arrFetch(SONARR_URL, SONARR_KEY, `/calendar?start=${startStr}&end=${endStr}&includeSeries=true`),
-      arrFetch(RADARR_URL, RADARR_KEY, '/movie?monitored=true'),
-    ]);
-    const episodes = (cal.status === 'fulfilled' && Array.isArray(cal.value) ? cal.value : []).map(ep => ({
-      type: 'episode',
-      id: ep.id,
-      title: ep.series?.title || 'Unknown',
-      episode: `S${String(ep.seasonNumber).padStart(2,'0')}E${String(ep.episodeNumber).padStart(2,'0')}`,
-      episodeTitle: ep.title || '',
-      airDate: ep.airDateUtc || ep.airDate || '',
-      hasFile: ep.hasFile || false,
-      network: ep.series?.network || '',
-    }));
-    const upcomingMovies = (movies.status === 'fulfilled' && Array.isArray(movies.value) ? movies.value : [])
-      .filter(m => {
-        const release = m.digitalRelease || m.physicalRelease || m.inCinemas;
-        if (!release) return false;
-        const d = new Date(release);
-        return d >= today && d <= end;
-      })
-      .map(m => ({
-        type: 'movie',
-        id: m.id,
-        title: m.title,
-        year: m.year,
-        digitalRelease: m.digitalRelease || null,
-        physicalRelease: m.physicalRelease || null,
-        inCinemas: m.inCinemas || null,
-        studio: m.studio || '',
-      }));
-    res.json({ episodes, movies: upcomingMovies });
-  } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
-});
+app.use(mediaRoutes);
 
 // ============================================================================
 // SEED DEFAULT SERVICES
@@ -1697,86 +1349,9 @@ app.get('/api/services/health', optionalAuthMiddleware, async (req, res) => {
 });
 
 // ============================================================================
-// CHAOS PAGE — REAL LAB SERVICE HEALTH
+// CHAOS PAGE ROUTES — extracted to ./routes/chaos.js (Phase 3 route split)
 // ============================================================================
-
-const CHAOS_SERVICES = [
-  // Core infrastructure
-  { id: 'dashboard-api',  name: 'Dashboard API',  category: 'Core',    url: 'http://192.168.50.13:3001', dependsOn: [] },
-  { id: 'authelia',       name: 'Authelia SSO',   category: 'Core',    url: 'http://192.168.50.13:9091', dependsOn: ['authelia-redis'] },
-  { id: 'authelia-redis', name: 'Auth Redis',     category: 'Core',    url: 'http://192.168.50.13:6380', dependsOn: [] },
-  { id: 'adguard',        name: 'AdGuard DNS',    category: 'Core',    url: 'http://192.168.50.13:3100', dependsOn: [] },
-  // Media
-  { id: 'plex',           name: 'Plex',           category: 'Media',   url: 'http://192.168.50.10:32400', dependsOn: [] },
-  { id: 'sonarr',         name: 'Sonarr',         category: 'Media',   url: 'http://192.168.50.13:8989', dependsOn: [] },
-  { id: 'radarr',         name: 'Radarr',         category: 'Media',   url: 'http://192.168.50.13:7878', dependsOn: [] },
-  { id: 'tdarr',          name: 'Tdarr',          category: 'Media',   url: 'http://192.168.50.13:8265', dependsOn: [] },
-  { id: 'bazarr',         name: 'Bazarr',         category: 'Media',   url: 'http://192.168.50.13:6767', dependsOn: [] },
-  // Storage & cloud
-  { id: 'nextcloud',      name: 'Nextcloud',      category: 'Storage', url: 'http://192.168.50.13:8880', dependsOn: ['nextcloud-redis', 'nextcloud-db'] },
-  { id: 'nextcloud-redis',name: 'NC Redis',       category: 'Storage', url: 'http://192.168.50.13:6379', dependsOn: [] },
-  { id: 'nextcloud-db',   name: 'NC MariaDB',     category: 'Storage', url: 'http://192.168.50.13:3306', dependsOn: [] },
-  // AI
-  { id: 'litellm',        name: 'LiteLLM',        category: 'AI',      url: 'http://192.168.50.13:4000', dependsOn: ['litellm-db'] },
-  { id: 'litellm-db',     name: 'LiteLLM DB',     category: 'AI',      url: 'http://192.168.50.13:5432', dependsOn: [] },
-  { id: 'ollama',         name: 'Ollama',         category: 'AI',      url: 'http://192.168.50.13:11434', dependsOn: [] },
-  // Monitoring
-  { id: 'prometheus',     name: 'Prometheus',     category: 'Monitoring', url: 'http://192.168.50.13:9090', dependsOn: [] },
-  { id: 'grafana',        name: 'Grafana',        category: 'Monitoring', url: 'http://192.168.50.13:3000', dependsOn: ['prometheus'] },
-  { id: 'netdata',        name: 'Netdata',        category: 'Monitoring', url: 'http://192.168.50.13:19999', dependsOn: [] },
-  // Notifications & comms
-  { id: 'ntfy',           name: 'ntfy',           category: 'Comms',   url: 'http://192.168.50.13:8080', dependsOn: [] },
-];
-
-app.get('/api/chaos/services', optionalAuthMiddleware, async (req, res) => {
-  const results = await Promise.all(CHAOS_SERVICES.map(async svc => {
-    const start = Date.now();
-    try {
-      const r = await fetch(svc.url, { signal: AbortSignal.timeout(4000) });
-      const latency = Date.now() - start;
-      const online = r.status < 500;
-      return { ...svc, online, latency, status: online ? 'healthy' : 'degraded' };
-    } catch {
-      return { ...svc, online: false, latency: null, status: 'down' };
-    }
-  }));
-  res.json(results);
-});
-
-// ── Chaos Agent proxy ────────────────────────────────────────────────────────
-
-const CHAOS_AGENT_URL    = 'http://jojeco-chaos-agent:9999';
-const CHAOS_AGENT_SECRET = process.env.CHAOS_SECRET || '';
-
-async function chaosProxy(path, options = {}) {
-  const res = await fetch(`${CHAOS_AGENT_URL}${path}`, {
-    ...options,
-    headers: { 'X-Chaos-Token': CHAOS_AGENT_SECRET, 'Content-Type': 'application/json', ...(options.headers || {}) },
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw Object.assign(new Error(err.detail || 'agent error'), { status: res.status, detail: err.detail });
-  }
-  return res.json();
-}
-
-app.get('/api/chaos/agent/status', authMiddleware, async (req, res) => {
-  try { res.json(await chaosProxy('/status')); }
-  catch (e) { res.status(e.status || 503).json({ error: e.message }); }
-});
-
-app.post('/api/chaos/agent/run/:module', authMiddleware, async (req, res) => {
-  try {
-    const result = await chaosProxy(`/run/${req.params.module}`, { method: 'POST', body: JSON.stringify(req.body) });
-    res.json(result);
-  } catch (e) { res.status(e.status || 503).json({ error: e.message, detail: e.detail }); }
-});
-
-app.post('/api/chaos/agent/abort', authMiddleware, async (req, res) => {
-  try { res.json(await chaosProxy('/abort', { method: 'POST' })); }
-  catch (e) { res.status(e.status || 503).json({ error: e.message }); }
-});
+app.use(chaosRoutes);
 
 // ============================================================================
 // START SERVER
@@ -1907,277 +1482,9 @@ async function pollTemps() {
 }
 
 // ============================================================================
-// SERVER CONTROLS
+// SERVER CONTROLS — extracted to ./routes/controls.js (Phase 3 route split)
 // ============================================================================
-
-// SSH_KEY, SSH_OPTS, MACHINES and sshRun() live in ./lib/ssh.js
-// (Phase 3 shared lab-machine client layer)
-
-// POST /api/controls/server/:machine/restart
-app.post('/api/controls/server/:machine/restart', authMiddleware, async (req, res) => {
-  const { machine } = req.params;
-  const m = MACHINES[machine];
-  if (!m) return res.status(400).json({ error: 'Unknown machine' });
-  try {
-    const cmd = m.os === 'windows' ? 'shutdown /r /t 5' :
-                m.os === 'macos'   ? 'sudo shutdown -r +0' :
-                                     'reboot';
-    await sshRun(machine, cmd);
-    res.json({ ok: true, message: `Restart command sent to ${m.label}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/controls/server/:machine/shutdown
-app.post('/api/controls/server/:machine/shutdown', authMiddleware, async (req, res) => {
-  const { machine } = req.params;
-  const m = MACHINES[machine];
-  if (!m) return res.status(400).json({ error: 'Unknown machine' });
-  try {
-    const cmd = m.os === 'windows' ? 'shutdown /s /t 5' :
-                m.os === 'macos'   ? 'sudo shutdown -h +0' :
-                                     'shutdown -h now';
-    await sshRun(machine, cmd);
-    res.json({ ok: true, message: `Shutdown command sent to ${m.label}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/controls/server/:machine/wake
-app.post('/api/controls/server/:machine/wake', authMiddleware, async (req, res) => {
-  const { machine } = req.params;
-  const m = MACHINES[machine];
-  if (!m || !m.mac) return res.status(400).json({ error: 'Unknown machine or no MAC address' });
-  try {
-    await execFileAsync('wakeonlan', [m.mac], { timeout: 5000 });
-    res.json({ ok: true, message: `Wake-on-LAN packet sent to ${m.label} (${m.mac})` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/controls/container/:name/restart
-app.post('/api/controls/container/:name/restart', authMiddleware, async (req, res) => {
-  const { name } = req.params;
-  // Whitelist: don't allow restarting nginx-proxy-manager or portainer from here (too risky)
-  const blocked = ['nginx-proxy-manager', 'portainer', 'cloudflared'];
-  if (blocked.includes(name)) return res.status(403).json({ error: 'This container cannot be restarted from the dashboard' });
-  try {
-    const { stdout } = await execFileAsync('docker', ['restart', name], { timeout: 30000 });
-    res.json({ ok: true, message: `Restarted ${name}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/controls/container/:name/stop
-app.post('/api/controls/container/:name/stop', authMiddleware, async (req, res) => {
-  const { name } = req.params;
-  const blocked = ['nginx-proxy-manager', 'portainer', 'cloudflared', 'jojeco-dashboard-api'];
-  if (blocked.includes(name)) return res.status(403).json({ error: 'This container cannot be stopped from the dashboard' });
-  try {
-    await execFileAsync('docker', ['stop', name], { timeout: 30000 });
-    res.json({ ok: true, message: `Stopped ${name}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/controls/container/:name/start
-app.post('/api/controls/container/:name/start', authMiddleware, async (req, res) => {
-  const { name } = req.params;
-  try {
-    await execFileAsync('docker', ['start', name], { timeout: 30000 });
-    res.json({ ok: true, message: `Started ${name}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/controls/tdarr/:node/enable|disable — toggle Tdarr node via SSH schtasks
-app.post('/api/controls/tdarr/:node/:action', authMiddleware, async (req, res) => {
-  const { node, action } = req.params;
-  if (!['enable', 'disable'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
-  const nodeMap = {
-    jopc:   'jopc',
-    ainspc: 'ainspc',
-  };
-  const machine = nodeMap[node];
-  if (!machine) return res.status(400).json({ error: 'Unknown Tdarr node' });
-  const flag = action === 'enable' ? '/ENABLE' : '/DISABLE';
-  try {
-    await sshRun(machine, `schtasks /Change /TN TdarrNode ${flag}`);
-    res.json({ ok: true, message: `Tdarr node ${action}d on ${MACHINES[machine].label}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// In-memory job tracker for trigger status
-const triggerJobs = {};
-const triggerProcesses = {}; // track child processes so we can kill them
-
-// POST /api/controls/trigger/:action
-app.post('/api/controls/trigger/:action', authMiddleware, async (req, res) => {
-  const { action } = req.params;
-  const scripts = {
-    'health':        '/opt/jojeco-agent/scripts/dep-watcher.sh',
-    'backup':        '/opt/jojeco-agent/scripts/gdrive-backup.sh',
-    'snapshot':      '/opt/jojeco-agent/scripts/weekly-update.sh',
-    'claude-server3': '/opt/jojeco-agent/scripts/start-claude-fallback.sh server3',
-    'claude-server1': '/opt/jojeco-agent/scripts/start-claude-fallback.sh server1',
-    'sync-context':  '/opt/jojeco-agent/scripts/sync-context.sh',
-  };
-  if (!scripts[action]) return res.status(400).json({ error: 'Unknown action' });
-
-  // Kill any already-running instance of this action
-  if (triggerProcesses[action]) {
-    try { triggerProcesses[action].kill('SIGTERM'); } catch (_) {}
-    delete triggerProcesses[action];
-  }
-
-  const startedAt = Date.now();
-  triggerJobs[action] = { status: 'running', startedAt, finishedAt: null, output: null, error: null };
-
-  const { exec } = await import('child_process');
-  const child = exec(scripts[action], { timeout: 300000 }, (err, stdout, stderr) => {
-    delete triggerProcesses[action];
-    const out = (stdout || '').trim().split('\n').slice(-8).join('\n');
-    if (err && err.signal === 'SIGTERM') {
-      triggerJobs[action] = { status: 'aborted', startedAt, finishedAt: Date.now(), output: 'Aborted by user', error: null };
-    } else if (err) {
-      triggerJobs[action] = { status: 'error', startedAt, finishedAt: Date.now(), output: out || stderr?.trim() || err.message, error: err.message };
-    } else {
-      triggerJobs[action] = { status: 'done', startedAt, finishedAt: Date.now(), output: out, error: null };
-    }
-  });
-  triggerProcesses[action] = child;
-
-  res.json({ ok: true, message: `Triggered: ${action}` });
-});
-
-// POST /api/controls/trigger/:action/abort — kill a running trigger
-app.post('/api/controls/trigger/:action/abort', authMiddleware, (req, res) => {
-  const { action } = req.params;
-  const child = triggerProcesses[action];
-  if (!child) return res.status(404).json({ error: 'No running job for this action' });
-  try {
-    child.kill('SIGTERM');
-    delete triggerProcesses[action];
-    triggerJobs[action] = { ...triggerJobs[action], status: 'aborted', finishedAt: Date.now(), output: 'Aborted by user' };
-    res.json({ ok: true, message: `Aborted: ${action}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/controls/claude/ct100/restart — restart Claude on this machine (CT100)
-// SSHes to the host to send SIGTERM — wrapper catches it and relaunches
-app.post('/api/controls/claude/ct100/restart', authMiddleware, async (req, res) => {
-  const { execFile } = await import('child_process');
-  execFile('ssh', [
-    '-i', '/root/.ssh/jojeco_lab_key',
-    '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes',
-    'jobot@192.168.50.13',
-    'pkill -SIGTERM -f "claude --dangerously" 2>/dev/null; true'
-  ], { timeout: 10000 }, (err) => {
-    res.json({ ok: true, message: 'Restart signal sent to Claude (CT100) — will resume in ~5s' });
-  });
-});
-
-// POST /api/controls/claude/ct100/stop — stop Claude on CT100 entirely
-app.post('/api/controls/claude/ct100/stop', authMiddleware, async (req, res) => {
-  const { execFile } = await import('child_process');
-  execFile('ssh', [
-    '-i', '/root/.ssh/jojeco_lab_key',
-    '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes',
-    'jobot@192.168.50.13',
-    'pkill -SIGTERM -f "claude-wrapper.sh" 2>/dev/null; pkill -9 -f "claude --dangerously" 2>/dev/null; true'
-  ], { timeout: 10000 }, (err) => {
-    res.json({ ok: true, message: 'Claude stopped on CT100' });
-  });
-});
-
-// POST /api/controls/claude/:machine/stop — kill Claude on a remote machine
-app.post('/api/controls/claude/:machine/stop', authMiddleware, async (req, res) => {
-  const { machine } = req.params;
-  const m = MACHINES[machine];
-  if (!m) return res.status(400).json({ error: 'Unknown machine' });
-  try {
-    const cmd = m.os === 'windows'
-      ? 'powershell -Command \"Stop-Process -Name claude -Force -ErrorAction SilentlyContinue; Write-Output done\"'
-      : 'pkill -f claude 2>/dev/null; pkill -f claude-code 2>/dev/null; echo done';
-    await sshRun(machine, cmd);
-    res.json({ ok: true, message: `Claude stopped on ${m.label}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/controls/claude/:machine/restart — restart Claude on a remote machine
-app.post('/api/controls/claude/:machine/restart', authMiddleware, async (req, res) => {
-  const { machine } = req.params;
-  const m = MACHINES[machine];
-  if (!m) return res.status(400).json({ error: 'Unknown machine' });
-  try {
-    await sshRun(machine, 'pkill -f claude 2>/dev/null; sleep 2; nohup /opt/jojeco-agent/scripts/start-claude-fallback.sh > /tmp/claude-restart.log 2>&1 &');
-    res.json({ ok: true, message: `Claude restarting on ${m.label}` });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/controls/trigger-status — returns status of all tracked trigger jobs
-app.get('/api/controls/trigger-status', authMiddleware, (req, res) => {
-  const result = {};
-  for (const [k, v] of Object.entries(triggerJobs)) {
-    result[k] = { ...v, canAbort: !!triggerProcesses[k] };
-  }
-  res.json(result);
-});
-
-// GET /api/controls/server-status — pings all machines via TCP
-app.get('/api/controls/server-status', authMiddleware, async (req, res) => {
-  const net = await import('net');
-  const targets = [
-    { id: 'server1', host: '192.168.50.10', port: 22 },
-    { id: 'server2', host: '192.168.50.11', port: 22 },
-    { id: 'server3', host: '192.168.50.12', port: 22 },
-    { id: 'macmini', host: '192.168.50.30', port: 22 },
-    { id: 'jopc',    host: '192.168.50.20', port: 22 },
-  ];
-  const results = await Promise.all(targets.map(t => new Promise(resolve => {
-    const sock = new net.default.Socket();
-    const done = (online) => { sock.destroy(); resolve({ id: t.id, online }); };
-    sock.setTimeout(1500);
-    sock.connect(t.port, t.host, () => done(true));
-    sock.on('error', () => done(false));
-    sock.on('timeout', () => done(false));
-  })));
-  const status = {};
-  results.forEach(r => { status[r.id] = r.online; });
-  res.json(status);
-});
-
-// GET /api/controls/containers - list all containers with status for controls UI
-app.get('/api/controls/containers', authMiddleware, async (req, res) => {
-  try {
-    const { stdout } = await execFileAsync('docker', [
-      'ps', '-a', '--format', '{{.Names}}\t{{.Status}}\t{{.Image}}'
-    ], { timeout: 10000 });
-    const containers = stdout.trim().split('\n').filter(Boolean).map(line => {
-      const [name, status, image] = line.split('\t');
-      const running = status?.startsWith('Up');
-      const healthy = status?.includes('healthy') ? 'healthy' : status?.includes('unhealthy') ? 'unhealthy' : null;
-      return { name, status, running, healthy, image };
-    }).sort((a, b) => a.name.localeCompare(b.name));
-    res.json(containers);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+app.use(controlsRoutes);
 
 // ============================================================================
 // NTFY ALERT FEED
@@ -2637,128 +1944,14 @@ app.get('/api/health/sparklines', authMiddleware, (req, res) => {
 });
 
 // ============================================================================
-// ADGUARD STATS PROXY
+// ADGUARD STATS PROXY — extracted to ./routes/adguard.js (Phase 3 route split)
 // ============================================================================
-
-const ADGUARD_URL = process.env.ADGUARD_URL || 'http://192.168.50.30:3000';
-const ADGUARD_USER = process.env.ADGUARD_USER || '';
-const ADGUARD_PASS = process.env.ADGUARD_PASS || '';
-
-async function adguardFetch(path) {
-  const auth = Buffer.from(`${ADGUARD_USER}:${ADGUARD_PASS}`).toString('base64');
-  const r = await fetch(`${ADGUARD_URL}${path}`, {
-    headers: { Authorization: `Basic ${auth}` },
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!r.ok) throw new Error(`AdGuard API ${r.status}`);
-  return r.json();
-}
-
-app.get('/api/adguard/stats', authMiddleware, async (req, res) => {
-  try {
-    const stats = await adguardFetch('/control/stats');
-    res.json({
-      totalQueries: stats.num_dns_queries,
-      blockedQueries: stats.num_blocked_filtering,
-      blockedPercent: stats.num_dns_queries > 0
-        ? ((stats.num_blocked_filtering / stats.num_dns_queries) * 100).toFixed(1)
-        : '0',
-      avgProcessingTime: stats.avg_processing_time
-        ? (stats.avg_processing_time * 1000).toFixed(1)
-        : null,
-      topBlocked: (stats.top_blocked_domains || []).slice(0, 5),
-      topClients: (stats.top_clients || []).slice(0, 5),
-    });
-  } catch (e) {
-    res.status(502).json({ error: 'AdGuard unreachable', detail: e.message });
-  }
-});
-
-app.get('/api/adguard/status', authMiddleware, async (req, res) => {
-  try {
-    const status = await adguardFetch('/control/status');
-    res.json({
-      running: status.running,
-      protectionEnabled: status.protection_enabled,
-      version: status.version,
-    });
-  } catch (e) {
-    res.status(502).json({ error: 'AdGuard unreachable', detail: e.message });
-  }
-});
+app.use(adguardRoutes);
 
 // ============================================================================
-// JARVIS VOICE API PROXY
+// JARVIS VOICE API PROXY — extracted to ./routes/jarvis.js (Phase 3 route split)
 // ============================================================================
-
-const JARVIS_API_URL = 'http://192.168.50.13:8300';
-const JARVIS_KEY = 'jojeco-jarvis-2026';
-
-app.post('/api/jarvis/voice', authMiddleware, async (req, res) => {
-  try {
-    const chunks = [];
-    req.on('data', c => chunks.push(c));
-    req.on('end', async () => {
-      const body = Buffer.concat(chunks);
-      const upstream = await fetch(`${JARVIS_API_URL}/voice`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${JARVIS_KEY}`, 'Content-Type': req.headers['content-type'] },
-        body,
-      });
-      res.status(upstream.status);
-      ['X-Transcript', 'X-Reply', 'Content-Type'].forEach(h => {
-        const v = upstream.headers.get(h); if (v) res.set(h, v);
-      });
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      res.send(buf);
-    });
-  } catch (e) { res.status(500).json({ error: String(e) }); }
-});
-
-app.post('/api/jarvis/text', authMiddleware, async (req, res) => {
-  try {
-    const upstream = await fetch(`${JARVIS_API_URL}/text`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${JARVIS_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(req.body),
-    });
-    res.status(upstream.status);
-    const ct = upstream.headers.get('Content-Type') || '';
-    if (ct.includes('audio')) {
-      res.set('Content-Type', ct);
-      const xr = upstream.headers.get('X-Reply'); if (xr) res.set('X-Reply', xr);
-      res.send(Buffer.from(await upstream.arrayBuffer()));
-    } else {
-      res.json(await upstream.json());
-    }
-  } catch (e) { res.status(500).json({ error: String(e) }); }
-});
-
-app.get('/api/jarvis/health', lanOrAuth, async (req, res) => {
-  try {
-    const upstream = await fetch(`${JARVIS_API_URL}/health`);
-    res.json(await upstream.json());
-  } catch { res.status(503).json({ error: 'Jarvis API unreachable' }); }
-});
-
-app.get('/api/jarvis/history/:sessionId', authMiddleware, async (req, res) => {
-  try {
-    const upstream = await fetch(`${JARVIS_API_URL}/history/${req.params.sessionId}`, {
-      headers: { 'Authorization': `Bearer ${JARVIS_KEY}` }
-    });
-    res.json(await upstream.json());
-  } catch { res.status(502).json({ error: 'Jarvis API unreachable' }); }
-});
-
-app.delete('/api/jarvis/history/:sessionId', authMiddleware, async (req, res) => {
-  try {
-    const upstream = await fetch(`${JARVIS_API_URL}/history/${req.params.sessionId}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${JARVIS_KEY}` }
-    });
-    res.json(await upstream.json());
-  } catch { res.status(502).json({ error: 'Jarvis API unreachable' }); }
-});
+app.use(jarvisRoutes);
 
 // ============================================================================
 // MINECRAFT PROXY
@@ -2775,97 +1968,9 @@ app.get('/api/minecraft/status', lanOrAuth, async (req, res) => {
 });
 
 // ============================================================================
-// KIOSK API ROUTES — proxy sensitive calls server-side to avoid CORS/auth issues
+// KIOSK API ROUTES — extracted to ./routes/kiosk.js (Phase 3 route split)
 // ============================================================================
-
-const KIOSK_UPTIME_KUMA_URL   = process.env.KIOSK_UPTIME_KUMA_URL   || 'http://192.168.50.30:3001';
-const KIOSK_GRAFANA_URL       = process.env.KIOSK_GRAFANA_URL        || 'http://192.168.50.13:3002';
-const KIOSK_GRAFANA_USER      = process.env.KIOSK_GRAFANA_USER       || 'admin';
-const KIOSK_GRAFANA_PASS      = process.env.KIOSK_GRAFANA_PASS       || 'REDACTED';
-const KIOSK_PI_AP_IP          = process.env.KIOSK_PI_AP_IP           || '192.168.50.31';
-
-// LiteLLM spend — proxy through server to keep bearer token off the browser
-app.get('/api/kiosk/litellm-spend', optionalAuthMiddleware, async (req, res) => {
-  try {
-    const r = await fetch('http://192.168.50.13:4000/global/spend', {
-      headers: { Authorization: `Bearer ${LITELLM_KEY}` },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!r.ok) return res.json({ spend: null, error: `LiteLLM HTTP ${r.status}` });
-    const data = await r.json();
-    res.json({ spend: data.spend ?? null });
-  } catch (e) {
-    res.json({ spend: null, error: e.message });
-  }
-});
-
-// Uptime Kuma — scrape the metrics endpoint (public, no auth)
-app.get('/api/kiosk/uptime-kuma', optionalAuthMiddleware, async (req, res) => {
-  try {
-    // Try /metrics endpoint first (Prometheus format)
-    const r = await fetch(`${KIOSK_UPTIME_KUMA_URL}/metrics`, { signal: AbortSignal.timeout(5000) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const text = await r.text();
-
-    // Parse monitor_status lines: monitor_status{...} 1|0
-    const lines = text.split('\n');
-    let up = 0, down = 0;
-    for (const line of lines) {
-      if (line.startsWith('monitor_status{')) {
-        const val = parseFloat(line.split(' ').pop());
-        if (!isNaN(val)) { val >= 1 ? up++ : down++; }
-      }
-    }
-    const total = up + down;
-    res.json({ total, up, down });
-  } catch (e) {
-    // Fallback: try status page API
-    try {
-      const r2 = await fetch(`${KIOSK_UPTIME_KUMA_URL}/api/status-page/default`, { signal: AbortSignal.timeout(5000) });
-      if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
-      const data = await r2.json();
-      const monitors = data?.publicGroupList?.flatMap(g => g.monitorList) ?? [];
-      const up2   = monitors.filter(m => m.uptime && parseFloat(m.uptime) > 0).length;
-      const down2 = monitors.length - up2;
-      res.json({ total: monitors.length, up: up2, down: down2 });
-    } catch (e2) {
-      res.json({ total: 0, up: 0, down: 0, error: e2.message });
-    }
-  }
-});
-
-// Grafana alerts — proxy with Basic auth
-app.get('/api/kiosk/grafana-alerts', optionalAuthMiddleware, async (req, res) => {
-  try {
-    const auth = Buffer.from(`${KIOSK_GRAFANA_USER}:${KIOSK_GRAFANA_PASS}`).toString('base64');
-    const r = await fetch(`${KIOSK_GRAFANA_URL}/api/alerting/alerts`, {
-      headers: { Authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    const alerts = Array.isArray(data) ? data.map(a => ({
-      id: String(a.id ?? a.uid ?? Math.random()),
-      name: a.name ?? a.title ?? a.labels?.alertname ?? 'Unknown alert',
-      state: a.state ?? a.status?.state ?? 'unknown',
-    })) : [];
-    res.json(alerts);
-  } catch (e) {
-    res.json([]);
-  }
-});
-
-// Pi AP reachability — server-side ping/fetch (no CORS issues)
-app.get('/api/kiosk/pi-ap', optionalAuthMiddleware, async (req, res) => {
-  try {
-    // Try to reach the Pi on a known lightweight endpoint
-    const r = await fetch(`http://${KIOSK_PI_AP_IP}`, { signal: AbortSignal.timeout(3000) });
-    res.json({ status: 'up', code: r.status });
-  } catch {
-    // Not reachable — could be offline or just no HTTP server, try ping-style with a tiny fetch
-    res.json({ status: 'down' });
-  }
-});
+app.use(kioskRoutes);
 
 // ============================================================================
 // ============================================================================
@@ -3067,23 +2172,7 @@ async function pushToClient(client) {
   }
 }
 
-// SSE-specific auth: accepts Bearer header OR ?token= query param (EventSource
-// can't set custom headers, so the frontend appends the JWT as a URL param).
-const sseAuthMiddleware = (req, res, next) => {
-  // Try Authorization header first (curl / fetch clients)
-  const header = req.headers.authorization;
-  if (header && header.startsWith('Bearer ')) {
-    const decoded = verifyToken(header.substring(7));
-    if (decoded) { req.user = decoded; return next(); }
-  }
-  // Fall back to ?token= query param (EventSource clients)
-  const qtoken = req.query.token;
-  if (qtoken) {
-    const decoded = verifyToken(String(qtoken));
-    if (decoded) { req.user = decoded; return next(); }
-  }
-  return res.status(401).json({ error: 'No token provided' });
-};
+// sseAuthMiddleware lives in ./lib/middleware.js (Phase 3 route split)
 
 // GET /api/stream — auth-gated SSE endpoint
 app.get('/api/stream', sseAuthMiddleware, async (req, res) => {
