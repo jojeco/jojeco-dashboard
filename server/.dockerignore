@@ -2,5 +2,8 @@ node_modules
 *.db
 *.db-shm
 *.db-wal
+*.bak-phase2
+*.bak-phase3
+*.bak-phase3split
 .env
 .git
