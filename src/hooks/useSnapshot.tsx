@@ -1,14 +1,16 @@
 /**
  * useSnapshot — shared data layer for the v3 dashboard.
  *
- * A single SnapshotProvider mounts in App.tsx and polls GET /api/snapshot
- * every 20 s (or 5 s on LAN). All pages read from this shared context via
- * useSnapshot(section?). No per-page setInterval needed.
+ * Phase 2: SnapshotProvider now drives data via SSE (useLabStream) instead of
+ * polling. All pages read from this shared context via useSnapshot(section?).
+ * The polling fallback is still available via refresh() for manual reloads.
  *
- * Pauses polling while document is hidden (visibility API).
- * Includes Bearer token from localStorage 'auth_token'.
+ * Consumers are unchanged — same API: { data, at, loading, refresh }.
  */
-import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { createContext, useContext, ReactNode } from 'react';
+import { useLabStream } from './useLabStream';
+import type { StreamStatus } from './useLabStream';
+export type { StreamStatus };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -92,78 +94,22 @@ interface SnapshotContextValue {
   at: number | null;
   loading: boolean;
   refresh: () => void;
+  /** SSE connection state — used by the LiveIndicator in App.tsx */
+  streamStatus: StreamStatus;
 }
 
 const SnapshotContext = createContext<SnapshotContextValue>({
-  data: null, at: null, loading: true, refresh: () => {},
+  data: null, at: null, loading: true, refresh: () => {}, streamStatus: 'connecting',
 });
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getToken(): string | null { return localStorage.getItem('auth_token'); }
-
-function isLan(): boolean {
-  const h = window.location.hostname;
-  return h === 'localhost' || h.startsWith('192.168.') || h.startsWith('10.') || h.startsWith('172.');
-}
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function SnapshotProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<SnapshotSections | null>(null);
-  const [at, setAt] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const poll = useCallback(async () => {
-    if (document.hidden) return;
-    const token = getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    try {
-      const res = await fetch('/api/snapshot', { headers });
-      if (res.status === 401) {
-        localStorage.removeItem('auth_token');
-        window.location.href = '/login';
-        return;
-      }
-      if (!res.ok) return;
-      const json = await res.json();
-      setData(json.sections as SnapshotSections);
-      setAt(json.at as number);
-    } catch {
-      // Network error — keep stale data, stay silent
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const refresh = useCallback(() => { poll(); }, [poll]);
-
-  useEffect(() => {
-    poll();
-    const ms = isLan() ? 5000 : 20000;
-    intervalRef.current = setInterval(poll, ms);
-
-    const handleVisibility = () => {
-      if (!document.hidden && intervalRef.current === null) {
-        poll();
-        intervalRef.current = setInterval(poll, ms);
-      } else if (document.hidden && intervalRef.current !== null) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [poll]);
-
+  const { data: rawData, at, loading, refresh, streamStatus } = useLabStream();
+  // Cast from the hook's generic Record type to the typed SnapshotSections
+  const data = rawData as SnapshotSections | null;
   return (
-    <SnapshotContext.Provider value={{ data, at, loading, refresh }}>
+    <SnapshotContext.Provider value={{ data, at, loading, refresh, streamStatus }}>
       {children}
     </SnapshotContext.Provider>
   );
