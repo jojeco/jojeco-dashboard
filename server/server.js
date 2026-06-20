@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 
 import {
   generateToken,
+  verifyToken,
   authMiddleware,
   optionalAuthMiddleware,
   hashPassword,
@@ -3036,11 +3037,11 @@ app.get('/api/printer/p1s', optionalAuthMiddleware, (req, res) => {
 });
 
 // ============================================================================
-// Aggregated snapshot — single payload for the v3 frontend's shared data hook.
-// Replaces N per-page pollers with one request. Internally fans out to the
-// existing endpoints (so each section keeps its own auth/sanitization logic)
-// with a short-TTL shared cache so concurrent clients don't multiply load on
-// lab machines. Phase 3 refactor will inline these instead of looping back.
+// Aggregated snapshot + SSE stream — shared data layer for the v3 frontend.
+// The snapshot cache is shared between /api/snapshot (polling fallback) and
+// /api/stream (SSE push). Internally fans out to existing endpoints so each
+// section keeps its own auth/sanitization logic.
+// Phase 3 refactor will inline these instead of looping back via HTTP.
 // ============================================================================
 
 const snapshotCache = new Map(); // `${section}:${auth|guest}` → { at, data }
@@ -3061,6 +3062,95 @@ const SNAP_SECTIONS = {
 };
 const SNAP_TTL_MS = { automation: 60000, alerts: 30000, default: 15000 };
 
+/** Fetch all snapshot sections, reusing cache where fresh enough. */
+async function buildSnapshotPayload(authHeader) {
+  const auth = authHeader || '';
+  const scope = auth ? 'auth' : 'guest';
+  const out = {};
+  await Promise.all(Object.entries(SNAP_SECTIONS).map(async ([s, path]) => {
+    const ttl = SNAP_TTL_MS[s] || SNAP_TTL_MS.default;
+    const key = `${s}:${scope}`;
+    const hit = snapshotCache.get(key);
+    if (hit && Date.now() - hit.at < ttl) { out[s] = hit.data; return; }
+    try {
+      const r = await fetch(`http://127.0.0.1:${PORT}${path}`, {
+        headers: auth ? { authorization: auth } : {},
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = r.ok ? await r.json() : null;
+      out[s] = data;
+      if (data !== null) snapshotCache.set(key, { at: Date.now(), data });
+    } catch {
+      out[s] = hit ? hit.data : null; // serve stale over nothing
+    }
+  }));
+  return { at: Date.now(), sections: out };
+}
+
+// ── SSE stream ────────────────────────────────────────────────────────────────
+const sseClients = new Set();
+const SSE_INTERVAL_MS = 15_000; // configurable — push cadence
+
+async function pushToClient(client) {
+  try {
+    const payload = await buildSnapshotPayload(client.auth);
+    client.res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  } catch (err) {
+    console.error('[SSE] push error:', err.message);
+  }
+}
+
+// SSE-specific auth: accepts Bearer header OR ?token= query param (EventSource
+// can't set custom headers, so the frontend appends the JWT as a URL param).
+const sseAuthMiddleware = (req, res, next) => {
+  // Try Authorization header first (curl / fetch clients)
+  const header = req.headers.authorization;
+  if (header && header.startsWith('Bearer ')) {
+    const decoded = verifyToken(header.substring(7));
+    if (decoded) { req.user = decoded; return next(); }
+  }
+  // Fall back to ?token= query param (EventSource clients)
+  const qtoken = req.query.token;
+  if (qtoken) {
+    const decoded = verifyToken(String(qtoken));
+    if (decoded) { req.user = decoded; return next(); }
+  }
+  return res.status(401).json({ error: 'No token provided' });
+};
+
+// GET /api/stream — auth-gated SSE endpoint
+app.get('/api/stream', sseAuthMiddleware, async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // prevent nginx from buffering SSE frames
+  res.flushHeaders();
+
+  const auth = req.headers.authorization || '';
+  const client = { res, auth, timer: null };
+  sseClients.add(client);
+  console.log(`[SSE] client connected (total: ${sseClients.size})`);
+
+  // Initial snapshot — no wait
+  await pushToClient(client);
+
+  // Recurring pushes
+  client.timer = setInterval(() => pushToClient(client), SSE_INTERVAL_MS);
+
+  // Proxy-keepalive heartbeat (comment line — not a data event)
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); } catch { /* already closed */ }
+  }, 30_000);
+
+  req.on('close', () => {
+    clearInterval(client.timer);
+    clearInterval(heartbeat);
+    sseClients.delete(client);
+    console.log(`[SSE] client disconnected (total: ${sseClients.size})`);
+  });
+});
+
+// ── /api/snapshot — polling fallback (unchanged API surface) ──────────────────
 app.get('/api/snapshot', optionalAuthMiddleware, async (req, res) => {
   const wanted = (req.query.sections ? String(req.query.sections).split(',') : Object.keys(SNAP_SECTIONS))
     .filter(s => SNAP_SECTIONS[s]);

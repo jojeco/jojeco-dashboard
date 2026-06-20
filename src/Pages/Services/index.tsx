@@ -10,7 +10,8 @@
  *  • All prominent numbers: tabular-nums, Geist Mono
  *  • Mobile-first: 2-column grid at 390px; horizontal tag scroll; safe-area padding
  *
- * Data: health via api.ts (60s poll), sparklines via api.ts (30min), services via serviceService.
+ * Data (Phase 2): health from SSE snapshot (servicesHealth section), sparklines
+ * via 30min poll (not in snapshot), services via serviceService.
  * Docker collapsible section via DockerSection (self-contained 8s poll).
  */
 import { useState, useEffect, useMemo } from 'react';
@@ -27,6 +28,7 @@ import { PasswordChangeModal } from '@/components/PasswordChangeModal';
 import { BaseModal } from '@/components/BaseModal';
 import { type HealthStatus } from '@/hooks/useServiceHealth';
 import { api } from '@/services/api';
+import { useSnapshot } from '@/hooks/useSnapshot';
 import { ServiceCard } from './ServiceCard';
 import { DockerSection } from './DockerSection';
 
@@ -135,9 +137,26 @@ export default function ServicesPage() {
   const [services, setServices] = useState<Service[]>(() => {
     try { const v = localStorage.getItem('cache_services'); return v ? JSON.parse(v) : []; } catch { return []; }
   });
-  const [healthMap, setHealthMap]   = useState<Record<string, HealthStatus>>({});
-  const [onlineCounts, setOnlineCounts] = useState<Record<string, boolean>>({});
   const [sparklines, setSparklines] = useState<Record<string, (number | null)[]>>({});
+
+  // ── Health from SSE snapshot (replaces 60s setInterval) ─────────────────────
+  const { data: snapshotData } = useSnapshot();
+  const rawHealth = snapshotData?.servicesHealth ?? null;
+  const healthMap: Record<string, HealthStatus> = useMemo(() => {
+    if (!rawHealth) return {};
+    const mapped: Record<string, HealthStatus> = {};
+    for (const [id, h] of Object.entries(rawHealth)) {
+      mapped[id] = { status: h.status as HealthStatus['status'], checkedAt: new Date(), responseTime: h.responseTime };
+    }
+    return mapped;
+  }, [rawHealth]);
+  const onlineCounts: Record<string, boolean> = useMemo(() => {
+    const counts: Record<string, boolean> = {};
+    for (const [id, h] of Object.entries(healthMap)) {
+      counts[id] = h.status === 'online';
+    }
+    return counts;
+  }, [healthMap]);
 
   // ── Service subscription ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -148,28 +167,7 @@ export default function ServicesPage() {
     return () => unsub();
   }, []);
 
-  // ── Health polling (60s) ──────────────────────────────────────────────────────
-  useEffect(() => {
-    const fetchHealth = () => {
-      api.get<Record<string, { status: string; responseTime?: number }>>('/services/health')
-        .then(data => {
-          const mapped: Record<string, HealthStatus> = {};
-          const counts: Record<string, boolean> = {};
-          for (const [id, h] of Object.entries(data)) {
-            mapped[id] = { status: h.status as HealthStatus['status'], checkedAt: new Date(), responseTime: h.responseTime };
-            counts[id] = h.status === 'online';
-          }
-          setHealthMap(mapped);
-          setOnlineCounts(counts);
-        })
-        .catch(() => {});
-    };
-    fetchHealth();
-    const id = setInterval(fetchHealth, 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  // ── Sparklines (30min) ────────────────────────────────────────────────────────
+  // ── Sparklines (30min poll — not in snapshot, low-frequency is fine) ─────────
   useEffect(() => {
     const fetchSpark = () => {
       api.get<Record<string, (number | null)[]>>('/health/sparklines')

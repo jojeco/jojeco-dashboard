@@ -18,7 +18,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | n
 
 import { LogOut, LogIn, Server, Film, Zap, LayoutDashboard, Sliders, Sun, Moon, Sword, Mic, Home } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { SnapshotProvider } from './hooks/useSnapshot';
+import { SnapshotProvider, useSnapshot } from './hooks/useSnapshot';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
 import ServicesPage from './Pages/Services';
@@ -52,6 +52,41 @@ function useTheme() {
 
   const toggle = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
   return { theme, toggle };
+}
+
+// ─── Live Indicator ───────────────────────────────────────────────────────────
+/** Small dot showing SSE connection state. ● LIVE / ○ reconnecting */
+function LiveIndicator() {
+  const { streamStatus } = useSnapshot();
+  const connected = streamStatus === 'connected';
+  const label = connected ? 'LIVE' : streamStatus === 'reconnecting' ? 'reconnecting' : '…';
+  return (
+    <span
+      title={`Stream: ${streamStatus}`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: connected ? 'var(--ok)' : 'var(--t3)',
+        opacity: connected ? 1 : 0.6,
+        transition: 'color 400ms, opacity 400ms',
+        userSelect: 'none',
+      }}
+    >
+      <span style={{
+        width: 5, height: 5, borderRadius: '50%',
+        background: connected ? 'var(--ok)' : 'var(--t3)',
+        boxShadow: connected ? '0 0 0 2px rgba(34,197,94,0.25)' : 'none',
+        transition: 'background 400ms, box-shadow 400ms',
+        animation: connected ? 'livePulse 2s ease-in-out infinite' : 'none',
+      }} />
+      {label}
+    </span>
+  );
 }
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
@@ -104,6 +139,11 @@ function IconNav({ theme, onToggleTheme }: { theme: string; onToggleTheme: () =>
 
       <div className="j-icon-nav-spacer" />
 
+      {/* LIVE indicator — sits just above the theme toggle */}
+      <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: 8 }}>
+        <LiveIndicator />
+      </div>
+
       <button
         onClick={onToggleTheme}
         className="j-icon-btn"
@@ -142,7 +182,10 @@ function MobileHeader({ theme, onToggleTheme }: { theme: string; onToggleTheme: 
         <div className="j-mobile-logo-mark">J</div>
         Joje<span style={{ color: 'var(--accent)' }}>Co</span>
       </div>
-      <span className="j-mobile-page-title">{activeLabel}</span>
+      <span className="j-mobile-page-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {activeLabel}
+        <LiveIndicator />
+      </span>
       <button onClick={onToggleTheme} style={{ background: 'none', border: 'none', color: 'var(--t3)', padding: 4, cursor: 'pointer' }}>
         {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
       </button>
