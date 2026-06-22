@@ -2260,10 +2260,12 @@ async function startServer() {
     console.log(`📊 Database: ${db.name}`);
   });
 
-  // Prime initial state, then poll every 2 minutes
-  await runHealthMonitor();
-  setInterval(runHealthMonitor, 2 * 60 * 1000);
-  console.log('🔍 Health monitor started (2min interval)');
+  // Internal ntfy health-monitor DISABLED 2026-06-22 — Uptime Kuma (Mac Mini :3001, 41
+  // monitors, ntfy-wired) is now the canonical up/down alerter. Running both = double-alerts.
+  // Function kept for reference / dashboard service-health display; just not the alert source.
+  // await runHealthMonitor();
+  // setInterval(runHealthMonitor, 2 * 60 * 1000);
+  console.log('🔍 Internal health monitor disabled — Uptime Kuma is canonical');
 
   // Service health poller — checks all user-registered services every 5 min
   runServiceHealthPoller().catch(() => {});
