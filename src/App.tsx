@@ -16,7 +16,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | n
   }
 }
 
-import { LogOut, LogIn, Server, Film, Zap, LayoutDashboard, Sliders, Sun, Moon, Sword, Mic, Home } from 'lucide-react';
+import { LogOut, LogIn, Server, Film, Zap, LayoutDashboard, Sliders, Sun, Moon, Sword, Mic, Home, Bell } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SnapshotProvider, useSnapshot } from './hooks/useSnapshot';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -31,6 +31,9 @@ import MinecraftPage from './Pages/Minecraft';
 import KioskPage from './Pages/Kiosk/KioskPage';
 import JarvisPage from './Pages/JarvisPage';
 import HomeAssistantPage from './Pages/HomeAssistantPage';
+import AlertsPage from './Pages/AlertsPage';
+import { AlertBell } from './components/AlertCenter';
+import { CommandPaletteProvider, PaletteNavButton, PaletteFab } from './components/CommandPalette';
 
 
 // ─── Theme Hook ───────────────────────────────────────────────────────────────
@@ -99,6 +102,7 @@ const NAV = [
   { id: 'chaos',     label: 'Chaos',     href: '/chaos',     icon: Zap },
   { id: 'jarvis',    label: 'Jarvis',    href: '/jarvis',    icon: Mic },
   { id: 'home',      label: 'Home',      href: '/home',      icon: Home },
+  { id: 'alerts',    label: 'Alerts',    href: '/alerts',    icon: Bell },
 ];
 
 function useMediaQuery(query: string) {
@@ -144,6 +148,12 @@ function IconNav({ theme, onToggleTheme }: { theme: string; onToggleTheme: () =>
         <LiveIndicator />
       </div>
 
+      {/* Command Palette trigger */}
+      <PaletteNavButton />
+
+      {/* Alert Center bell */}
+      <AlertBell />
+
       <button
         onClick={onToggleTheme}
         className="j-icon-btn"
@@ -186,9 +196,13 @@ function MobileHeader({ theme, onToggleTheme }: { theme: string; onToggleTheme: 
         {activeLabel}
         <LiveIndicator />
       </span>
-      <button onClick={onToggleTheme} style={{ background: 'none', border: 'none', color: 'var(--t3)', padding: 4, cursor: 'pointer' }}>
-        {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <PaletteFab />
+        <AlertBell isMobile />
+        <button onClick={onToggleTheme} style={{ background: 'none', border: 'none', color: 'var(--t3)', padding: 4, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+          {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
+      </div>
     </header>
   );
 }
@@ -267,6 +281,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <SnapshotProvider>
+        <CommandPaletteProvider>
         <PageShell>
           <Routes>
             <Route path="/login"    element={<Login />} />
@@ -283,9 +298,11 @@ function App() {
             <Route path="/kiosk"      element={<ErrorBoundary><KioskPage /></ErrorBoundary>} />
             <Route path="/jarvis"     element={<ProtectedRoute><ErrorBoundary><JarvisPage /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/home"       element={<ProtectedRoute><ErrorBoundary><HomeAssistantPage /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/alerts"     element={<ProtectedRoute><ErrorBoundary><AlertsPage /></ErrorBoundary></ProtectedRoute>} />
           </Routes>
         </PageShell>
         <Toaster />
+        </CommandPaletteProvider>
         </SnapshotProvider>
       </AuthProvider>
     </BrowserRouter>
