@@ -6,6 +6,10 @@
  * (the snapshot endpoint doesn't carry multi-hour time-series), but reuses
  * the shared refresh() for everything else.
  *
+ * Desktop (≥1280px) uses a command-center layout: KPI strip + live System
+ * Load charts + a 2-col machines grid in the main column, with a right rail
+ * for the inference fleet and printer. Mobile/tablet keep the existing stack.
+ *
  * Guest view (optionalAuth) preserved — same read-only rendering.
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -19,8 +23,21 @@ import { AINodeCard } from './AINodeCard';
 import { ServiceHealthPanel } from './ServiceHealthPanel';
 import { QuickLinks } from './QuickLinks';
 import { PrinterCard } from './PrinterCard';
+import { SystemLoadPanel } from './SystemLoadPanel';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TempPoint } from './TempSparkline';
+
+/** Local media-query hook — true on desktop (≥1280px) for the command-center layout. */
+function useIsDesktop(): boolean {
+  const [v, setV] = useState(typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1280px)');
+    const on = () => setV(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return v;
+}
 
 interface Process { pid: number; name: string; cpu: number; mem: number }
 interface ProcessList { machine_id: string; processes: Process[] }
@@ -40,6 +57,7 @@ export default function LabPage() {
   const [adguard, setAdguard] = useState<AdGuardStats | null>(null);
   const [backup, setBackup] = useState<BackupStatus | null>(null);
   const isMobileRef = useRef(typeof window !== 'undefined' && window.innerWidth < 768);
+  const desktop = useIsDesktop();
 
   // ── Derived section data from snapshot ──────────────────────────────────────
   const lab       = data?.lab ?? null;
@@ -112,6 +130,60 @@ export default function LabPage() {
 
   const lastRefresh = at ? new Date(at) : new Date();
 
+  // ── Shared content blocks (used by both the mobile stack and the desktop command-center) ──
+  const machinesBlock = (
+    <>
+      {alwaysOn.length > 0 && (
+        <div>
+          <div className="j-section-label">Always-On</div>
+          <div className={`stagger ${desktop ? 'j-grid-2' : 'flex flex-col gap-2'}`}>
+            {alwaysOn.map(m => (
+              <MachineCard key={m.id} m={m} history={history[m.id] ?? []} isMobile={isMobile} processes={processes[m.id] ?? []} onExpand={fetchProcesses} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(burst.length > 0 || loading) && (
+        <div>
+          <div className="j-section-label">Burst Nodes</div>
+          <div className={`stagger ${desktop ? 'j-grid-2' : 'flex flex-col gap-2'}`}>
+            {burst.length > 0
+              ? burst.map(m => (
+                  <MachineCard key={m.id} m={m} history={history[m.id] ?? []} isMobile={isMobile} processes={processes[m.id] ?? []} onExpand={fetchProcesses} />
+                ))
+              : loading ? [1, 2].map(i => <Skeleton key={i} className="h-36" />) : null}
+          </div>
+        </div>
+      )}
+
+      {loading && alwaysOn.length === 0 && (
+        <>
+          <div className="j-section-label">Always-On</div>
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-40 rounded-[14px] mb-2" />)}
+        </>
+      )}
+    </>
+  );
+
+  const fleetBlock = (fleet || loading) ? (
+    <>
+      <div className="j-section-label">Inference Fleet</div>
+      <div className="flex flex-col gap-2 stagger">
+        {fleet
+          ? fleet.nodes.map(n => <AINodeCard key={n.id} node={n} sessions={sessions} />)
+          : [1, 2, 3, 4].map(i => <Skeleton key={i} className="h-28 rounded-[14px]" />)}
+      </div>
+    </>
+  ) : null;
+
+  const printerBlock = (
+    <>
+      <div className="j-section-label">3D Printer</div>
+      {loading && !printer ? <Skeleton className="h-40 rounded-[14px]" /> : <PrinterCard printer={printer} />}
+    </>
+  );
+
   return (
     <div>
       {/* ── Service Health slide-out ── */}
@@ -147,7 +219,7 @@ export default function LabPage() {
         </button>
       </div>
 
-      {/* ── Hero stat tiles ── */}
+      {/* ── Hero stat tiles (KPI strip) ── */}
       <StatTiles
         lab={lab}
         fleet={fleet}
@@ -165,79 +237,28 @@ export default function LabPage() {
         backup={backup}
       />
 
-      {/* ── Hardware + AI fleet ── */}
-      <div className="j-grid-half mb-6">
-        {/* Servers */}
-        <div className="flex flex-col gap-5">
-          {alwaysOn.length > 0 && (
-            <div>
-              <div className="j-section-label">Always-On</div>
-              <div className="flex flex-col gap-2 stagger">
-                {alwaysOn.map(m => (
-                  <MachineCard
-                    key={m.id}
-                    m={m}
-                    history={history[m.id] ?? []}
-                    isMobile={isMobile}
-                    processes={processes[m.id] ?? []}
-                    onExpand={fetchProcesses}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {(burst.length > 0 || loading) && (
-            <div>
-              <div className="j-section-label">Burst Nodes</div>
-              <div className="flex flex-col gap-2 stagger">
-                {burst.length > 0
-                  ? burst.map(m => (
-                      <MachineCard
-                        key={m.id}
-                        m={m}
-                        history={history[m.id] ?? []}
-                        isMobile={isMobile}
-                        processes={processes[m.id] ?? []}
-                        onExpand={fetchProcesses}
-                      />
-                    ))
-                  : loading ? [1, 2].map(i => <Skeleton key={i} className="h-36" />) : null}
-              </div>
-            </div>
-          )}
-
-          {loading && alwaysOn.length === 0 && (
-            <>
-              <div className="j-section-label">Always-On</div>
-              {[1, 2, 3].map(i => <Skeleton key={i} className="h-40 rounded-[14px] mb-2" />)}
-            </>
-          )}
+      {desktop ? (
+        /* ── DESKTOP command-center: wide main column + right rail ── */
+        <div className="mb-6" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: 18, alignItems: 'start' }}>
+          <div className="flex flex-col gap-5 min-w-0">
+            <SystemLoadPanel machines={lab?.machines ?? []} tick={at} />
+            {machinesBlock}
+          </div>
+          <div className="flex flex-col gap-5">
+            {fleetBlock}
+            <div>{printerBlock}</div>
+          </div>
         </div>
-
-        {/* AI Fleet */}
-        <div>
-          {(fleet || loading) && (
-            <>
-              <div className="j-section-label">Inference Fleet</div>
-              <div className="flex flex-col gap-2 stagger">
-                {fleet
-                  ? fleet.nodes.map(n => <AINodeCard key={n.id} node={n} sessions={sessions} />)
-                  : [1, 2, 3, 4].map(i => <Skeleton key={i} className="h-28 rounded-[14px]" />)}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* ── 3D Printer ── */}
-      <div className="mb-6">
-        <div className="j-section-label">3D Printer</div>
-        {loading && !printer
-          ? <Skeleton className="h-40 rounded-[14px]" />
-          : <PrinterCard printer={printer} />
-        }
-      </div>
+      ) : (
+        /* ── Mobile / tablet: existing stacked layout ── */
+        <>
+          <div className="j-grid-half mb-6">
+            <div className="flex flex-col gap-5">{machinesBlock}</div>
+            <div>{fleetBlock}</div>
+          </div>
+          <div className="mb-6">{printerBlock}</div>
+        </>
+      )}
 
       {/* ── Quick Links ── */}
       <QuickLinks />
