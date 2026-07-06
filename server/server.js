@@ -1526,15 +1526,29 @@ app.get('/api/alerts/recent', authMiddleware, async (req, res) => {
 
 app.get('/api/automation/status', authMiddleware, async (req, res) => {
   const jobs = [
-    { id: 'backup',    label: 'GDrive Backup',    logFile: '/host/log/jojeco-gdrive-backup.log',  schedule: 'Daily 2:00 AM',   maxAgeHours: 26 },
-    { id: 'depwatch',  label: 'Dependency Watcher', logFile: '/host/log/jojeco-dep-watcher.log',   schedule: 'Every 5 min',     maxAgeHours: 0.2 },
-    { id: 'update',    label: 'Weekly Update',     logFile: '/host/log/jojeco-weekly-update.log',  schedule: 'Sunday 3:00 AM',  maxAgeHours: 200 },
+    { id: 's3-check',         label: 'S3 Check',            logFile: '/host/log/jojeco-s3-check.log',         schedule: 'Daily 6:00 AM',   maxAgeHours: 28,  emptyIsOk: true },
+    { id: 'storage',          label: 'Storage Monitor',     logFile: '/host/log/jojeco-storage.log',           schedule: 'Every 6 h',       maxAgeHours: 7    },
+    { id: 'health',           label: 'Daily Health Report', logFile: '/host/log/jojeco-health.log',            schedule: 'Daily 8:00 AM',   maxAgeHours: 26   },
+    { id: 'backup',           label: 'GDrive Backup',       logFile: '/host/log/jojeco-gdrive-backup.log',     schedule: 'Daily 4:00 AM',   maxAgeHours: 26   },
+    { id: 's3-sync',          label: 'S3 Volume Sync',      logFile: '/host/log/s3-volume-sync.log',           schedule: 'Daily 3:00 AM',   maxAgeHours: 26   },
+    { id: 'backup-verify',    label: 'Backup Verify',       logFile: '/host/log/jojeco-backup-verify.log',     schedule: 'Daily 5:30 AM',   maxAgeHours: 26   },
+    { id: 'sonarr-maint',     label: 'Sonarr Maintenance',  logFile: '/host/log/jojeco-sonarr-maint.log',      schedule: 'Sunday 4:00 AM',  maxAgeHours: 200  },
+    { id: 'depwatch',         label: 'Dependency Watcher',  logFile: '/host/log/jojeco-dep-watcher.log',       schedule: 'Every 5 min',     maxAgeHours: 0.2  },
+    { id: 'update',           label: 'Weekly Update',       logFile: '/host/log/jojeco-weekly-update.log',     schedule: 'Sunday 3:00 AM',  maxAgeHours: 200  },
   ];
 
   const results = await Promise.all(jobs.map(async (job) => {
     try {
       const { stdout } = await execFileAsync('tail', ['-n', '30', job.logFile], { timeout: 3000 });
       const lines = stdout.trim().split('\n').filter(Boolean);
+      // s3-check: empty log means every check passed (script only logs failures)
+      if (job.emptyIsOk && lines.length === 0) {
+        const stat = await import('fs/promises').then(m => m.stat(job.logFile)).catch(() => null);
+        const mtimeTs = stat ? stat.mtimeMs : null;
+        const stale = mtimeTs ? (Date.now() - mtimeTs) > job.maxAgeHours * 3600000 : true;
+        const lastRun = mtimeTs ? new Date(mtimeTs).toISOString() : null;
+        return { ...job, status: stale ? 'stale' : 'ok', healthy: !stale, lastRun, lastRunTs: mtimeTs, lastLines: ['(empty — all checks passed)'] };
+      }
       // Find last timestamp anywhere in log
       let lastRunTs = null;
       for (let i = lines.length - 1; i >= 0; i--) {
@@ -1554,6 +1568,138 @@ app.get('/api/automation/status', authMiddleware, async (req, res) => {
   }));
 
   res.json(results);
+});
+
+// ============================================================================
+// UPDATE CHECKER
+// ============================================================================
+
+// ============================================================================
+// LAB HOST-SERVICES HEALTH REGISTRY
+// Returns health status for all known lab services grouped by host.
+// NO API keys — unauthenticated TCP connect or public HTTP HEAD only.
+// ============================================================================
+
+// Check via HTTP HEAD (no auth, self-signed OK for LAN HTTPS)
+async function httpPing(url, timeoutMs = 4000) {
+  const start = Date.now();
+  try {
+    const parsed = new URL(url);
+    const isHttps = parsed.protocol === 'https:';
+    let statusCode;
+    if (isHttps) {
+      statusCode = await new Promise((resolve, reject) => {
+        const req = https.request({
+          hostname: parsed.hostname,
+          port: parseInt(parsed.port) || 443,
+          path: parsed.pathname + (parsed.search || ''),
+          method: 'HEAD',
+          timeout: timeoutMs,
+          rejectUnauthorized: false,
+        }, res => { res.resume(); resolve(res.statusCode); });
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+        req.on('error', reject);
+        req.end();
+      });
+    } else {
+      const r = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(timeoutMs) });
+      statusCode = r.status;
+    }
+    // Any HTTP response = service is reachable (401/403/405 all mean it's running)
+    const online = statusCode < 500 || statusCode === 501;
+    return { online, responseTime: Date.now() - start };
+  } catch {
+    return { online: false, responseTime: Date.now() - start };
+  }
+}
+
+// Registry of lab services grouped by host — unauthenticated checks only
+const LAB_HOST_SERVICES = [
+  {
+    host: 'CT100',
+    hostIp: '192.168.50.13',
+    services: [
+      { id: 'overseerr',      label: 'Overseerr',        port: 5055, checkUrl: 'http://192.168.50.13:5055' },
+      { id: 'lidarr',         label: 'Lidarr',           port: 8686, checkUrl: 'http://192.168.50.13:8686' },
+      { id: 'prowlarr',       label: 'Prowlarr',         port: 9696, checkUrl: 'http://192.168.50.13:9696' },
+      { id: 'nextcloud',      label: 'Nextcloud',        port: 8880, checkUrl: 'http://192.168.50.13:8880' },
+      { id: 'n8n',            label: 'n8n',              port: 5678, checkUrl: 'http://192.168.50.13:5678' },
+      { id: 'duplicati',      label: 'Duplicati',        port: 8200, checkUrl: 'http://192.168.50.13:8200' },
+      { id: 'gitea',          label: 'Gitea',            port: 3030, checkUrl: 'http://192.168.50.13:3030' },
+      { id: 'job-agent',      label: 'Job Agent',        port: 3400, checkUrl: 'http://192.168.50.13:3400' },
+      { id: 'jojeco-router',  label: 'jojeco-router',    port: 4001, checkUrl: 'http://192.168.50.13:4001' },
+      { id: 'actual-budget',  label: 'Actual Budget',    port: 5006, checkUrl: 'https://192.168.50.13:5006' },
+    ],
+  },
+  {
+    host: 'Server 3 (S3)',
+    hostIp: '192.168.50.12',
+    services: [
+      { id: 's3-speedtest',    label: 'Speedtest Tracker', port: 8765, checkUrl: 'http://192.168.50.12:8765' },
+      { id: 's3-comfyui',      label: 'ComfyUI',           port: 8188, checkUrl: 'http://192.168.50.12:8188' },
+      { id: 's3-whisper',      label: 'faster-whisper',    port: 9000, checkUrl: 'http://192.168.50.12:9000' },
+      { id: 's3-piper',        label: 'piper-tts',         port: 8400, checkUrl: 'http://192.168.50.12:8400' },
+      { id: 's3-openwebui',    label: 'Open WebUI',        port: 3000, checkUrl: 'http://192.168.50.12:3000' },
+      { id: 's3-tdarr',        label: 'Tdarr (vestigial)', port: 8265, checkUrl: 'http://192.168.50.12:8265' },
+      { id: 's3-dozzle',       label: 'Dozzle',            port: 8015, checkUrl: 'http://192.168.50.12:8015' },
+    ],
+  },
+  {
+    host: 'Server 1 (S1)',
+    hostIp: '192.168.50.10',
+    services: [
+      { id: 's1-plex',         label: 'Plex',              port: 32400, checkUrl: 'http://192.168.50.10:32400/identity' },
+      { id: 's1-vintagestory', label: 'Vintage Story',     port: 42420, checkUrl: null, tcp: true },
+      { id: 's1-mcmanager',    label: 'MC Manager',        port: 8765,  checkUrl: 'http://192.168.50.10:8765/status' },
+    ],
+  },
+  {
+    host: 'Mac Mini',
+    hostIp: '192.168.50.30',
+    services: [
+      { id: 'macmini-kuma',    label: 'Uptime Kuma',       port: 3001, checkUrl: 'http://192.168.50.30:3001' },
+      { id: 'macmini-adguard', label: 'AdGuard',           port: 3000, checkUrl: 'http://192.168.50.30:3000' },
+    ],
+  },
+];
+
+// In-memory cache for host-services (30s TTL to avoid hammering remote hosts)
+let labHostServicesCache = { at: 0, data: null };
+const HOST_SERVICES_TTL = 30_000;
+
+async function fetchLabHostServices() {
+  const now = Date.now();
+  if (labHostServicesCache.data && now - labHostServicesCache.at < HOST_SERVICES_TTL) {
+    return labHostServicesCache.data;
+  }
+  const groups = await Promise.all(LAB_HOST_SERVICES.map(async group => {
+    const services = await Promise.all(group.services.map(async svc => {
+      let online = false;
+      let responseTime = null;
+      if (svc.tcp) {
+        const ok = await tcpCheck(group.hostIp, svc.port, 3000);
+        online = ok;
+        responseTime = null;
+      } else if (svc.checkUrl) {
+        const r = await httpPing(svc.checkUrl, 4000);
+        online = r.online;
+        responseTime = r.responseTime;
+      }
+      return { ...svc, online, responseTime, checkedAt: Date.now() };
+    }));
+    return { host: group.host, hostIp: group.hostIp, services };
+  }));
+  labHostServicesCache = { at: Date.now(), data: groups };
+  return groups;
+}
+
+app.get('/api/lab/host-services', authMiddleware, async (req, res) => {
+  try {
+    const data = await fetchLabHostServices();
+    res.json({ checkedAt: Date.now(), groups: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ============================================================================
@@ -2123,21 +2269,22 @@ app.get('/api/printer/p1s', optionalAuthMiddleware, (req, res) => {
 
 const snapshotCache = new Map(); // `${section}:${auth|guest}` → { at, data }
 const SNAP_SECTIONS = {
-  lab:            '/api/lab/overview',
-  servicesHealth: '/api/services/health',
-  docker:         '/api/docker/containers',
-  fleet:          '/api/ops/fleet',
-  ollama:         '/api/lab/ollama/ps',
-  media:          '/api/media/queue',
-  system:         '/api/system/metrics',
-  serverStatus:   '/api/controls/server-status',
-  alerts:         '/api/alerts/recent',
-  minecraft:      '/api/minecraft/status',
-  automation:     '/api/automation/status',
-  torrents:       '/api/torrents/transfer',
-  printer:        '/api/printer/p1s',
+  lab:              '/api/lab/overview',
+  servicesHealth:   '/api/services/health',
+  docker:           '/api/docker/containers',
+  fleet:            '/api/ops/fleet',
+  ollama:           '/api/lab/ollama/ps',
+  media:            '/api/media/queue',
+  system:           '/api/system/metrics',
+  serverStatus:     '/api/controls/server-status',
+  alerts:           '/api/alerts/recent',
+  minecraft:        '/api/minecraft/status',
+  automation:       '/api/automation/status',
+  torrents:         '/api/torrents/transfer',
+  printer:          '/api/printer/p1s',
+  labHostServices:  '/api/lab/host-services',
 };
-const SNAP_TTL_MS = { automation: 60000, alerts: 30000, default: 15000 };
+const SNAP_TTL_MS = { automation: 60000, alerts: 30000, labHostServices: 30000, default: 15000 };
 
 /** Fetch all snapshot sections, reusing cache where fresh enough. */
 async function buildSnapshotPayload(authHeader) {

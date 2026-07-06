@@ -34,6 +34,25 @@ export interface PrinterStatus {
   lastFetch?: number;
 }
 
+export interface LabHostService {
+  id: string;
+  label: string;
+  port: number;
+  online: boolean;
+  responseTime: number | null;
+  checkedAt: number;
+  tcp?: boolean;
+}
+export interface LabHostGroup {
+  host: string;
+  hostIp: string;
+  services: LabHostService[];
+}
+export interface LabHostServicesSection {
+  checkedAt: number;
+  groups: LabHostGroup[];
+}
+
 export interface SnapshotSections {
   lab: LabSection | null;
   servicesHealth: ServicesHealthSection | null;
@@ -48,6 +67,7 @@ export interface SnapshotSections {
   torrents: unknown | null;
   minecraft: Record<string, McServer> | null;
   printer: PrinterStatus | null;
+  labHostServices: LabHostServicesSection | null;
 }
 
 export interface Disk { label: string; used: number; size: number; percent: number }
