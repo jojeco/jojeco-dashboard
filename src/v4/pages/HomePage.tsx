@@ -4,13 +4,18 @@
  * Desktop (>=1280px): 8/4 asymmetric command-center grid per DESIGN.md §5
  *   Lead col (8): alert strip + host telemetry grid
  *   Rail (4): service health summary + automation digest
+ *
+ * Phase modal: HostTile → HostDetailModal, inline state via useState.
  */
+import { useState } from 'react';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { HostTile, HostTileSkeleton } from '../components/HostTile';
 import { AlertStrip } from '../components/AlertStrip';
 import { AutomationDigest } from '../components/AutomationDigest';
 import { ServiceHealthSummary } from '../components/ServiceHealthSummary';
 import { PanelTitle } from '../components/Primitives';
+import { HostDetailModal } from '../components/HostDetailModal';
+import type { Machine } from '../../hooks/useSnapshot';
 
 // Which machine IDs to highlight (from context doc)
 const PRIORITY_MACHINES = ['CT100', 'S1', 'S2', 'S3', 'MacMini', 'macmini', 's1', 's2', 's3', 'ct100'];
@@ -18,6 +23,9 @@ const PRIORITY_MACHINES = ['CT100', 'S1', 'S2', 'S3', 'MacMini', 'macmini', 's1'
 export default function HomePage() {
   const { data, loading } = useSnapshot('lab');
   const machines = data?.machines ?? [];
+
+  // Host detail modal state
+  const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
 
   // Sort: priority first, then alphabetical
   const sorted = [...machines].sort((a, b) => {
@@ -55,7 +63,13 @@ export default function HomePage() {
               className="grid gap-3 v4-stagger"
               style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}
             >
-              {sorted.map(m => <HostTile key={m.id} machine={m} />)}
+              {sorted.map(m => (
+                <HostTile
+                  key={m.id}
+                  machine={m}
+                  onClick={() => setSelectedMachine(m)}
+                />
+              ))}
             </div>
           )}
         </section>
@@ -99,7 +113,13 @@ export default function HomePage() {
                 className="grid gap-3 v4-stagger"
                 style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}
               >
-                {sorted.map(m => <HostTile key={m.id} machine={m} />)}
+                {sorted.map(m => (
+                  <HostTile
+                    key={m.id}
+                    machine={m}
+                    onClick={() => setSelectedMachine(m)}
+                  />
+                ))}
               </div>
             )}
           </section>
@@ -111,6 +131,13 @@ export default function HomePage() {
           <AutomationDigest />
         </div>
       </div>
+
+      {/* ── Host detail modal (shared, one instance) ─────────────────── */}
+      <HostDetailModal
+        machine={selectedMachine}
+        open={selectedMachine !== null}
+        onClose={() => setSelectedMachine(null)}
+      />
     </>
   );
 }
