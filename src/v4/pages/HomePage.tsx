@@ -16,6 +16,8 @@ import { ServiceHealthSummary } from '../components/ServiceHealthSummary';
 import { PanelTitle } from '../components/Primitives';
 import { HostDetailModal } from '../components/HostDetailModal';
 import { StoragePanel } from '../components/StoragePanel';
+import { LoadChartsPanel } from '../components/LoadChartsPanel';
+import { TorrentsPanel } from '../components/TorrentsPanel';
 import type { Machine } from '../../hooks/useSnapshot';
 
 // Which machine IDs to highlight (from context doc)
@@ -83,6 +85,9 @@ export default function HomePage() {
 
         {/* 4. Automation digest */}
         <AutomationDigest />
+
+        {/* 5. Downloads */}
+        <TorrentsPanel />
       </div>
 
       {/* ── Desktop layout (8/4 command-center grid) ─────────────────── */}
@@ -115,7 +120,7 @@ export default function HomePage() {
             ) : (
               <div
                 className="grid gap-3 v4-stagger"
-                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}
+                style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
               >
                 {sorted.map(m => (
                   <HostTile
@@ -128,6 +133,9 @@ export default function HomePage() {
             )}
           </section>
 
+          {/* Live CPU history (review #3) */}
+          <LoadChartsPanel />
+
           {/* Storage overview — fills the lead column (review #2) */}
           <StoragePanel />
         </div>
@@ -136,6 +144,7 @@ export default function HomePage() {
         <div className="flex flex-col gap-4">
           <ServiceHealthSummary />
           <AutomationDigest />
+          <TorrentsPanel />
         </div>
       </div>
 
