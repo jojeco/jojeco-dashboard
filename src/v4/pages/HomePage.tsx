@@ -15,6 +15,7 @@ import { AutomationDigest } from '../components/AutomationDigest';
 import { ServiceHealthSummary } from '../components/ServiceHealthSummary';
 import { PanelTitle } from '../components/Primitives';
 import { HostDetailModal } from '../components/HostDetailModal';
+import { StoragePanel } from '../components/StoragePanel';
 import type { Machine } from '../../hooks/useSnapshot';
 
 // Which machine IDs to highlight (from context doc)
@@ -77,6 +78,9 @@ export default function HomePage() {
         {/* 3. Service health */}
         <ServiceHealthSummary />
 
+        {/* 3.5 Storage overview */}
+        <StoragePanel />
+
         {/* 4. Automation digest */}
         <AutomationDigest />
       </div>
@@ -123,6 +127,9 @@ export default function HomePage() {
               </div>
             )}
           </section>
+
+          {/* Storage overview — fills the lead column (review #2) */}
+          <StoragePanel />
         </div>
 
         {/* Rail (4): services + automation */}

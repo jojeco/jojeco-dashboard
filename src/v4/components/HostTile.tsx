@@ -32,7 +32,7 @@ export function HostTile({ machine, onClick }: HostTileProps) {
     <button
       onClick={onClick}
       className={cn(
-        'v4-tile text-left flex flex-col gap-2 p-3 rounded-[0.75rem] w-full',
+        'v4-tile text-left flex flex-col gap-1.5 p-2.5 rounded-[0.5rem] w-full',
         stripeClass(machine.online ? 'online' : 'offline'),
       )}
       style={{
@@ -85,7 +85,7 @@ export function HostTile({ machine, onClick }: HostTileProps) {
             </div>
             <Sparkline
               data={cpuSpark.length > 1 ? cpuSpark : [{ v: cpu ?? 0 }]}
-              color={pctColor(cpu)}
+              color={'var(--v4-amber)'}
               height={28}
             />
           </div>
@@ -101,7 +101,7 @@ export function HostTile({ machine, onClick }: HostTileProps) {
               </div>
               <Sparkline
                 data={memSpark.length > 1 ? memSpark : [{ v: mem.percent }]}
-                color={pctColor(mem.percent)}
+                color={'var(--v4-amber)'}
                 height={22}
               />
             </div>

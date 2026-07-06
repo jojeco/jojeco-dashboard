@@ -37,10 +37,11 @@ export function Well({ className, children, ...props }: React.HTMLAttributes<HTM
 export function PanelTitle({ className, children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h2
-      className={cn('text-[0.75rem] font-semibold uppercase tracking-[0.06em]', className)}
+      className={cn('text-[0.75rem] font-semibold uppercase tracking-[0.06em] flex items-center gap-1.5', className)}
       style={{ color: 'var(--v4-readout)', ...props.style }}
       {...props}
     >
+      <span aria-hidden style={{ width: 3, height: 12, borderRadius: 2, background: 'var(--v4-amber)', display: 'inline-block' }} />
       {children}
     </h2>
   );
