@@ -8,7 +8,7 @@ const router = express.Router();
 
 const QBT_URL = process.env.QBT_URL || 'http://192.168.50.13:9091';
 const QBT_USER = process.env.QBT_USER || 'admin';
-const QBT_PASS = process.env.QBT_PASS || 'REDACTED';
+const QBT_PASS = process.env.QBT_PASS;  // required — set in server/.env
 let qbtSid = null;
 let qbtCookieName = 'SID';
 

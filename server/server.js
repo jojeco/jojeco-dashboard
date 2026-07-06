@@ -37,7 +37,12 @@ const PORT = process.env.PORT || 3001;
 // lanOrAuth + sseAuthMiddleware live in ./lib/middleware.js (Phase 3 route split)
 
 // Middleware
-app.use(cors());
+// CORS allowlist (Phase A 2026-07-06): same-origin /api is the normal path (nginx proxy);
+// list covers direct-origin dev/staging access + the public hostname. No wildcard.
+const CORS_ORIGINS = (process.env.CORS_ORIGINS ||
+  'https://dash.jojeco.ca,http://192.168.50.13:3005,http://192.168.50.13:3007,http://localhost:3005,http://localhost:5173'
+).split(',');
+app.use(cors({ origin: (origin, cb) => cb(null, !origin || CORS_ORIGINS.includes(origin)), credentials: true }));
 app.use(express.json());
 
 // ============================================================================
@@ -800,7 +805,7 @@ app.get('/api/tdarr/status', authMiddleware, async (req, res) => {
 // ============================================================================
 
 const LITELLM_URL = 'http://192.168.50.13:4000/v1/chat/completions';
-const LITELLM_KEY = 'REDACTED';
+const LITELLM_KEY = process.env.LITELLM_KEY;  // required — set in server/.env
 
 app.post('/api/ai/chat', authMiddleware, async (req, res) => {
   const { model = 'local-smart', messages, max_tokens = 2000, temperature = 0.7 } = req.body;

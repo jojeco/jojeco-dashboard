@@ -6,11 +6,11 @@ import { authMiddleware, optionalAuthMiddleware } from '../auth.js';
 const router = express.Router();
 
 const SONARR_URL = process.env.SONARR_URL || 'http://192.168.50.13:8989';
-const SONARR_KEY = process.env.SONARR_KEY || 'REDACTED';
+const SONARR_KEY = process.env.SONARR_KEY;  // required — set in server/.env
 const RADARR_URL = process.env.RADARR_URL || 'http://192.168.50.13:7878';
-const RADARR_KEY = process.env.RADARR_KEY || 'REDACTED';
+const RADARR_KEY = process.env.RADARR_KEY;  // required — set in server/.env
 const BAZARR_URL = process.env.BAZARR_URL || 'http://192.168.50.13:6767';
-const BAZARR_KEY = process.env.BAZARR_KEY || 'REDACTED';
+const BAZARR_KEY = process.env.BAZARR_KEY;  // required — set in server/.env
 
 async function arrFetch(baseUrl, apiKey, path) {
   const r = await fetch(`${baseUrl}/api/v3${path}`, { headers: { 'X-Api-Key': apiKey } });

@@ -8,12 +8,12 @@ const router = express.Router();
 
 // Local copy of the LiteLLM key constant (byte-identical to server.js); kept
 // module-scoped so this route file is self-contained.
-const LITELLM_KEY = 'REDACTED';
+const LITELLM_KEY = process.env.LITELLM_KEY;  // required — set in server/.env
 
 const KIOSK_UPTIME_KUMA_URL   = process.env.KIOSK_UPTIME_KUMA_URL   || 'http://192.168.50.30:3001';
 const KIOSK_GRAFANA_URL       = process.env.KIOSK_GRAFANA_URL        || 'http://192.168.50.13:3002';
 const KIOSK_GRAFANA_USER      = process.env.KIOSK_GRAFANA_USER       || 'admin';
-const KIOSK_GRAFANA_PASS      = process.env.KIOSK_GRAFANA_PASS       || 'REDACTED';
+const KIOSK_GRAFANA_PASS      = process.env.KIOSK_GRAFANA_PASS;      // required — set in server/.env
 const KIOSK_PI_AP_IP          = process.env.KIOSK_PI_AP_IP           || '192.168.50.31';
 
 // LiteLLM spend — proxy through server to keep bearer token off the browser

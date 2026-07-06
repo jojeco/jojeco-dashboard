@@ -4,6 +4,8 @@
       context: ./server
       dockerfile: Dockerfile
     container_name: jojeco-dashboard-api
+    env_file:
+      - ./server/.env
     ports:
       - "3001:3001"
     volumes:
