@@ -158,10 +158,11 @@ export function useLabStream(): LabStreamState {
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [connect]);
+  }, [connect, refresh]);
 
   // ── Mount / unmount ───────────────────────────────────────────────────────
   useEffect(() => {
+    void refresh(); // instant fill from REST cache; SSE merge keeps it live (nulls skipped)
     connect();
     return () => {
       if (esRef.current) { esRef.current.close(); esRef.current = null; }
