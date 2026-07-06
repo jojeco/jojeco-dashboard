@@ -1134,7 +1134,8 @@ app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
   services.forEach(s => {
     if (!s.online) issues.push({ severity: 'critical', message: `${s.name} is down` });
   });
-  if (!tailscale.online) issues.push({ severity: 'critical', message: 'Tailscale is down' });
+  // Tailscale runs on MacMini, not CT100 — not an alertable condition here (Jordan, 2026-07-06)
+  // if (!tailscale.online) issues.push({ severity: 'critical', message: 'Tailscale is down' });
   machines.filter(m => m.online).forEach(m => {
     (m.disks ?? []).forEach(d => {
       const sizeBytes = d.size ?? d.total ?? 0;
