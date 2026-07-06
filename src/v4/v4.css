@@ -14,21 +14,21 @@
 
 /* ── CSS custom properties for v4 ───────────────────────────────── */
 :root {
-  --v4-void:    #0B0B0D;
-  --v4-console: #141418;
-  --v4-raised:  #1C1C22;
-  --v4-well:    #0E0E11;
-  --v4-signal:  #E6E6EA;
-  --v4-readout: #9A9AA3;
-  --v4-trace:   #5C5C66;
-  --v4-amber:   #D99A3D;
-  --v4-nominal: #3FA97C;
-  --v4-degraded:#C9973F;
-  --v4-fault:   #C25049;
-  --v4-standby: #5C5C66;
+  --v4-void:    #0d1117;
+  --v4-console: #161b22;
+  --v4-raised:  #1c2128;
+  --v4-well:    #10141a;
+  --v4-signal:  #e6edf3;
+  --v4-readout: #8b949e;
+  --v4-trace:   #6e7681;
+  --v4-amber:   #58a6ff;
+  --v4-nominal: #3fb950;
+  --v4-degraded:#d29922;
+  --v4-fault:   #f85149;
+  --v4-standby: #6e7681;
 
   /* Hairline — felt, not seen */
-  --v4-hairline: rgba(255,255,255,0.06);
+  --v4-hairline: #30363d;
 
   /* Shadow — tinted to void */
   --v4-shadow:  0 1px 0 rgba(0,0,0,0.4);

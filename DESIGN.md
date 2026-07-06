@@ -15,27 +15,26 @@ still. Mobile is the first-class citizen — the owner runs this lab from an
 iPhone; desktop (≥1280px) expands into the full command-center grid.
 
 ## 2. Color Palette & Roles
-- **Void** (#0B0B0D) — app canvas. Never pure black.
-- **Console Surface** (#141418) — primary tile/panel fill. Separation from Void
-  comes from THIS contrast step, not from border lines.
-- **Raised Console** (#1C1C22) — hover states, active tiles, sticky headers.
-- **Recessed Well** (#0E0E11) — log tails, code, chart plot areas (inset feel).
-- **Primary Signal** (#E6E6EA) — headings, key figures.
-- **Muted Readout** (#9A9AA3) — labels, metadata, secondary text.
-- **Dimmed Trace** (#5C5C66) — timestamps, disabled, tertiary.
-- **Amber Command** (#D99A3D) — THE single interactive accent: primary buttons,
-  active nav, focus rings, selected states. Desaturated amber — instrument
-  panel, not warning tape.
-- Status semantics (functional, not decorative — used ONLY to convey real state):
-  - **Nominal** (#3FA97C) — service up / job OK
-  - **Degraded** (#C9973F) — warning / stale / partial
-  - **Fault** (#C25049) — down / failed (pair with a text label, never color alone)
-  - **Standby** (#5C5C66) — disabled / vestigial / unknown
+(Rev 2 — 2026-07-06, matched to jojeco.github.io per owner review: blues + greens,
+GitHub-dark-derived.)
+- **Void** (#0d1117) — app canvas. Never pure black.
+- **Console Surface** (#161b22) — primary tile/panel fill.
+- **Raised Console** (#1c2128) — cards; hover step #21262d.
+- **Recessed Well** (#10141a) — log tails, code, chart plot areas (inset feel).
+- **Primary Signal** (#e6edf3) — headings, key figures.
+- **Muted Readout** (#8b949e) — labels, metadata, secondary text.
+- **Dimmed Trace** (#6e7681) — timestamps, disabled, tertiary.
+- **Command Blue** (#58a6ff) — THE single interactive accent: primary buttons,
+  active nav, focus rings, selected states. Bright step #79c0ff for hover only.
+- Status semantics (functional, not decorative — ONLY convey real state):
+  - **Nominal** (#3fb950) — service up / job OK
+  - **Degraded** (#d29922) — warning / stale / partial
+  - **Fault** (#f85149) — down / failed (pair with a text label, never color alone)
+  - **Standby** (#6e7681) — disabled / vestigial / unknown
 
-**Border rule (owner's law):** light borders on dark are BANNED. Structure is
-expressed by surface-contrast steps, 2px status edge-stripes (inset, left side),
-and negative space. Where a hairline is unavoidable (table rows in dense lists)
-use `rgba(255,255,255,0.06)` maximum — felt, not seen.
+**Border rule (rev 2):** portfolio-style hairlines (#30363d) are permitted for
+structure — they read as seams, not glowing lines. Bright/light borders remain
+BANNED. Status edge-stripes (2px inset) stay the primary status vocabulary.
 
 ## 3. Typography Rules
 - **Display / headings:** Geist — track-tight (-0.02em), weight-driven hierarchy
@@ -54,17 +53,17 @@ use `rgba(255,255,255,0.06)` maximum — felt, not seen.
 - **Panels/cards:** used only when grouping serves hierarchy; radius 1rem,
   shadow `0 1px 0 rgba(0,0,0,0.4)` (tinted to Void, near-invisible). Inside
   dense panels, rows separate with the hairline rule, not boxes-in-boxes.
-- **Buttons:** primary = Amber Command fill, Void text, tactile -1px translate
+- **Buttons:** primary = Command Blue fill, Void text, tactile -1px translate
   on active. Secondary = Raised Console fill. Destructive actions (restart,
   stop, delete) = ghost with Fault text + REQUIRED confirm step naming the
   target ("Restart nextcloud?"). No outer glows.
-- **Charts (recharts):** plot on Recessed Well; single-hue traces (Amber
-  Command for the focal series, Muted Readout for context series); mono axis
+- **Charts (recharts):** plot on Recessed Well; single-hue traces (Command Blue
+  for the focal series, Muted Readout for context series); mono axis
   ticks; no gradient fills brighter than 12% opacity; tooltips = Raised Console.
 - **Log tail / terminal widgets:** Recessed Well, Geist Mono 0.75rem, newest
   line slides in via opacity+transform. Max-height with internal scroll.
 - **Inputs:** label above (Muted Readout, 0.75rem), field on Raised Console,
-  Amber focus ring, error text below in Fault. No floating labels.
+  Command Blue focus ring, error text below in Fault. No floating labels.
 - **Loading:** skeletal shimmer matching final layout dimensions. No spinners.
 - **Empty states:** composed one-liner + the action that populates it
   ("No jobs have run yet — trigger one from Controls"). Never bare "No data".

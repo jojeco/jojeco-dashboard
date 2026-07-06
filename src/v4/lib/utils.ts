@@ -62,7 +62,8 @@ export function pctColor(pct: number | null): string {
   if (pct == null) return 'var(--v4-standby)';
   if (pct >= 90) return 'var(--v4-fault)';
   if (pct >= 75) return 'var(--v4-degraded)';
-  return 'var(--v4-nominal)';
+  // healthy values are neutral — color is reserved for state that needs attention
+  return 'var(--v4-signal)';
 }
 
 /** Status color from string */
