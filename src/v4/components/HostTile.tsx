@@ -95,8 +95,8 @@ export function HostTile({ machine, onClick }: HostTileProps) {
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between">
                 <span className="text-[0.6875rem]" style={{ color: 'var(--v4-readout)' }}>RAM</span>
-                <Mono className="text-[0.75rem]" style={{ color: pctColor(mem.percent) }}>
-                  {fmtBytes(mem.used * 1024 * 1024)} / {fmtBytes(mem.total * 1024 * 1024)}
+                <Mono className="text-[0.75rem] whitespace-nowrap" style={{ color: pctColor(mem.percent) }}>
+                  {fmtBytes(mem.used)} / {fmtBytes(mem.total)}
                 </Mono>
               </div>
               <Sparkline

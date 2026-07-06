@@ -70,6 +70,18 @@ export function useLabStream(): LabStreamState {
   const backoff  = useRef(2_000);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Merge sections, skipping null/undefined — server emits null for sections
+  // not refreshed in a given tick; replacing wholesale wiped good data (v4 fix).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mergeSections = useCallback((incoming: Record<string, any>) => {
+    setData(prev => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const next: Record<string, any> = { ...(prev ?? {}) };
+      for (const [k, v] of Object.entries(incoming)) if (v != null) next[k] = v;
+      return next;
+    });
+  }, []);
+
   // ── Manual REST refresh (used by SnapshotProvider-compatible refresh()) ───
   const refresh = useCallback(async () => {
     const token = getToken();
@@ -80,7 +92,7 @@ export function useLabStream(): LabStreamState {
       if (!res.ok) return;
       const json = await res.json();
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      setData(json.sections);
+      mergeSections(json.sections);
       setAt(json.at as number);
     } catch { /* keep stale */ }
   }, []);
@@ -107,7 +119,7 @@ export function useLabStream(): LabStreamState {
         const json = JSON.parse(evt.data);
         if (json.sections) {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          setData(json.sections);
+          mergeSections(json.sections);
           setAt(json.at as number);
           setLoading(false);
           setStreamStatus('connected');

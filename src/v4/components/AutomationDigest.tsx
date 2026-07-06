@@ -49,12 +49,14 @@ function JobRow({ job, delay }: { job: AutomationJob; delay: number }) {
 export function AutomationDigest({ className }: { className?: string }) {
   const { data, loading } = useSnapshot('automation');
   const jobs = data ?? [];
+  // automation section has a 60s SSE TTL — null means not-yet-emitted, not empty
+  const waiting = loading || data == null;
 
   return (
     <Panel className={cn('p-4', className)}>
       <PanelTitle className="mb-3">Automation</PanelTitle>
 
-      {loading ? (
+      {waiting ? (
         <div className="flex flex-col gap-2">
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-8 w-full" />
