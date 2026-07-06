@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { useState, useEffect, Component, ReactNode } from 'react';
 import { Toaster } from '@/components/ui/sonner';
 
@@ -24,7 +24,6 @@ import { Login } from './Pages/Login';
 import ServicesPage from './Pages/Services';
 import { Birthday } from './Pages/Birthday';
 import MediaAndTorrentsPageV3 from './Pages/Media';
-import LabPage from './Pages/Lab';
 import ChaosPage from './Pages/Chaos';
 import ControlsPage from './Pages/Controls';
 import MinecraftPage from './Pages/Minecraft';
@@ -34,6 +33,7 @@ import HomeAssistantPage from './Pages/HomeAssistantPage';
 import AlertsPage from './Pages/AlertsPage';
 import { AlertBell } from './components/AlertCenter';
 import { CommandPaletteProvider, PaletteNavButton, PaletteFab } from './components/CommandPalette';
+import { V4Routes } from './v4/V4Router';
 
 
 // ─── Theme Hook ───────────────────────────────────────────────────────────────
@@ -276,33 +276,57 @@ function PageShell({ children }: { children: React.ReactNode }) {
 }
 
 // ─── Root App ─────────────────────────────────────────────────────────────────
+function LegacyShell() {
+  return (
+    <CommandPaletteProvider>
+      <PageShell>
+        <Routes>
+          {/* "/" redirects to /v4 — new shell is the default */}
+          <Route path="/"         element={<Navigate to="/v4" replace />} />
+          <Route path="/login"    element={<Login />} />
+          <Route path="/birthday" element={<Birthday />} />
+          <Route path="/services" element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
+          <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
+          <Route path="/docker"   element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
+          <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
+          {/* /ai removed — Odysseus (port 7000) replaced LibreChat */}
+          <Route path="/chaos"    element={<ChaosPage />} />
+          <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/minecraft"  element={<ProtectedRoute><ErrorBoundary><MinecraftPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/kiosk"      element={<ErrorBoundary><KioskPage /></ErrorBoundary>} />
+          <Route path="/jarvis"     element={<ProtectedRoute><ErrorBoundary><JarvisPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/home"       element={<ProtectedRoute><ErrorBoundary><HomeAssistantPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/alerts"     element={<ProtectedRoute><ErrorBoundary><AlertsPage /></ErrorBoundary></ProtectedRoute>} />
+        </Routes>
+      </PageShell>
+      <Toaster />
+    </CommandPaletteProvider>
+  );
+}
+
+function AppRoutes() {
+  const location = useLocation();
+  const isV4 = location.pathname.startsWith('/v4');
+
+  if (isV4) {
+    // v4 routes — bypass legacy shell entirely
+    return (
+      <>
+        <V4Routes />
+        <Toaster />
+      </>
+    );
+  }
+
+  return <LegacyShell />;
+}
+
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <SnapshotProvider>
-        <CommandPaletteProvider>
-        <PageShell>
-          <Routes>
-            <Route path="/login"    element={<Login />} />
-            <Route path="/birthday" element={<Birthday />} />
-            <Route path="/"         element={<ProtectedRoute><ErrorBoundary><LabPage /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/services" element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
-            <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
-            <Route path="/docker"   element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
-            <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
-            {/* /ai removed — Odysseus (port 7000) replaced LibreChat */}
-            <Route path="/chaos"    element={<ChaosPage />} />
-            <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/minecraft"  element={<ProtectedRoute><ErrorBoundary><MinecraftPage /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/kiosk"      element={<ErrorBoundary><KioskPage /></ErrorBoundary>} />
-            <Route path="/jarvis"     element={<ProtectedRoute><ErrorBoundary><JarvisPage /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/home"       element={<ProtectedRoute><ErrorBoundary><HomeAssistantPage /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/alerts"     element={<ProtectedRoute><ErrorBoundary><AlertsPage /></ErrorBoundary></ProtectedRoute>} />
-          </Routes>
-        </PageShell>
-        <Toaster />
-        </CommandPaletteProvider>
+          <AppRoutes />
         </SnapshotProvider>
       </AuthProvider>
     </BrowserRouter>

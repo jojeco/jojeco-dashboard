@@ -1,0 +1,137 @@
+/**
+ * v4 base styles — JojeCo Ops Design System (DESIGN.md)
+ * Scoped to .v4-root to avoid colliding with legacy pages.
+ */
+
+/* ── @fontsource imports ─────────────────────────────────────────── */
+@import '@fontsource/geist/400.css';
+@import '@fontsource/geist/500.css';
+@import '@fontsource/geist/600.css';
+@import '@fontsource/geist/700.css';
+@import '@fontsource/geist-mono/400.css';
+@import '@fontsource/geist-mono/500.css';
+@import '@fontsource/geist-mono/600.css';
+
+/* ── CSS custom properties for v4 ───────────────────────────────── */
+:root {
+  --v4-void:    #0B0B0D;
+  --v4-console: #141418;
+  --v4-raised:  #1C1C22;
+  --v4-well:    #0E0E11;
+  --v4-signal:  #E6E6EA;
+  --v4-readout: #9A9AA3;
+  --v4-trace:   #5C5C66;
+  --v4-amber:   #D99A3D;
+  --v4-nominal: #3FA97C;
+  --v4-degraded:#C9973F;
+  --v4-fault:   #C25049;
+  --v4-standby: #5C5C66;
+
+  /* Hairline — felt, not seen */
+  --v4-hairline: rgba(255,255,255,0.06);
+
+  /* Shadow — tinted to void */
+  --v4-shadow:  0 1px 0 rgba(0,0,0,0.4);
+
+  /* Tile radius */
+  --v4-tile-r:  0.75rem;
+  --v4-card-r:  1rem;
+}
+
+/* ── v4 root shell ───────────────────────────────────────────────── */
+.v4-root {
+  font-family: 'Geist', system-ui, sans-serif;
+  background: var(--v4-void);
+  color: var(--v4-signal);
+  min-height: 100dvh;
+  font-size: 0.875rem;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.v4-root .mono {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Status edge-stripe utility ──────────────────────────────────── */
+.v4-stripe-nominal  { box-shadow: inset 2px 0 0 var(--v4-nominal); }
+.v4-stripe-degraded { box-shadow: inset 2px 0 0 var(--v4-degraded); }
+.v4-stripe-fault    { box-shadow: inset 2px 0 0 var(--v4-fault); }
+.v4-stripe-standby  { box-shadow: inset 2px 0 0 var(--v4-standby); }
+
+/* ── Shimmer skeleton ────────────────────────────────────────────── */
+.v4-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--v4-console) 25%,
+    var(--v4-raised) 50%,
+    var(--v4-console) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes shimmer {
+  from { background-position: -200% center; }
+  to   { background-position: 200% center; }
+}
+
+/* ── Live-breathe dot ────────────────────────────────────────────── */
+@keyframes liveBreathe {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.v4-breathe {
+  animation: liveBreathe 2s ease-in-out infinite;
+}
+
+/* ── Settle animation (fresh data rows) ──────────────────────────── */
+@keyframes settle {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.v4-settle {
+  animation: settle 150ms ease-out both;
+}
+
+/* ── Stagger cascade (mount) ─────────────────────────────────────── */
+@keyframes staggerIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.v4-stagger > * {
+  animation: staggerIn 300ms cubic-bezier(0.16,1,0.3,1) both;
+}
+.v4-stagger > *:nth-child(1)  { animation-delay:   0ms; }
+.v4-stagger > *:nth-child(2)  { animation-delay:  30ms; }
+.v4-stagger > *:nth-child(3)  { animation-delay:  60ms; }
+.v4-stagger > *:nth-child(4)  { animation-delay:  90ms; }
+.v4-stagger > *:nth-child(5)  { animation-delay: 120ms; }
+.v4-stagger > *:nth-child(6)  { animation-delay: 150ms; }
+.v4-stagger > *:nth-child(7)  { animation-delay: 180ms; }
+.v4-stagger > *:nth-child(8)  { animation-delay: 210ms; }
+.v4-stagger > *:nth-child(9)  { animation-delay: 240ms; }
+.v4-stagger > *:nth-child(10) { animation-delay: 270ms; }
+
+/* ── Tile press spring ───────────────────────────────────────────── */
+.v4-tile {
+  transition: transform 120ms cubic-bezier(0.34,1.56,0.64,1);
+}
+.v4-tile:active {
+  transform: scale(0.98);
+}
+
+/* ── Desktop command-center layout ──────────────────────────────── */
+@media (min-width: 1280px) {
+  .v4-command-grid {
+    display: grid;
+    grid-template-columns: 8fr 4fr;
+    gap: 1.5rem;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+}

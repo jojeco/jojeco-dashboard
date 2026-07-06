@@ -1,5 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap');
-
+/* Geist + Geist Mono loaded from @fontsource (bundled woff2) — see v4/v4.css */
+/* Legacy pages that predate v4 will pick up Geist via tailwind font-sans via CSS variable fallback */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

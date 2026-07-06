@@ -17,7 +17,7 @@ export default {
         mono: ['Geist Mono', 'ui-monospace', 'monospace'],
       },
       colors: {
-        // shadcn/ui CSS variable tokens
+        // shadcn/ui CSS variable tokens (legacy — kept for existing pages)
         border:      'hsl(var(--border))',
         input:       'hsl(var(--input))',
         ring:        'hsl(var(--ring))',
@@ -51,6 +51,19 @@ export default {
           DEFAULT:    'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        // ── v4 Design System tokens (DESIGN.md §2) ──────────────────────────
+        void:    '#0B0B0D',
+        console: '#141418',
+        raised:  '#1C1C22',
+        well:    '#0E0E11',
+        signal:  '#E6E6EA',
+        readout: '#9A9AA3',
+        trace:   '#5C5C66',
+        amber:   '#D99A3D',
+        nominal:  '#3FA97C',
+        degraded: '#C9973F',
+        fault:    '#C25049',
+        standby:  '#5C5C66',
       },
       borderRadius: {
         lg: 'var(--radius)',
@@ -63,6 +76,10 @@ export default {
         'fade-up':        'fadeUp 400ms cubic-bezier(0.16,1,0.3,1) both',
         'pulse-dot':      'pulseDot 2s ease-in-out infinite',
         'shimmer':        'shimmer 1.4s linear infinite',
+        // v4 animations
+        'live-breathe':   'liveBreathe 2s ease-in-out infinite',
+        'settle':         'settle 150ms ease-out both',
+        'stagger-in':     'staggerIn 300ms cubic-bezier(0.16,1,0.3,1) both',
       },
       keyframes: {
         'accordion-down': {
@@ -85,6 +102,25 @@ export default {
           from: { backgroundPosition: '-200% center' },
           to:   { backgroundPosition: '200% center' },
         },
+        // v4 keyframes
+        liveBreathe: {
+          '0%, 100%': { opacity: '1' },
+          '50%':      { opacity: '0.5' },
+        },
+        settle: {
+          from: { opacity: '0', transform: 'translateY(4px)' },
+          to:   { opacity: '1', transform: 'translateY(0)' },
+        },
+        staggerIn: {
+          from: { opacity: '0', transform: 'translateY(6px)' },
+          to:   { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
+      gridTemplateColumns: {
+        'command': '8fr 4fr',
+      },
+      maxWidth: {
+        'command': '1600px',
       },
     },
   },
