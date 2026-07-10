@@ -18,6 +18,7 @@ import { ExternalLink } from 'lucide-react';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { DetailModal } from '../components/DetailModal';
 import { Panel, PanelTitle, PageTitle, Mono, Hairline, Skeleton, EmptyState, StatusChip } from '../components/Primitives';
+import { ContainerLogTail } from '../components/ContainerLogTail';
 import { getToken } from '../../services/api';
 import type { LabHostService, LabHostServicesGroup } from '../../hooks/useSnapshot';
 
@@ -181,6 +182,22 @@ function ServiceDetailBody({ service, group, matchedContainer }: ServiceDetailPr
                 </div>
               )}
             </div>
+          </div>
+        </>
+      )}
+
+      {/* Container logs via Loki (only when a matched container exists) */}
+      {matchedContainer && (
+        <>
+          <Hairline />
+          <div>
+            <div
+              className="text-[0.6875rem] uppercase tracking-[0.06em] mb-2"
+              style={{ color: 'var(--v4-readout)' }}
+            >
+              Logs
+            </div>
+            <ContainerLogTail containerName={matchedContainer.name} lines={100} />
           </div>
         </>
       )}
@@ -455,6 +472,17 @@ function ContainerDetailBody({ container: c }: { container: DockerContainer }) {
       </div>
       <div className="text-[0.75rem]" style={{ color: 'var(--v4-trace)' }}>
         <Mono trace className="text-[0.6875rem]">{c.status}</Mono>
+      </div>
+      {/* Log tail section */}
+      <Hairline />
+      <div>
+        <div
+          className="text-[0.6875rem] uppercase tracking-[0.06em] mb-2"
+          style={{ color: 'var(--v4-readout)' }}
+        >
+          Logs
+        </div>
+        <ContainerLogTail containerName={c.name} lines={100} />
       </div>
     </div>
   );

@@ -54,6 +54,7 @@ import {
   Panel, PanelTitle, PageTitle, Mono, Well, Hairline,
   StatusChip, Skeleton, EmptyState,
 } from '../components/Primitives';
+import { ContainerLogTail } from '../components/ContainerLogTail';
 import { fmtDate } from '../lib/utils';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -1350,6 +1351,20 @@ function ContainerDetailModal({ container: c, open, onClose, loading, result, on
               {isStartLoading ? 'Starting…' : 'Start'}
             </button>
           )}
+        </div>
+
+        {/* ── Log tail ──────────────────────────────────────────────── */}
+        <div>
+          <Hairline />
+          <div className="mt-4">
+            <div
+              className="text-[0.6875rem] uppercase tracking-[0.06em] mb-2"
+              style={{ color: 'var(--v4-readout)' }}
+            >
+              Logs
+            </div>
+            <ContainerLogTail containerName={c.name} lines={100} />
+          </div>
         </div>
       </div>
     </DetailModal>
