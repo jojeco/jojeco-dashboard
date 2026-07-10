@@ -13,7 +13,7 @@ interface ServiceRowProps {
     label: string;
     port?: number;
     online: boolean;
-    responseTime?: number;
+    responseTime?: number | null;
   };
 }
 

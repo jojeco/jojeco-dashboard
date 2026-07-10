@@ -39,13 +39,17 @@ export interface LabHostService {
   label: string;
   port?: number;
   online: boolean;
-  responseTime?: number;
+  responseTime?: number | null;
+  checkedAt?: number;
+  tcp?: boolean;
 }
 export interface LabHostServicesGroup {
   host: string;
   hostIp: string;
   services: LabHostService[];
 }
+// Alias — legacy Services page (phase-c) imports this name
+export type LabHostGroup = LabHostServicesGroup;
 export interface LabHostServicesSection {
   checkedAt: number;
   groups: LabHostServicesGroup[];

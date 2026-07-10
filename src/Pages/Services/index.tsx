@@ -31,6 +31,7 @@ import { api } from '@/services/api';
 import { useSnapshot } from '@/hooks/useSnapshot';
 import { ServiceCard } from './ServiceCard';
 import { DockerSection } from './DockerSection';
+import { HostServicesSection } from './HostServicesSection';
 
 // ── Settings Modal ─────────────────────────────────────────────────────────────
 
@@ -139,9 +140,11 @@ export default function ServicesPage() {
   });
   const [sparklines, setSparklines] = useState<Record<string, (number | null)[]>>({});
 
-  // ── Health from SSE snapshot (replaces 60s setInterval) ─────────────────────
-  const { data: snapshotData } = useSnapshot();
+  // ── Snapshot data ────────────────────────────────────────────────────────────
+  const { data: snapshotData, loading: snapLoading } = useSnapshot();
   const rawHealth = snapshotData?.servicesHealth ?? null;
+  const hostServices = snapshotData?.labHostServices ?? null;
+  const [hostServicesOpen, setHostServicesOpen] = useState(false);
   const healthMap: Record<string, HealthStatus> = useMemo(() => {
     if (!rawHealth) return {};
     const mapped: Record<string, HealthStatus> = {};
@@ -368,6 +371,30 @@ export default function ServicesPage() {
           </div>
         )}
       </main>
+
+      {/* Collapsible host services section */}
+      <div style={{ marginTop: 32, borderTop: '1px solid var(--line)', paddingTop: 20 }}>
+        <button
+          onClick={() => setHostServicesOpen(v => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginBottom: hostServicesOpen ? 20 : 0 }}
+        >
+          {hostServicesOpen
+            ? <ChevronDown size={14} style={{ color: 'var(--t3)' }} />
+            : <ChevronRight size={14} style={{ color: 'var(--t3)' }} />}
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Lab Infrastructure
+          </span>
+          {!hostServicesOpen && (
+            <span style={{ fontSize: 11, color: 'var(--t3)' }}>click to expand · host service health</span>
+          )}
+        </button>
+        {hostServicesOpen && (
+          <HostServicesSection
+            groups={hostServices?.groups ?? null}
+            loading={snapLoading && !hostServices}
+          />
+        )}
+      </div>
 
       {/* Collapsible containers section */}
       <CollapsibleContainers />
