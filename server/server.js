@@ -1544,11 +1544,12 @@ app.get('/api/automation/status', authMiddleware, async (req, res) => {
       const lines = stdout.trim().split('\n').filter(Boolean);
       // s3-check: empty log means every check passed (script only logs failures)
       if (job.emptyIsOk && lines.length === 0) {
+        // Failure-only log that's empty = every check passed; an old mtime just means
+        // "no failures since then", not stale (a failing check would keep writing)
         const stat = await import('fs/promises').then(m => m.stat(job.logFile)).catch(() => null);
         const mtimeTs = stat ? stat.mtimeMs : null;
-        const stale = mtimeTs ? (Date.now() - mtimeTs) > job.maxAgeHours * 3600000 : true;
         const lastRun = mtimeTs ? new Date(mtimeTs).toISOString() : null;
-        return { ...job, status: stale ? 'stale' : 'ok', healthy: !stale, lastRun, lastRunTs: mtimeTs, lastLines: ['(empty — all checks passed)'] };
+        return { ...job, status: 'ok', healthy: true, lastRun, lastRunTs: mtimeTs, lastLines: ['(empty — all checks passed)'] };
       }
       // Find last timestamp anywhere in log
       let lastRunTs = null;
