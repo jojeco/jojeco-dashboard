@@ -40,7 +40,7 @@ import {
   Power, RotateCcw, Wifi, Bot, Square, Play,
   Search, RefreshCw, Activity, Zap, ZapOff,
   RotateCw, ShieldCheck, Database, GitBranch,
-  AlertTriangle, Shield,
+  AlertTriangle, Shield, ChevronRight, Trash2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -129,7 +129,7 @@ const PROTECTED_CONTAINERS = new Set([
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
-interface Container { name: string; status: string; running: boolean; healthy: string | null; image: string }
+interface Container { name: string; status: string; running: boolean; healthy: string | null; image: string; compose_project?: string }
 interface TriggerJob { status: 'running' | 'done' | 'error' | 'aborted'; startedAt: number; finishedAt: number | null; output: string | null; error: string | null; canAbort?: boolean }
 interface FailoverStatus { s2_online: boolean; s3_online: boolean; failover_active: boolean; watchdog_status: string; last_sync: string | null }
 interface InlineResult { ok: boolean; msg: string }
@@ -262,10 +262,10 @@ export default function ControlsPage() {
   const [serverResults, setServerResults] = useState<Record<string, InlineResult>>({});
 
   // Containers
-  const [containers,    setContainers]    = useState<Container[]>([]);
-  const [containerSearch, setContainerSearch] = useState('');
-  const [containerFilter, setContainerFilter] = useState<'all' | 'running' | 'stopped'>('all');
+  const [containers,       setContainers]       = useState<Container[]>([]);
+  const [containerSearch,  setContainerSearch]  = useState('');
   const [containerResults, setContainerResults] = useState<Record<string, InlineResult>>({});
+  const [selectedContainer, setSelectedContainer] = useState<Container | null>(null);
 
   // Triggers
   const [triggerJobs,   setTriggerJobs]   = useState<Record<string, TriggerJob>>({});
@@ -419,6 +419,24 @@ export default function ControlsPage() {
     );
   }
 
+  function handleContainerRestart(name: string) {
+    withConfirm(
+      `Restart ${name}`,
+      `Restart container "${name}"?`,
+      () => doContainerAction(name, 'restart'),
+      'Restart',
+    );
+  }
+
+  function handleContainerStart(name: string) {
+    withConfirm(
+      `Start ${name}`,
+      `Start container "${name}"?`,
+      () => doContainerAction(name, 'start'),
+      'Start', false,
+    );
+  }
+
   function handlePrune() {
     withConfirm(
       'Prune Docker',
@@ -515,12 +533,6 @@ export default function ControlsPage() {
   // ── Derived data ───────────────────────────────────────────────────────────────
   const serverStatusMap: Record<string, boolean> = (snapServerStatus as Record<string, boolean>) ?? {};
 
-  const filteredContainers = containers.filter(c => {
-    const matchSearch = c.name.toLowerCase().includes(containerSearch.toLowerCase());
-    const matchFilter = containerFilter === 'all' ? true : containerFilter === 'running' ? c.running : !c.running;
-    return matchSearch && matchFilter;
-  });
-
   // ── Render ─────────────────────────────────────────────────────────────────────
 
   return (
@@ -533,6 +545,18 @@ export default function ControlsPage() {
         job={selectedJob}
         open={selectedJob !== null}
         onClose={() => setSelectedJob(null)}
+      />
+
+      {/* ── Container detail modal ────────────────────────────────────────── */}
+      <ContainerDetailModal
+        container={selectedContainer}
+        open={selectedContainer !== null}
+        onClose={() => setSelectedContainer(null)}
+        loading={loading}
+        result={selectedContainer ? (containerResults[selectedContainer.name] ?? null) : null}
+        onRestart={handleContainerRestart}
+        onStop={handleContainerStop}
+        onStart={handleContainerStart}
       />
 
       {/* ── Toast banner ──────────────────────────────────────────────────── */}
@@ -553,19 +577,13 @@ export default function ControlsPage() {
           onClaudeRestart={handleClaudeRestart}
         />
         <ContainersPanel
-          containers={filteredContainers}
-          allCount={containers.length}
+          containers={containers}
           search={containerSearch}
-          filter={containerFilter}
           loading={loading}
-          results={containerResults}
           onSearchChange={setContainerSearch}
-          onFilterChange={setContainerFilter}
-          onRestart={name => doContainerAction(name, 'restart')}
-          onStop={handleContainerStop}
-          onStart={name => doContainerAction(name, 'start')}
           onRefresh={loadContainers}
           onPrune={handlePrune}
+          onSelectContainer={setSelectedContainer}
         />
         <AutomationPanel
           jobs={snapAutomation}
@@ -607,19 +625,13 @@ export default function ControlsPage() {
             onClaudeRestart={handleClaudeRestart}
           />
           <ContainersPanel
-            containers={filteredContainers}
-            allCount={containers.length}
+            containers={containers}
             search={containerSearch}
-            filter={containerFilter}
             loading={loading}
-            results={containerResults}
             onSearchChange={setContainerSearch}
-            onFilterChange={setContainerFilter}
-            onRestart={name => doContainerAction(name, 'restart')}
-            onStop={handleContainerStop}
-            onStart={name => doContainerAction(name, 'start')}
             onRefresh={loadContainers}
             onPrune={handlePrune}
+            onSelectContainer={setSelectedContainer}
           />
         </div>
 
@@ -871,140 +883,327 @@ function ActionBtn({ label, icon: Icon, variant, loading, onClick, compact }: Ac
   );
 }
 
+// ── Containers: grouping helper ───────────────────────────────────────────────
+
+/**
+ * Derive a stack group from a container name.
+ * Docker Compose v2 names containers as "<project>-<service>-<N>".
+ * Single-word names with no separator → standalone.
+ * Also handles explicit compose_project field if the server ever adds it.
+ */
+function deriveGroup(c: Container): string {
+  if (c.compose_project) return c.compose_project;
+  // Match "prefix-..." where prefix is 2+ chars and there's a hyphen
+  const m = c.name.match(/^([a-z][a-z0-9]+(?:[_-][a-z0-9]+)*?)[-_][a-z]/i);
+  if (m) {
+    // Only treat as grouped if the prefix is a known multi-container project
+    // i.e. there are other containers sharing the same prefix
+    return m[1].toLowerCase();
+  }
+  return 'standalone';
+}
+
+function containerStatusLevel(c: Container): 'nominal' | 'degraded' | 'fault' | 'standby' {
+  if (c.healthy === 'unhealthy') return 'fault';
+  if (!c.running) return 'standby';
+  return 'nominal';
+}
+
+function isAttentionContainer(c: Container): boolean {
+  if (c.healthy === 'unhealthy') return true;
+  if (!c.running) return true;
+  // "restarting" in status text
+  if (c.status?.toLowerCase().includes('restarting')) return true;
+  return false;
+}
+
 // ── Containers panel ──────────────────────────────────────────────────────────
 
 interface ContainersPanelProps {
   containers: Container[];
-  allCount: number;
   search: string;
-  filter: 'all' | 'running' | 'stopped';
   loading: Record<string, boolean>;
-  results: Record<string, InlineResult>;
   onSearchChange: (v: string) => void;
-  onFilterChange: (v: 'all' | 'running' | 'stopped') => void;
-  onRestart: (name: string) => void;
-  onStop: (name: string) => void;
-  onStart: (name: string) => void;
   onRefresh: () => void;
   onPrune: () => void;
+  onSelectContainer: (c: Container) => void;
 }
 
-function ContainersPanel({ containers, allCount, search, filter, loading, results, onSearchChange, onFilterChange, onRestart, onStop, onStart, onRefresh, onPrune }: ContainersPanelProps) {
+function ContainersPanel({ containers, search, loading, onSearchChange, onRefresh, onPrune, onSelectContainer }: ContainersPanelProps) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  const total    = containers.length;
+  const running  = containers.filter(c => c.running).length;
+  const unhealthy = containers.filter(c => c.healthy === 'unhealthy').length;
+  const stopped  = containers.filter(c => !c.running).length;
+
+  const attentionList = containers.filter(isAttentionContainer);
+  const hasAttention  = attentionList.length > 0;
+
+  const searchActive = search.trim().length > 0;
+  const searchResults = searchActive
+    ? containers.filter(c => c.name.toLowerCase().includes(search.toLowerCase()))
+    : [];
+
+  // Build stack groups (exclude attention containers from stacks to avoid duplication)
+  const normalContainers = containers.filter(c => !isAttentionContainer(c));
+
+  // First pass: collect all derived groups to know which prefixes are truly multi-container
+  const groupCounts: Record<string, number> = {};
+  normalContainers.forEach(c => {
+    const g = deriveGroup(c);
+    groupCounts[g] = (groupCounts[g] ?? 0) + 1;
+  });
+
+  // Second pass: finalize groups (single-container "groups" go to standalone)
+  const groupMap: Record<string, Container[]> = {};
+  normalContainers.forEach(c => {
+    let g = deriveGroup(c);
+    // If derived prefix only matches this container, it's standalone
+    if (g !== 'standalone' && groupCounts[g] === 1) g = 'standalone';
+    if (!groupMap[g]) groupMap[g] = [];
+    groupMap[g].push(c);
+  });
+
+  const sortedGroupKeys = Object.keys(groupMap).sort((a, b) => {
+    if (a === 'standalone') return 1;
+    if (b === 'standalone') return -1;
+    return a.localeCompare(b);
+  });
+
+  function toggleGroup(key: string) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   return (
     <Panel className="p-4">
-      <SectionLabel>Container Controls</SectionLabel>
+      {/* Header row: title + prune ghost button */}
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <SectionLabel>Container Controls</SectionLabel>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-[0.5rem] text-[0.6875rem] min-h-[32px] transition-colors disabled:opacity-40"
+            style={{ background: 'transparent', color: 'var(--v4-trace)', border: 'none', cursor: loading['prune'] ? 'default' : 'pointer' }}
+            disabled={!!loading['prune']}
+            onClick={onPrune}
+            title="Prune stopped containers and dangling images"
+          >
+            <Trash2 size={11} className="shrink-0" />
+            {loading['prune'] ? 'Pruning…' : 'Prune'}
+          </button>
+          <button
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-[0.5rem] text-[0.6875rem] min-h-[32px] transition-colors"
+            style={{ background: 'transparent', color: 'var(--v4-trace)', border: 'none', cursor: 'pointer' }}
+            onClick={onRefresh}
+          >
+            <RefreshCw size={11} className="shrink-0" />
+          </button>
+        </div>
+      </div>
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        {/* Filter chips */}
-        <div className="flex gap-1">
-          {(['all', 'running', 'stopped'] as const).map(f => (
-            <button
-              key={f}
-              className="px-3 py-1.5 rounded-[0.5rem] text-[0.75rem] font-medium min-h-[36px] transition-colors"
-              style={{
-                background: filter === f ? 'rgba(88,166,255,0.12)' : 'var(--v4-raised)',
-                color: filter === f ? 'var(--v4-amber)' : 'var(--v4-readout)',
-                border: filter === f ? '1px solid rgba(88,166,255,0.25)' : 'none',
-                cursor: 'pointer',
-              }}
-              onClick={() => onFilterChange(f)}
+      {/* ── Summary line ──────────────────────────────────────────────────── */}
+      {total === 0 ? (
+        <EmptyState message="Loading containers…" />
+      ) : (
+        <>
+          <div className="flex items-center gap-3 flex-wrap mb-4">
+            <Mono trace className="text-[0.75rem]">
+              <span style={{ color: 'var(--v4-signal)' }}>{total}</span> containers
+            </Mono>
+            <span
+              className="inline-flex items-center gap-1.5 text-[0.75rem] font-mono"
+              style={{ color: 'var(--v4-nominal)' }}
             >
-              {f.charAt(0).toUpperCase() + f.slice(1)}
-            </button>
-          ))}
-        </div>
+              <span className="inline-block rounded-full" style={{ width: 6, height: 6, background: 'var(--v4-nominal)', flexShrink: 0 }} aria-hidden />
+              {running} running
+            </span>
+            {unhealthy > 0 && (
+              <span
+                className="inline-flex items-center gap-1.5 text-[0.75rem] font-mono"
+                style={{ color: 'var(--v4-fault)' }}
+              >
+                <span className="inline-block rounded-full" style={{ width: 6, height: 6, background: 'var(--v4-fault)', flexShrink: 0 }} aria-hidden />
+                {unhealthy} unhealthy
+              </span>
+            )}
+            {stopped > 0 && (
+              <span
+                className="inline-flex items-center gap-1.5 text-[0.75rem] font-mono"
+                style={{ color: 'var(--v4-standby)' }}
+              >
+                <span className="inline-block rounded-full" style={{ width: 6, height: 6, background: 'var(--v4-standby)', flexShrink: 0 }} aria-hidden />
+                {stopped} stopped
+              </span>
+            )}
+          </div>
 
-        {/* Search */}
-        <div className="relative flex-1 min-w-[100px]">
-          <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--v4-trace)' }} />
-          <input
-            placeholder="Search containers…"
-            value={search}
-            onChange={e => onSearchChange(e.target.value)}
-            className="w-full rounded-[0.5rem] pl-7 pr-3 py-1.5 text-[0.75rem] outline-none min-h-[36px]"
-            style={{
-              background: 'var(--v4-raised)',
-              color: 'var(--v4-signal)',
-              border: 'none',
-              fontFamily: "'Geist Mono', monospace",
-            }}
-            onFocus={e => (e.currentTarget.style.outline = '2px solid rgba(88,166,255,0.4)')}
-            onBlur={e => (e.currentTarget.style.outline = 'none')}
-          />
-        </div>
+          {/* ── Search input ──────────────────────────────────────────── */}
+          <div className="relative mb-4">
+            <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--v4-trace)' }} />
+            <input
+              placeholder="Search containers…"
+              value={search}
+              onChange={e => onSearchChange(e.target.value)}
+              className="w-full rounded-[0.5rem] pl-7 pr-3 py-1.5 text-[0.75rem] outline-none min-h-[36px]"
+              style={{
+                background: 'var(--v4-raised)',
+                color: 'var(--v4-signal)',
+                border: 'none',
+                fontFamily: "'Geist Mono', monospace",
+              }}
+              onFocus={e => (e.currentTarget.style.outline = '2px solid rgba(88,166,255,0.4)')}
+              onBlur={e => (e.currentTarget.style.outline = 'none')}
+            />
+          </div>
 
-        <Mono trace className="text-[0.6875rem] shrink-0">{containers.length}/{allCount}</Mono>
-
-        <button
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-[0.5rem] text-[0.75rem] min-h-[36px] transition-colors"
-          style={{ background: 'var(--v4-raised)', color: 'var(--v4-readout)', border: 'none', cursor: 'pointer' }}
-          onClick={onRefresh}
-        >
-          <RefreshCw size={11} className="shrink-0" /> Refresh
-        </button>
-
-        <button
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-[0.5rem] text-[0.75rem] min-h-[36px] transition-colors disabled:opacity-50"
-          style={{ background: 'rgba(248,81,73,0.08)', color: 'var(--v4-fault)', border: '1px solid rgba(248,81,73,0.2)', cursor: loading['prune'] ? 'default' : 'pointer' }}
-          disabled={!!loading['prune']}
-          onClick={onPrune}
-        >
-          {loading['prune'] ? '…Pruning' : 'Prune'}
-        </button>
-      </div>
-
-      {/* List */}
-      <div className="flex flex-col">
-        {containers.length === 0 ? (
-          allCount === 0 ? (
-            <EmptyState message="Loading containers…" />
-          ) : (
-            <EmptyState message="No containers match" action='Clear search or change filter' />
-          )
-        ) : (
-          containers.map((c, i) => (
-            <div key={c.name}>
-              {i > 0 && <Hairline />}
-              <ContainerRow
-                container={c}
-                loading={loading}
-                result={results[c.name] ?? null}
-                onRestart={onRestart}
-                onStop={onStop}
-                onStart={onStart}
-              />
+          {/* ── Search results (only when searching) ─────────────────── */}
+          {searchActive && (
+            <div className="flex flex-col mb-4">
+              {searchResults.length === 0 ? (
+                <p className="text-[0.75rem] py-2 px-2" style={{ color: 'var(--v4-trace)' }}>
+                  No containers match "{search}"
+                </p>
+              ) : (
+                searchResults.map((c, i) => (
+                  <div key={c.name}>
+                    {i > 0 && <Hairline />}
+                    <ContainerRow container={c} onSelect={onSelectContainer} />
+                  </div>
+                ))
+              )}
             </div>
-          ))
-        )}
-      </div>
+          )}
+
+          {/* ── Needs-attention list (always visible when not searching) ─ */}
+          {!searchActive && (
+            <>
+              {hasAttention ? (
+                <div className="flex flex-col mb-4">
+                  <div
+                    className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] mb-2 px-2"
+                    style={{ color: 'var(--v4-fault)' }}
+                  >
+                    Needs attention
+                  </div>
+                  {attentionList.map((c, i) => (
+                    <div key={c.name}>
+                      {i > 0 && <Hairline />}
+                      <ContainerRow container={c} onSelect={onSelectContainer} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p
+                  className="text-[0.75rem] px-2 mb-4"
+                  style={{ color: 'var(--v4-trace)', fontFamily: "'Geist Mono', monospace" }}
+                >
+                  all containers running
+                </p>
+              )}
+
+              {/* ── Collapsed stack groups ──────────────────────────────── */}
+              <div className="flex flex-col gap-1">
+                {sortedGroupKeys.map(groupKey => {
+                  const groupContainers = groupMap[groupKey];
+                  const isExpanded = expandedGroups.has(groupKey);
+                  const groupRunning = groupContainers.filter(c => c.running).length;
+                  const groupTotal   = groupContainers.length;
+                  const groupHasFault = groupContainers.some(c => c.healthy === 'unhealthy' || !c.running);
+                  const groupStatusColor = groupHasFault ? 'var(--v4-degraded)' : 'var(--v4-nominal)';
+                  const groupLabel = groupRunning === groupTotal
+                    ? 'all running'
+                    : `${groupRunning}/${groupTotal} running`;
+
+                  return (
+                    <div key={groupKey} className="rounded-[0.5rem] overflow-hidden" style={{ background: 'var(--v4-well)' }}>
+                      {/* Group header (always visible, tap to expand) */}
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-left"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+                        onClick={() => toggleGroup(groupKey)}
+                        aria-expanded={isExpanded}
+                      >
+                        <ChevronRight
+                          size={12}
+                          className="shrink-0 transition-transform duration-150"
+                          style={{
+                            color: 'var(--v4-trace)',
+                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                          }}
+                        />
+                        <span
+                          className="flex-1 text-[0.8125rem] font-medium truncate"
+                          style={{ color: 'var(--v4-signal)', fontFamily: "'Geist Mono', monospace" }}
+                        >
+                          {groupKey}
+                        </span>
+                        <span
+                          className="text-[0.6875rem] shrink-0 font-mono"
+                          style={{ color: 'var(--v4-trace)' }}
+                        >
+                          {groupTotal}
+                        </span>
+                        <span
+                          className="text-[0.6875rem] shrink-0 font-mono"
+                          style={{ color: groupStatusColor }}
+                        >
+                          {groupLabel}
+                        </span>
+                      </button>
+
+                      {/* Group rows (visible when expanded) */}
+                      {isExpanded && (
+                        <div className="flex flex-col" style={{ borderTop: '1px solid var(--v4-hairline)' }}>
+                          {groupContainers.map((c, i) => (
+                            <div key={c.name}>
+                              {i > 0 && <Hairline />}
+                              <ContainerRow container={c} onSelect={onSelectContainer} />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </>
+      )}
     </Panel>
   );
 }
 
-// ── Container row ─────────────────────────────────────────────────────────────
+// ── Container row (tap-target only, no action buttons) ────────────────────────
 
 interface ContainerRowProps {
   container: Container;
-  loading: Record<string, boolean>;
-  result: InlineResult | null;
-  onRestart: (name: string) => void;
-  onStop: (name: string) => void;
-  onStart: (name: string) => void;
+  onSelect: (c: Container) => void;
 }
 
-function ContainerRow({ container: c, loading, result, onRestart, onStop, onStart }: ContainerRowProps) {
+function ContainerRow({ container: c, onSelect }: ContainerRowProps) {
   const isProtected = PROTECTED_CONTAINERS.has(c.name);
-  const stripeColor = c.healthy === 'unhealthy' ? 'var(--v4-fault)' : c.running ? 'var(--v4-nominal)' : 'var(--v4-standby)';
-
-  const isRestartLoading = !!loading[`c-restart-${c.name}`];
-  const isStopLoading    = !!loading[`c-stop-${c.name}`];
-  const isStartLoading   = !!loading[`c-start-${c.name}`];
+  const stripeColor = c.healthy === 'unhealthy'
+    ? 'var(--v4-fault)'
+    : c.running
+    ? 'var(--v4-nominal)'
+    : 'var(--v4-standby)';
 
   return (
-    <div
-      className="flex items-center gap-3 py-2.5 px-2 min-w-0 min-h-[44px]"
-      style={{ boxShadow: `inset 2px 0 0 ${stripeColor}` }}
+    <button
+      className="w-full flex items-center gap-3 py-2.5 px-2 min-w-0 min-h-[44px] text-left v4-tile rounded-[0.375rem]"
+      style={{
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        boxShadow: `inset 2px 0 0 ${stripeColor}`,
+      }}
+      onClick={() => onSelect(c)}
     >
       {/* Name + status */}
       <div className="flex-1 min-w-0">
@@ -1022,64 +1221,138 @@ function ContainerRow({ container: c, loading, result, onRestart, onStop, onStar
           )}
         </div>
         <Mono trace className="text-[0.6875rem] block truncate">{c.status}</Mono>
+      </div>
+
+      {/* Chevron cue */}
+      <ChevronRight size={12} className="shrink-0" style={{ color: 'var(--v4-trace)' }} />
+    </button>
+  );
+}
+
+// ── Container detail modal ─────────────────────────────────────────────────────
+
+interface ContainerDetailModalProps {
+  container: Container | null;
+  open: boolean;
+  onClose: () => void;
+  loading: Record<string, boolean>;
+  result: InlineResult | null;
+  onRestart: (name: string) => void;
+  onStop: (name: string) => void;
+  onStart: (name: string) => void;
+}
+
+function ContainerDetailModal({ container: c, open, onClose, loading, result, onRestart, onStop, onStart }: ContainerDetailModalProps) {
+  if (!c) return null;
+
+  const isProtected = PROTECTED_CONTAINERS.has(c.name);
+  const level = containerStatusLevel(c);
+  const statusLabel = c.healthy === 'unhealthy'
+    ? 'unhealthy'
+    : c.running
+    ? c.status?.toLowerCase().includes('restarting') ? 'restarting' : 'running'
+    : 'stopped';
+
+  const isRestartLoading = !!loading[`c-restart-${c.name}`];
+  const isStopLoading    = !!loading[`c-stop-${c.name}`];
+  const isStartLoading   = !!loading[`c-start-${c.name}`];
+  const anyLoading       = isRestartLoading || isStopLoading || isStartLoading;
+
+  return (
+    <DetailModal
+      open={open}
+      onClose={onClose}
+      title={c.name}
+      statusLevel={level}
+      statusLabel={statusLabel}
+    >
+      <div className="flex flex-col gap-5">
+        {/* ── Info rows ────────────────────────────────────────────── */}
+        <div className="flex flex-col gap-0">
+          <div className="flex items-start justify-between gap-4 py-2">
+            <span className="text-[0.75rem] shrink-0" style={{ color: 'var(--v4-readout)' }}>Status</span>
+            <Mono dim className="text-[0.75rem] text-right break-all">{c.status || '—'}</Mono>
+          </div>
+          <Hairline />
+          <div className="flex items-start justify-between gap-4 py-2">
+            <span className="text-[0.75rem] shrink-0" style={{ color: 'var(--v4-readout)' }}>Image</span>
+            <Mono dim className="text-[0.6875rem] text-right break-all" style={{ maxWidth: '70%' }}>{c.image || '—'}</Mono>
+          </div>
+          {isProtected && (
+            <>
+              <Hairline />
+              <div className="flex items-center gap-2 py-2">
+                <Shield size={11} style={{ color: 'var(--v4-degraded)' }} />
+                <span className="text-[0.75rem]" style={{ color: 'var(--v4-degraded)' }}>
+                  Protected — stop/restart blocked at API level
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Action result ─────────────────────────────────────────── */}
         {result && (
           <Mono
-            className="text-[0.6875rem]"
-            style={{ color: result.ok ? 'var(--v4-nominal)' : 'var(--v4-fault)' }}
+            className="text-[0.75rem] px-3 py-2 rounded-[0.5rem]"
+            style={{
+              color: result.ok ? 'var(--v4-nominal)' : 'var(--v4-fault)',
+              background: result.ok ? 'rgba(63,185,80,0.08)' : 'rgba(248,81,73,0.08)',
+            }}
           >
             {result.msg}
           </Mono>
         )}
-      </div>
 
-      {/* Actions */}
-      <div className="flex gap-1.5 shrink-0">
-        {/* Restart */}
-        <button
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-[0.375rem] text-[0.6875rem] font-medium min-h-[36px] disabled:opacity-40"
-          style={{ background: 'var(--v4-console)', color: 'var(--v4-readout)', border: 'none', cursor: isRestartLoading ? 'default' : 'pointer' }}
-          disabled={isRestartLoading}
-          onClick={() => onRestart(c.name)}
-        >
-          <RotateCcw size={10} className="shrink-0" />
-          {isRestartLoading ? '…' : 'Restart'}
-        </button>
+        {/* ── Actions ───────────────────────────────────────────────── */}
+        <div className="flex gap-2 flex-wrap">
+          {/* Restart */}
+          <button
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-[0.5rem] text-[0.8125rem] font-medium min-h-[44px] flex-1 justify-center disabled:opacity-40 active:-translate-y-px transition-transform"
+            style={{ background: 'var(--v4-raised)', color: 'var(--v4-readout)', border: 'none', cursor: anyLoading ? 'default' : 'pointer' }}
+            disabled={anyLoading}
+            onClick={() => onRestart(c.name)}
+          >
+            <RotateCcw size={13} className="shrink-0" />
+            {isRestartLoading ? 'Restarting…' : 'Restart'}
+          </button>
 
-        {/* Stop / Start */}
-        {c.running ? (
-          <button
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-[0.375rem] text-[0.6875rem] font-medium min-h-[36px] disabled:opacity-40"
-            style={{
-              background: 'rgba(248,81,73,0.08)',
-              color: 'var(--v4-fault)',
-              border: '1px solid rgba(248,81,73,0.2)',
-              cursor: isStopLoading || isProtected ? 'default' : 'pointer',
-            }}
-            disabled={isStopLoading || isProtected}
-            onClick={() => onStop(c.name)}
-            title={isProtected ? 'Protected container' : undefined}
-          >
-            <Square size={10} className="shrink-0" />
-            {isStopLoading ? '…' : 'Stop'}
-          </button>
-        ) : (
-          <button
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-[0.375rem] text-[0.6875rem] font-medium min-h-[36px] disabled:opacity-40"
-            style={{
-              background: 'rgba(63,185,80,0.08)',
-              color: 'var(--v4-nominal)',
-              border: '1px solid rgba(63,185,80,0.2)',
-              cursor: isStartLoading ? 'default' : 'pointer',
-            }}
-            disabled={isStartLoading}
-            onClick={() => onStart(c.name)}
-          >
-            <Play size={10} className="shrink-0" />
-            {isStartLoading ? '…' : 'Start'}
-          </button>
-        )}
+          {/* Stop / Start */}
+          {c.running ? (
+            <button
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-[0.5rem] text-[0.8125rem] font-medium min-h-[44px] flex-1 justify-center disabled:opacity-40 active:-translate-y-px transition-transform"
+              style={{
+                background: 'rgba(248,81,73,0.08)',
+                color: 'var(--v4-fault)',
+                border: '1px solid rgba(248,81,73,0.25)',
+                cursor: anyLoading || isProtected ? 'default' : 'pointer',
+              }}
+              disabled={anyLoading || isProtected}
+              onClick={() => onStop(c.name)}
+              title={isProtected ? 'Protected container' : undefined}
+            >
+              <Square size={13} className="shrink-0" />
+              {isStopLoading ? 'Stopping…' : 'Stop'}
+            </button>
+          ) : (
+            <button
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-[0.5rem] text-[0.8125rem] font-medium min-h-[44px] flex-1 justify-center disabled:opacity-40 active:-translate-y-px transition-transform"
+              style={{
+                background: 'rgba(63,185,80,0.08)',
+                color: 'var(--v4-nominal)',
+                border: '1px solid rgba(63,185,80,0.25)',
+                cursor: anyLoading ? 'default' : 'pointer',
+              }}
+              disabled={anyLoading}
+              onClick={() => onStart(c.name)}
+            >
+              <Play size={13} className="shrink-0" />
+              {isStartLoading ? 'Starting…' : 'Start'}
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+    </DetailModal>
   );
 }
 
