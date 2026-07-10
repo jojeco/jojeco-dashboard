@@ -1,5 +1,5 @@
 // Media proxy routes — Sonarr / Radarr queues + stats, Bazarr wanted, upcoming
-// calendar. Extracted from server.js (Phase 3 route split); byte-identical.
+// calendar, Tautulli Plex sessions. Extracted from server.js (Phase 3 route split).
 import express from 'express';
 import { authMiddleware, optionalAuthMiddleware } from '../auth.js';
 
@@ -11,6 +11,25 @@ const RADARR_URL = process.env.RADARR_URL || 'http://192.168.50.13:7878';
 const RADARR_KEY = process.env.RADARR_KEY;  // required — set in server/.env
 const BAZARR_URL = process.env.BAZARR_URL || 'http://192.168.50.13:6767';
 const BAZARR_KEY = process.env.BAZARR_KEY;  // required — set in server/.env
+
+// Tautulli — Plex session monitor. Key must be set in server/.env as TAUTULLI_API_KEY.
+// URL defaults to CT100 (same host as the dashboard container on the docker network).
+const TAUTULLI_URL = process.env.TAUTULLI_URL || 'http://192.168.50.13:8181';
+const TAUTULLI_KEY = process.env.TAUTULLI_API_KEY; // undefined when not configured
+
+// ── Tautulli simple cache — avoids hammering the API on every client render ──
+let _tautulliCache = null;   // { sessions, recentlyAdded, fetchedAt }
+const TAUTULLI_TTL_MS = 15_000; // 15 s
+
+async function tautulliCmd(cmd, extra = '') {
+  if (!TAUTULLI_KEY) throw new Error('TAUTULLI_API_KEY not configured');
+  const url = `${TAUTULLI_URL}/api/v2?apikey=${TAUTULLI_KEY}&cmd=${cmd}${extra}`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`Tautulli ${cmd} HTTP ${r.status}`);
+  const json = await r.json();
+  if (json?.response?.result !== 'success') throw new Error(`Tautulli error: ${json?.response?.message}`);
+  return json.response.data;
+}
 
 async function arrFetch(baseUrl, apiKey, path) {
   const r = await fetch(`${baseUrl}/api/v3${path}`, { headers: { 'X-Api-Key': apiKey } });
@@ -108,6 +127,85 @@ router.get('/api/media/upcoming', optionalAuthMiddleware, async (req, res) => {
       }));
     res.json({ episodes, movies: upcomingMovies });
   } catch (e) { res.status(503).json({ error: 'Media services unavailable' }); }
+});
+
+// ── GET /api/media/plex-sessions ─────────────────────────────────────────────
+// Returns current Plex streams via Tautulli get_activity + recently added items.
+// Cached for 15 s to keep API calls low. Returns { unavailable: true } when the
+// TAUTULLI_API_KEY env var is absent — page renders a quiet unconfigured state.
+router.get('/api/media/plex-sessions', authMiddleware, async (req, res) => {
+  // Fast unavailable path — no key set
+  if (!TAUTULLI_KEY) {
+    return res.json({ unavailable: true, reason: 'TAUTULLI_API_KEY not configured' });
+  }
+
+  // Serve cached result if still fresh
+  const now = Date.now();
+  if (_tautulliCache && now - _tautulliCache.fetchedAt < TAUTULLI_TTL_MS) {
+    return res.json(_tautulliCache);
+  }
+
+  try {
+    const [activityData, recentData] = await Promise.allSettled([
+      tautulliCmd('get_activity'),
+      tautulliCmd('get_recently_added', '&count=10'),
+    ]);
+
+    // ── Map activity sessions ────────────────────────────────────────────────
+    const rawSessions = activityData.status === 'fulfilled'
+      ? (activityData.value?.sessions ?? [])
+      : [];
+
+    const sessions = rawSessions.map(s => ({
+      session_key:        s.session_key ?? s.sessionKey ?? String(Math.random()),
+      user:               s.friendly_name || s.username || 'Unknown',
+      full_title:         s.full_title || [s.grandparent_title, s.parent_title, s.title].filter(Boolean).join(' — '),
+      media_type:         s.media_type || 'unknown',
+      state:              s.state || 'unknown',         // playing | paused | buffering
+      progress_percent:   Number(s.progress_percent) || 0,
+      transcode_decision: s.transcode_decision || 'direct play', // direct play | copy | transcode
+      player:             s.player || s.device || '—',
+      quality_profile:    s.quality_profile || null,
+      bandwidth:          s.bandwidth ? Number(s.bandwidth) : null, // kbps
+      stream_video_codec: s.stream_video_codec || s.video_codec || null,
+      duration_ms:        s.duration ? Number(s.duration) * 1000 : null,
+      view_offset_ms:     s.view_offset ? Number(s.view_offset) * 1000 : null,
+    }));
+
+    // ── Map recently added ────────────────────────────────────────────────────
+    const rawRecent = recentData.status === 'fulfilled'
+      ? (recentData.value?.recently_added ?? [])
+      : [];
+
+    const recentlyAdded = rawRecent.map(r => ({
+      rating_key:   String(r.rating_key || ''),
+      title:        r.title || '—',
+      full_title:   r.full_title || [r.grandparent_title, r.parent_title, r.title].filter(Boolean).join(' — '),
+      media_type:   r.media_type || 'unknown',
+      thumb:        null, // thumbnails require token — omit for simplicity
+      added_at:     r.added_at ? Number(r.added_at) : null, // unix timestamp
+      year:         r.year || null,
+      // For episodes: grandparent = series, parent = season
+      grandparent_title: r.grandparent_title || null,
+      parent_title:      r.parent_title || null,
+    }));
+
+    const result = {
+      sessions,
+      recentlyAdded,
+      streamCount: sessions.length,
+      fetchedAt: now,
+    };
+    _tautulliCache = result;
+    return res.json(result);
+  } catch (err) {
+    // Tautulli unreachable / error — return degraded response so page can show it
+    console.error('[tautulli]', err.message);
+    return res.status(503).json({
+      unavailable: true,
+      reason: err.message || 'Tautulli unreachable',
+    });
+  }
 });
 
 export default router;

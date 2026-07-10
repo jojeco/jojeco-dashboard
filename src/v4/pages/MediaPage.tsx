@@ -2,30 +2,28 @@
  * v4 Media page — slice 2.
  *
  * Sections (mobile-first, single column; desktop 8/4 grid):
- *  1. At-a-glance status bar — Plex up/down, qBit active/total, Sonarr queue, Tdarr state
- *  2. Downloads — full torrent list (name, progress, speed, state; stalled/errored first)
+ *  1. At-a-glance status bar — Plex up/down + stream count, qBit active/total, Sonarr queue, Tdarr state
+ *  2. Plex "Now streaming" — per-session row + recently added (via Tautulli REST)
+ *  3. Downloads — full torrent list (name, progress, speed, state; stalled/errored first)
  *     Click → TorrentDetailModal
- *  3. Arr queue + upcoming — Sonarr/Radarr queue items + calendar
+ *  4. Arr queue + upcoming — Sonarr/Radarr queue items + calendar
  *     Click item → ArrDetailModal
- *  4. Tdarr strip — score, queue, errors, active workers
+ *  5. Tdarr strip — score, queue, errors, active workers
  *
  * Data sources:
  *  SSE:  useSnapshot('torrents') → qBit transfer info
  *        useSnapshot('media')    → { sonarr[], radarr[] } queue records
  *        useSnapshot('labHostServices') → Plex online state
- *  REST: /api/torrents/list     → full torrent list (not in snapshot)
- *        /api/tdarr/status      → Tdarr stats + workers
- *        /api/media/upcoming    → upcoming episodes + movies
- *        /api/media/stats       → Sonarr/Radarr missing counts
- *
- * NOTE — Plex now-playing / recently-added: no Tautulli/Plex API
- * endpoint exists in the server; those sections are omitted rather
- * than fabricated. Plex status is derived from labHostServices online flag.
+ *  REST: /api/torrents/list           → full torrent list (not in snapshot)
+ *        /api/tdarr/status            → Tdarr stats + workers
+ *        /api/media/upcoming          → upcoming episodes + movies
+ *        /api/media/stats             → Sonarr/Radarr missing counts
+ *        /api/media/plex-sessions     → Tautulli get_activity + get_recently_added
  */
 import { useState, useEffect, useCallback } from 'react';
 import {
   Tv, Film, Cpu, Zap, Clock, AlertCircle,
-  Calendar, ChevronRight,
+  Calendar, ChevronRight, Play, MonitorPlay,
 } from 'lucide-react';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import {
@@ -113,6 +111,42 @@ interface ArrStats {
   radarr: { missing: number | null; queued: number | null };
 }
 
+interface PlexSession {
+  session_key: string;
+  user: string;
+  full_title: string;
+  media_type: string;
+  state: string;          // playing | paused | buffering
+  progress_percent: number;
+  transcode_decision: string; // direct play | copy | transcode
+  player: string;
+  quality_profile: string | null;
+  bandwidth: number | null; // kbps
+  stream_video_codec: string | null;
+  duration_ms: number | null;
+  view_offset_ms: number | null;
+}
+
+interface PlexRecentItem {
+  rating_key: string;
+  title: string;
+  full_title: string;
+  media_type: string;
+  added_at: number | null; // unix timestamp
+  year: number | null;
+  grandparent_title: string | null;
+  parent_title: string | null;
+}
+
+interface PlexSessionsData {
+  unavailable?: boolean;
+  reason?: string;
+  sessions: PlexSession[];
+  recentlyAdded: PlexRecentItem[];
+  streamCount: number;
+  fetchedAt: number;
+}
+
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 function authHeaders(): Record<string, string> {
@@ -182,20 +216,24 @@ function workerTypeLabel(type: string): { label: string; color: string } {
 
 interface StatusBarProps {
   plexOnline: boolean | null;
+  plexStreamCount: number | null;
   torrents: { active: number; total: number; dlSpeed: number } | null;
   arrQueue: number | null;
   tdarr: TdarrStatus | null;
 }
 
-function MediaStatusBar({ plexOnline, torrents, arrQueue, tdarr }: StatusBarProps) {
+function MediaStatusBar({ plexOnline, plexStreamCount, torrents, arrQueue, tdarr }: StatusBarProps) {
   const items: Array<{ label: string; value: string; level: 'nominal' | 'degraded' | 'fault' | 'standby' }> = [];
 
-  // Plex
+  // Plex — show stream count when >0
   if (plexOnline != null) {
+    const streamLabel = plexOnline
+      ? (plexStreamCount != null && plexStreamCount > 0 ? `${plexStreamCount} streaming` : 'UP')
+      : 'DOWN';
     items.push({
       label: 'Plex',
-      value: plexOnline ? 'UP' : 'DOWN',
-      level: plexOnline ? 'nominal' : 'fault',
+      value: streamLabel,
+      level: plexOnline ? (plexStreamCount != null && plexStreamCount > 0 ? 'nominal' : 'standby') : 'fault',
     });
   }
 
@@ -325,6 +363,221 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
         style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: color, transition: 'width 600ms ease-out' }}
       />
     </div>
+  );
+}
+
+// ─── Plex now-streaming panel ─────────────────────────────────────────────────
+
+function fmtDuration(ms: number | null): string {
+  if (!ms) return '—';
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function fmtTimestamp(ts: number | null): string {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffH = diffMs / 3_600_000;
+  if (diffH < 1) return 'just now';
+  if (diffH < 24) return `${Math.floor(diffH)}h ago`;
+  if (diffH < 48) return 'yesterday';
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 7) return `${diffD}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function mediaTypeIcon(type: string, size = 12): JSX.Element {
+  if (type === 'episode' || type === 'show') return <Tv size={size} style={{ color: 'var(--v4-amber)', flexShrink: 0 }} />;
+  if (type === 'movie') return <Film size={size} style={{ color: '#a78bfa', flexShrink: 0 }} />;
+  return <MonitorPlay size={size} style={{ color: 'var(--v4-trace)', flexShrink: 0 }} />;
+}
+
+function transcodeBadge(decision: string): JSX.Element {
+  const isTranscode = decision === 'transcode';
+  const isCopy = decision === 'copy';
+  const label = isTranscode ? 'Transcode' : isCopy ? 'Stream copy' : 'Direct play';
+  const color = isTranscode ? 'var(--v4-degraded)' : isCopy ? 'var(--v4-amber)' : 'var(--v4-nominal)';
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded text-[0.625rem] font-mono font-medium uppercase tracking-wide shrink-0"
+      style={{
+        background: `color-mix(in srgb, ${color} 12%, transparent)`,
+        color,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+interface PlexPanelProps {
+  data: PlexSessionsData | null;
+  loading: boolean;
+}
+
+function PlexPanel({ data, loading }: PlexPanelProps) {
+  // Graceful unavailable state
+  if (!loading && data?.unavailable) {
+    return (
+      <Panel className="px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Play size={13} style={{ color: 'var(--v4-trace)' }} />
+            <PanelTitle>Plex</PanelTitle>
+          </div>
+          <span className="text-[0.75rem]" style={{ color: 'var(--v4-trace)' }}>
+            Tautulli not configured
+          </span>
+        </div>
+      </Panel>
+    );
+  }
+
+  const sessions = data?.sessions ?? [];
+  const recentlyAdded = data?.recentlyAdded ?? [];
+
+  return (
+    <Panel className="p-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Play size={13} style={{ color: 'var(--v4-trace)' }} />
+          <PanelTitle>Plex</PanelTitle>
+        </div>
+        {!loading && sessions.length > 0 && (
+          <Mono className="text-[0.6875rem]" style={{ color: 'var(--v4-nominal)' }}>
+            {sessions.length} stream{sessions.length !== 1 ? 's' : ''}
+          </Mono>
+        )}
+      </div>
+
+      {/* Now streaming */}
+      {loading ? (
+        <div className="flex flex-col gap-2 mb-4">
+          {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+        </div>
+      ) : sessions.length === 0 ? (
+        <div className="py-3 text-[0.8125rem] text-center mb-4" style={{ color: 'var(--v4-trace)' }}>
+          No active streams
+        </div>
+      ) : (
+        <div className="flex flex-col v4-stagger mb-4">
+          {sessions.map(s => {
+            const stateLevel =
+              s.state === 'playing' ? 'nominal'
+              : s.state === 'paused' ? 'degraded'
+              : 'standby';
+
+            return (
+              <div
+                key={s.session_key}
+                className="flex flex-col gap-2 px-3 py-3"
+                style={{
+                  borderBottom: '1px solid var(--v4-hairline)',
+                  boxShadow: `inset 2px 0 0 ${stateLevel === 'nominal' ? 'var(--v4-nominal)' : stateLevel === 'degraded' ? 'var(--v4-degraded)' : 'var(--v4-hairline)'}`,
+                }}
+              >
+                {/* Title row */}
+                <div className="flex items-start gap-2 min-w-0">
+                  {mediaTypeIcon(s.media_type)}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[0.8125rem] font-medium truncate" style={{ color: 'var(--v4-signal)' }}>
+                      {s.full_title}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className="text-[0.6875rem]" style={{ color: 'var(--v4-readout)' }}>
+                        {s.user}
+                      </span>
+                      <span className="text-[0.6875rem]" style={{ color: 'var(--v4-trace)' }}>
+                        {s.player}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    {transcodeBadge(s.transcode_decision)}
+                    {s.state !== 'playing' && (
+                      <span
+                        className="text-[0.625rem] font-mono uppercase tracking-wide"
+                        style={{ color: stateLevel === 'degraded' ? 'var(--v4-degraded)' : 'var(--v4-trace)' }}
+                      >
+                        {s.state}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Progress bar */}
+                <div>
+                  <div className="w-full rounded-full overflow-hidden" style={{ height: 3, background: 'var(--v4-well)' }}>
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.min(100, Math.max(0, s.progress_percent))}%`,
+                        background: stateLevel === 'nominal' ? 'var(--v4-nominal)' : 'var(--v4-degraded)',
+                        transition: 'width 600ms ease-out',
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between mt-1">
+                    <Mono className="text-[0.6875rem]" trace>{s.progress_percent.toFixed(0)}%</Mono>
+                    {s.duration_ms != null && (
+                      <Mono className="text-[0.6875rem]" trace>{fmtDuration(s.duration_ms)}</Mono>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Recently added */}
+      {recentlyAdded.length > 0 && (
+        <>
+          <Hairline className="mb-3" />
+          <div className="flex items-center gap-2 mb-2">
+            <Clock size={12} style={{ color: 'var(--v4-trace)' }} />
+            <span
+              className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em]"
+              style={{ color: 'var(--v4-readout)' }}
+            >
+              Recently added
+            </span>
+          </div>
+          <div className="flex flex-col gap-1 v4-stagger">
+            {recentlyAdded.slice(0, 8).map(item => {
+              const displayTitle = item.grandparent_title
+                ? `${item.grandparent_title}${item.title !== item.grandparent_title ? ` — ${item.title}` : ''}`
+                : item.full_title;
+              return (
+                <div
+                  key={item.rating_key}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-[0.5rem]"
+                  style={{ background: 'var(--v4-well)' }}
+                >
+                  {mediaTypeIcon(item.media_type, 11)}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[0.75rem] truncate" style={{ color: 'var(--v4-signal)' }}>
+                      {displayTitle}
+                    </div>
+                    {item.year && (
+                      <Mono className="text-[0.625rem]" trace>{item.year}</Mono>
+                    )}
+                  </div>
+                  <Mono className="text-[0.625rem] shrink-0" trace>
+                    {fmtTimestamp(item.added_at)}
+                  </Mono>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </Panel>
   );
 }
 
@@ -957,6 +1210,8 @@ export default function MediaPage() {
   const [tdarr, setTdarr] = useState<TdarrStatus | null>(null);
   const [upcoming, setUpcoming] = useState<{ episodes: UpcomingEpisode[]; movies: UpcomingMovie[] }>({ episodes: [], movies: [] });
   const [arrStats, setArrStats] = useState<ArrStats | null>(null);
+  const [plexSessions, setPlexSessions] = useState<PlexSessionsData | null>(null);
+  const [plexLoading, setPlexLoading] = useState(true);
 
   // ── Fetch helpers ─────────────────────────────────────────────────────────
   const fetchTorrents = useCallback(async () => {
@@ -996,12 +1251,25 @@ export default function MediaPage() {
     } catch { /* silent */ }
   }, []);
 
+  const fetchPlexSessions = useCallback(async () => {
+    try {
+      const r = await fetch('/api/media/plex-sessions', { headers: authHeaders() });
+      if (r.ok) setPlexSessions(await r.json());
+    } catch { /* silent — shown as unavailable */ } finally {
+      setPlexLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchTorrents();
     fetchTdarr();
     fetchUpcoming();
     fetchArrStats();
-  }, [fetchTorrents, fetchTdarr, fetchUpcoming, fetchArrStats]);
+    fetchPlexSessions();
+    // Refresh Plex sessions every 15 s
+    const timer = setInterval(fetchPlexSessions, 15_000);
+    return () => clearInterval(timer);
+  }, [fetchTorrents, fetchTdarr, fetchUpcoming, fetchArrStats, fetchPlexSessions]);
 
   // ── Derive typed data ─────────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1020,6 +1288,11 @@ export default function MediaPage() {
     ?.find(s => s.id === 's1-plex' || s.label.toLowerCase() === 'plex');
   const plexOnline: boolean | null = plexService ? plexService.online : null;
 
+  // Plex stream count from Tautulli (null until loaded, 0+ once available)
+  const plexStreamCount = plexSessions && !plexSessions.unavailable
+    ? plexSessions.streamCount
+    : null;
+
   // Status bar derived counts
   const activeTorrents = torrents.filter(t => classifyTorrent(t) === 'active');
   const torrentsStatus = torrentsLoading ? null : {
@@ -1034,6 +1307,7 @@ export default function MediaPage() {
       {/* ── At-a-glance bar ─────────────────────────────────────────────── */}
       <MediaStatusBar
         plexOnline={plexOnline}
+        plexStreamCount={plexStreamCount}
         torrents={torrentsStatus}
         arrQueue={arrQueueCount}
         tdarr={tdarr}
@@ -1041,6 +1315,8 @@ export default function MediaPage() {
 
       {/* ── Mobile layout: single column ───────────────────────────────── */}
       <div className="flex flex-col gap-4 xl:hidden">
+        {/* Plex now-streaming — top of page per request */}
+        <PlexPanel data={plexSessions} loading={plexLoading} />
         <DownloadsPanel
           torrents={torrents}
           loading={torrentsLoading}
@@ -1079,8 +1355,9 @@ export default function MediaPage() {
           />
         </div>
 
-        {/* Rail (4): Tdarr */}
+        {/* Rail (4): Plex now-streaming + Tdarr */}
         <div className="flex flex-col gap-4">
+          <PlexPanel data={plexSessions} loading={plexLoading} />
           <TdarrStrip tdarr={tdarr} />
         </div>
       </div>
