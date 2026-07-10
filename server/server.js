@@ -1558,9 +1558,20 @@ app.get('/api/automation/status', authMiddleware, async (req, res) => {
         const m2 = lines[i].match(/(\w{3} \w{3} +\d+ \d{2}:\d{2}:\d{2} \w+ \d{4})/); // "Mon Apr 20 10:08:08 UTC 2026"
         if (m2) { lastRunTs = new Date(m2[1]).getTime(); break; }
       }
+      // No parseable timestamp in the log lines (e.g. storage-monitor KEY=VALUE output) →
+      // fall back to file mtime as the last-run signal
+      if (!lastRunTs) {
+        const stat = await import('fs/promises').then(m => m.stat(job.logFile)).catch(() => null);
+        if (stat) lastRunTs = stat.mtimeMs;
+      }
       const lastRun = lastRunTs ? new Date(lastRunTs).toISOString() : null;
       const stale = lastRunTs ? (Date.now() - lastRunTs) > job.maxAgeHours * 3600000 : true;
-      const hasError = lines.some(l => /error|fail|fatal/i.test(l) && !/0 errors|attempt \d+\/\d+ succeeded/i.test(l));
+      const hasError = lines.some(l => /error|fail|fatal/i.test(l) && !/0 errors|no errors?|attempt \d+\/\d+ succeeded/i.test(l));
+      // emptyIsOk jobs only log failures — old failure lines mean "no recent failures", not stale
+      // (if it were still failing, the log would keep updating and not be stale)
+      if (job.emptyIsOk && stale) {
+        return { ...job, status: 'ok', healthy: true, lastRun, lastRunTs, lastLines: ['(no recent failures)'] };
+      }
       const healthy = !stale && !hasError;
       return { ...job, status: hasError ? 'error' : stale ? 'stale' : 'ok', healthy, lastRun, lastRunTs, lastLines: lines.slice(-5) };
     } catch {
