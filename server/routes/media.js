@@ -168,8 +168,8 @@ router.get('/api/media/plex-sessions', authMiddleware, async (req, res) => {
       quality_profile:    s.quality_profile || null,
       bandwidth:          s.bandwidth ? Number(s.bandwidth) : null, // kbps
       stream_video_codec: s.stream_video_codec || s.video_codec || null,
-      duration_ms:        s.duration ? Number(s.duration) * 1000 : null,
-      view_offset_ms:     s.view_offset ? Number(s.view_offset) * 1000 : null,
+      duration_ms:        s.duration ? Number(s.duration) : null,
+      view_offset_ms:     s.view_offset ? Number(s.view_offset) : null,
     }));
 
     // ── Map recently added ────────────────────────────────────────────────────
