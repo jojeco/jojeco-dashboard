@@ -25,13 +25,15 @@ function useActiveTab() {
 
 // ── Lab status summary (header) ──────────────────────────────────────────────
 function LabStatusSummary() {
-  const { data } = useSnapshot();
-  const services = data?.servicesHealth;
-  if (!services) return null;
+  const { data: lhs } = useSnapshot('labHostServices');
+  // labHostServices has the full 22-service registry grouped by host;
+  // derive totals from it so the header agrees with the Services page.
+  const groups = lhs?.groups ?? [];
+  const all = groups.flatMap(g => g.services);
+  if (all.length === 0) return null;
 
-  const entries = Object.values(services);
-  const total = entries.length;
-  const down = entries.filter(s => s.status === 'offline').length;
+  const total = all.length;
+  const down = all.filter(s => !s.online).length;
   const hasIssue = down > 0;
 
   return (
@@ -39,7 +41,7 @@ function LabStatusSummary() {
       className="font-mono text-[0.6875rem] tabular-nums"
       style={{ color: hasIssue ? 'var(--v4-fault)' : 'var(--v4-readout)' }}
     >
-      {total} svc{down > 0 ? ` · ${down} down` : ' · all up'}
+      {total - down}/{total} svc{down > 0 ? ` · ${down} down` : ' · all up'}
     </span>
   );
 }
