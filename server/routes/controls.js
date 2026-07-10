@@ -261,13 +261,13 @@ router.get('/api/controls/server-status', authMiddleware, async (req, res) => {
 router.get('/api/controls/containers', authMiddleware, async (req, res) => {
   try {
     const { stdout } = await execFileAsync('docker', [
-      'ps', '-a', '--format', '{{.Names}}\t{{.Status}}\t{{.Image}}'
+      'ps', '-a', '--format', '{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Label "com.docker.compose.project"}}'
     ], { timeout: 10000 });
     const containers = stdout.trim().split('\n').filter(Boolean).map(line => {
-      const [name, status, image] = line.split('\t');
+      const [name, status, image, composeProject] = line.split('\t');
       const running = status?.startsWith('Up');
       const healthy = status?.includes('healthy') ? 'healthy' : status?.includes('unhealthy') ? 'unhealthy' : null;
-      return { name, status, running, healthy, image };
+      return { name, status, running, healthy, image, compose_project: composeProject || null };
     }).sort((a, b) => a.name.localeCompare(b.name));
     res.json(containers);
   } catch (e) {
