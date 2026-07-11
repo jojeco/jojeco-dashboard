@@ -7,7 +7,14 @@
  * Exported state matches SnapshotContextValue so pages need no changes other
  * than swapping `useSnapshot` → `useLabStream`.
  *
+ * PERF (2026-07-11): localStorage hydration for instant paint.
+ *   On mount, state is pre-populated from localStorage (key v4:lastSnapshot)
+ *   before any network call.  The REST fill and SSE stream replace it with
+ *   live data.  stale=true while the cached copy is >60 s old so the
+ *   LiveIndicator can show "SYNCING…" instead of "LIVE".
+ *
  * Connection lifecycle:
+ *  - Hydrates from localStorage immediately (no network, zero delay)
  *  - Opens EventSource on mount (with auth token in URL param — EventSource
  *    doesn't support custom headers, so we pass token as ?token=... and the
  *    backend reads it from req.query.token)
@@ -28,6 +35,8 @@ export interface LabStreamState {
   data: Record<string, any> | null;
   at: number | null;
   loading: boolean;
+  /** True while the displayed data is from localStorage cache (>60 s old). */
+  stale: boolean;
   /** Manual refresh — hits /api/snapshot REST endpoint immediately */
   refresh: () => void;
   /** SSE connection health */
@@ -57,13 +66,56 @@ function nextDelay(current: number): number {
   return Math.min(current * 2, 30_000);
 }
 
+// ── localStorage cache ────────────────────────────────────────────────────────
+
+const LS_KEY = 'v4:lastSnapshot';
+const STALE_MS = 60_000; // data older than 60 s is shown as stale
+
+interface CachedSnapshot {
+  at: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sections: Record<string, any>;
+}
+
+function loadFromCache(): CachedSnapshot | null {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedSnapshot;
+    if (!parsed || typeof parsed.at !== 'number' || !parsed.sections) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveToCache(snap: CachedSnapshot): void {
+  try {
+    // Cap payload at ~1.5 MB to avoid quota errors on mobile browsers.
+    const str = JSON.stringify(snap);
+    if (str.length > 1_500_000) return;
+    localStorage.setItem(LS_KEY, str);
+  } catch {
+    // Quota exceeded or private mode — silently skip
+  }
+}
+
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useLabStream(): LabStreamState {
+  // Hydrate from localStorage synchronously before first render so panels
+  // paint with last-known data immediately (no skeleton frames).
+  const cachedSnap = loadFromCache();
+  const initialData = cachedSnap?.sections ?? null;
+  const initialAt   = cachedSnap?.at ?? null;
+  const initialStale = cachedSnap ? (Date.now() - cachedSnap.at > STALE_MS) : false;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [data, setData]   = useState<Record<string, any> | null>(null);
-  const [at, setAt]       = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData]   = useState<Record<string, any> | null>(initialData);
+  const [at, setAt]       = useState<number | null>(initialAt);
+  // loading=true only when there is NO data at all (nothing in cache + no network yet)
+  const [loading, setLoading] = useState(initialData === null);
+  const [stale, setStale] = useState(initialStale);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
 
   const esRef    = useRef<EventSource | null>(null);
@@ -73,13 +125,17 @@ export function useLabStream(): LabStreamState {
   // Merge sections, skipping null/undefined — server emits null for sections
   // not refreshed in a given tick; replacing wholesale wiped good data (v4 fix).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mergeSections = useCallback((incoming: Record<string, any>) => {
+  const mergeSections = useCallback((incoming: Record<string, any>, snapshotAt: number) => {
     setData(prev => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const next: Record<string, any> = { ...(prev ?? {}) };
       for (const [k, v] of Object.entries(incoming)) if (v != null) next[k] = v;
+      // Persist merged snapshot to localStorage so next page-load is instant
+      saveToCache({ at: snapshotAt, sections: next });
       return next;
     });
+    setAt(snapshotAt);
+    setStale(false);
   }, []);
 
   // ── Manual REST refresh (used by SnapshotProvider-compatible refresh()) ───
@@ -92,10 +148,10 @@ export function useLabStream(): LabStreamState {
       if (!res.ok) return;
       const json = await res.json();
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      mergeSections(json.sections);
-      setAt(json.at as number);
+      mergeSections(json.sections, json.at as number);
+      setLoading(false);
     } catch { /* keep stale */ }
-  }, []);
+  }, [mergeSections]);
 
   // ── SSE connection lifecycle ──────────────────────────────────────────────
   const connect = useCallback(() => {
@@ -119,8 +175,7 @@ export function useLabStream(): LabStreamState {
         const json = JSON.parse(evt.data);
         if (json.sections) {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          mergeSections(json.sections);
-          setAt(json.at as number);
+          mergeSections(json.sections, json.at as number);
           setLoading(false);
           setStreamStatus('connected');
         }
@@ -151,7 +206,9 @@ export function useLabStream(): LabStreamState {
         if (retryRef.current) { clearTimeout(retryRef.current); retryRef.current = null; }
         setStreamStatus('closed');
       } else {
-        // Resume
+        // Resume — mark as stale until fresh data arrives
+        const cached = loadFromCache();
+        if (cached && Date.now() - cached.at > STALE_MS) setStale(true);
         backoff.current = 2_000;
         connect();
       }
@@ -170,5 +227,5 @@ export function useLabStream(): LabStreamState {
     };
   }, [connect]);
 
-  return { data, at, loading, refresh, streamStatus };
+  return { data, at, loading, stale, refresh, streamStatus };
 }

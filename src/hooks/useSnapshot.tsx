@@ -115,23 +115,26 @@ interface SnapshotContextValue {
   data: SnapshotSections | null;
   at: number | null;
   loading: boolean;
+  /** True while displayed data comes from the localStorage cache (>60 s old).
+   *  The LiveIndicator shows "SYNCING…" instead of "LIVE" when stale=true. */
+  stale: boolean;
   refresh: () => void;
   /** SSE connection state — used by the LiveIndicator in App.tsx */
   streamStatus: StreamStatus;
 }
 
 const SnapshotContext = createContext<SnapshotContextValue>({
-  data: null, at: null, loading: true, refresh: () => {}, streamStatus: 'connecting',
+  data: null, at: null, loading: true, stale: false, refresh: () => {}, streamStatus: 'connecting',
 });
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function SnapshotProvider({ children }: { children: ReactNode }) {
-  const { data: rawData, at, loading, refresh, streamStatus } = useLabStream();
+  const { data: rawData, at, loading, stale, refresh, streamStatus } = useLabStream();
   // Cast from the hook's generic Record type to the typed SnapshotSections
   const data = rawData as SnapshotSections | null;
   return (
-    <SnapshotContext.Provider value={{ data, at, loading, refresh, streamStatus }}>
+    <SnapshotContext.Provider value={{ data, at, loading, stale, refresh, streamStatus }}>
       {children}
     </SnapshotContext.Provider>
   );

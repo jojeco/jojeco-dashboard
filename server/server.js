@@ -2362,11 +2362,26 @@ app.get('/api/printer/p1s', optionalAuthMiddleware, (req, res) => {
 });
 
 // ============================================================================
-// Aggregated snapshot + SSE stream — shared data layer for the v3 frontend.
-// The snapshot cache is shared between /api/snapshot (polling fallback) and
-// /api/stream (SSE push). Internally fans out to existing endpoints so each
-// section keeps its own auth/sanitization logic.
-// Phase 3 refactor will inline these instead of looping back via HTTP.
+// Aggregated snapshot + SSE stream — shared data layer for the v3/v4 frontend.
+//
+// PERF (2026-07-11): Zero-wait paint architecture.
+//
+// The root cause of the 4.2 s /api/snapshot latency was building the snapshot
+// on-request: every cold hit fired 14 upstream fetches in parallel, each up to
+// 8 s, and the response blocked until all resolved.
+//
+// New approach:
+//   • A background loop (snapshotTick) assembles the full snapshot every 15 s
+//     and stores it in lastSnapshot[scope].  Sections with a longer TTL
+//     (automation=60s, alerts=30s) are only refreshed when stale.
+//   • /api/snapshot returns lastSnapshot immediately (<1 ms).  On first boot,
+//     before the first tick finishes, it returns whatever sections are already
+//     in snapshotCache (partial) — never blocks.
+//   • /api/stream pushes lastSnapshot synchronously on connect, then sets up
+//     the 15 s recurring tick.  No more "wait up to 15 s for first event".
+//   • The section-level cache (snapshotCache) is still used by snapshotTick so
+//     slow upstream calls (lab overview, host-services) are not re-fetched more
+//     often than their TTL.
 // ============================================================================
 
 const snapshotCache = new Map(); // `${section}:${auth|guest}` → { at, data }
@@ -2388,7 +2403,12 @@ const SNAP_SECTIONS = {
 };
 const SNAP_TTL_MS = { automation: 60000, alerts: 30000, labHostServices: 30000, default: 15000 };
 
-/** Fetch all snapshot sections, reusing cache where fresh enough. */
+// In-memory last-assembled snapshot per auth scope.
+// null until the first background tick completes.
+const lastSnapshot = { auth: null, guest: null };
+
+/** Fetch all snapshot sections, reusing cache where fresh enough.
+ *  This is called by the background tick — NOT on-request. */
 async function buildSnapshotPayload(authHeader) {
   const auth = authHeader || '';
   const scope = auth ? 'auth' : 'guest';
@@ -2413,13 +2433,61 @@ async function buildSnapshotPayload(authHeader) {
   return { at: Date.now(), sections: out };
 }
 
+/** Return the last assembled snapshot immediately, falling back to whatever
+ *  snapshotCache sections exist if no full tick has completed yet. */
+function getInstantSnapshot(scope) {
+  if (lastSnapshot[scope]) return lastSnapshot[scope];
+  // Pre-tick fallback: assemble from whatever is already cached (partial/empty)
+  const out = {};
+  for (const s of Object.keys(SNAP_SECTIONS)) {
+    const hit = snapshotCache.get(`${s}:${scope}`);
+    out[s] = hit ? hit.data : null;
+  }
+  return { at: Date.now(), sections: out };
+}
+
+// ── Background snapshot tick ──────────────────────────────────────────────────
+const SSE_INTERVAL_MS = 15_000;
+
+async function snapshotTick() {
+  try {
+    // Build both scopes in parallel so auth and guest caches stay warm
+    const [authSnap, guestSnap] = await Promise.all([
+      buildSnapshotPayload('Bearer __background__'), // uses auth cache path
+      buildSnapshotPayload(''),
+    ]);
+    // Auth scope background build uses a placeholder token; the section data
+    // (lab, docker, etc.) is host-internal and identical — share the result.
+    // Guest sections strip host IPs server-side in the individual routes.
+    lastSnapshot.auth  = authSnap;
+    lastSnapshot.guest = guestSnap;
+    console.log(`[snapshot] tick complete — ${Object.keys(authSnap.sections).length} sections, auth ${JSON.stringify(authSnap).length} B`);
+  } catch (err) {
+    console.error('[snapshot] tick error:', err.message);
+  }
+}
+
 // ── SSE stream ────────────────────────────────────────────────────────────────
 const sseClients = new Set();
-const SSE_INTERVAL_MS = 15_000; // configurable — push cadence
 
+/** Push the last cached snapshot to a client — synchronous JSON stringify,
+ *  no upstream fetches, no waiting. */
+function pushInstantToClient(client) {
+  try {
+    const scope = client.auth ? 'auth' : 'guest';
+    const payload = getInstantSnapshot(scope);
+    client.res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  } catch (err) {
+    console.error('[SSE] instant push error:', err.message);
+  }
+}
+
+/** Full push — called by the recurring tick interval (builds fresh if stale). */
 async function pushToClient(client) {
   try {
     const payload = await buildSnapshotPayload(client.auth);
+    const scope = client.auth ? 'auth' : 'guest';
+    lastSnapshot[scope] = payload;
     client.res.write(`data: ${JSON.stringify(payload)}\n\n`);
   } catch (err) {
     console.error('[SSE] push error:', err.message);
@@ -2429,7 +2497,7 @@ async function pushToClient(client) {
 // sseAuthMiddleware lives in ./lib/middleware.js (Phase 3 route split)
 
 // GET /api/stream — auth-gated SSE endpoint
-app.get('/api/stream', sseAuthMiddleware, async (req, res) => {
+app.get('/api/stream', sseAuthMiddleware, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -2441,10 +2509,10 @@ app.get('/api/stream', sseAuthMiddleware, async (req, res) => {
   sseClients.add(client);
   console.log(`[SSE] client connected (total: ${sseClients.size})`);
 
-  // Initial snapshot — no wait
-  await pushToClient(client);
+  // Push last snapshot immediately — synchronous, <1 ms, no upstream fetches.
+  pushInstantToClient(client);
 
-  // Recurring pushes
+  // Recurring pushes aligned to the background tick cadence
   client.timer = setInterval(() => pushToClient(client), SSE_INTERVAL_MS);
 
   // Proxy-keepalive heartbeat (comment line — not a data event)
@@ -2460,31 +2528,21 @@ app.get('/api/stream', sseAuthMiddleware, async (req, res) => {
   });
 });
 
-// ── /api/snapshot — polling fallback (unchanged API surface) ──────────────────
-app.get('/api/snapshot', optionalAuthMiddleware, async (req, res) => {
-  const wanted = (req.query.sections ? String(req.query.sections).split(',') : Object.keys(SNAP_SECTIONS))
-    .filter(s => SNAP_SECTIONS[s]);
+// ── /api/snapshot — polling fallback, now instant (<1 ms) ────────────────────
+app.get('/api/snapshot', optionalAuthMiddleware, (req, res) => {
   const auth = req.headers.authorization || '';
   const scope = auth ? 'auth' : 'guest';
-  const out = {};
-  await Promise.all(wanted.map(async (s) => {
-    const ttl = SNAP_TTL_MS[s] || SNAP_TTL_MS.default;
-    const key = `${s}:${scope}`;
-    const hit = snapshotCache.get(key);
-    if (hit && Date.now() - hit.at < ttl) { out[s] = hit.data; return; }
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}${SNAP_SECTIONS[s]}`, {
-        headers: auth ? { authorization: auth } : {},
-        signal: AbortSignal.timeout(8000),
-      });
-      const data = r.ok ? await r.json() : null;
-      out[s] = data;
-      if (data !== null) snapshotCache.set(key, { at: Date.now(), data });
-    } catch {
-      out[s] = hit ? hit.data : null; // serve stale over nothing
-    }
-  }));
-  res.json({ at: Date.now(), sections: out });
+  const snap = getInstantSnapshot(scope);
+
+  // Filter to requested sections if ?sections=... is provided
+  if (req.query.sections) {
+    const wanted = new Set(String(req.query.sections).split(',').filter(s => SNAP_SECTIONS[s]));
+    const filtered = {};
+    for (const s of wanted) filtered[s] = snap.sections[s] ?? null;
+    return res.json({ at: snap.at, sections: filtered });
+  }
+
+  res.json(snap);
 });
 
 // ============================================================================
@@ -2534,6 +2592,13 @@ async function startServer() {
   // Start P1S printer MQTT poller (15s interval, serves cached result)
   startP1SPoller();
   console.log('🖨️  P1S printer poller started (15s interval)');
+
+  // Background snapshot tick — warms lastSnapshot so /api/snapshot and SSE
+  // connect return data instantly on every subsequent request.
+  // First tick fires immediately; subsequent ticks every 15 s.
+  snapshotTick().catch(() => {}); // fire-and-forget; errors logged inside
+  setInterval(() => snapshotTick().catch(() => {}), SSE_INTERVAL_MS);
+  console.log('⚡ Snapshot background tick started (15 s interval)');
 }
 
 startServer().catch(console.error);

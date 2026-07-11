@@ -1,6 +1,9 @@
 /**
  * v4 LiveIndicator — breathing dot per DESIGN.md §6
  * Shows SSE connection state. Static chrome never animates.
+ *
+ * stale=true (localStorage cache >60 s old) shows "SYNCING…" (dimmed) so the
+ * user knows they're seeing old data while the live feed catches up.
  */
 import { useSnapshot } from '../../hooks/useSnapshot';
 import type { StreamStatus } from '../../hooks/useSnapshot';
@@ -19,13 +22,17 @@ interface LiveIndicatorProps {
 }
 
 export function LiveIndicator({ className, showLabel = true }: LiveIndicatorProps) {
-  const { streamStatus } = useSnapshot();
-  const connected = streamStatus === 'connected';
-  const color = connected ? 'var(--v4-nominal)' : 'var(--v4-trace)';
+  const { streamStatus, stale } = useSnapshot();
+  // Show "SYNCING…" (dimmed) if the stream is live but data is from stale cache.
+  // This is honest: old data is showing, fresh data is on its way.
+  const connected = streamStatus === 'connected' && !stale;
+  const syncing   = streamStatus === 'connected' && stale;
+  const color = connected ? 'var(--v4-nominal)' : syncing ? 'var(--v4-trace)' : 'var(--v4-trace)';
+  const label = syncing ? 'SYNCING…' : STATUS_LABEL[streamStatus];
 
   return (
     <span
-      title={`Stream: ${streamStatus}`}
+      title={`Stream: ${streamStatus}${stale ? ' (stale cache)' : ''}`}
       className={cn('inline-flex items-center gap-1.5 select-none', className)}
       style={{ color, fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}
     >
@@ -41,7 +48,7 @@ export function LiveIndicator({ className, showLabel = true }: LiveIndicatorProp
         }}
         aria-hidden
       />
-      {showLabel && <span>{STATUS_LABEL[streamStatus]}</span>}
+      {showLabel && <span>{label}</span>}
     </span>
   );
 }
