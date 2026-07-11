@@ -341,15 +341,15 @@ function HostRowD({ machine, onClick }: RowProps) {
           {name}
         </span>
 
-        {/* Role chip — small, dimmed */}
+        {/* Role chip — small, dimmed. Hidden on mobile: hostname wins the space fight */}
         {role && (
           <span
-            className="font-mono text-[0.5625rem] uppercase shrink-0 px-1 py-0.5 rounded"
+            className="font-mono text-[0.5625rem] uppercase shrink-0 px-1 py-0.5 rounded hidden sm:inline-block"
             style={{
               color:      'var(--v4-trace)',
               background: 'var(--v4-well)',
               letterSpacing: '0.05em',
-              maxWidth: 56,
+              maxWidth: 96,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -379,10 +379,10 @@ function HostRowD({ machine, onClick }: RowProps) {
           );
         })()}
 
-        {/* GPU util chip when GPU present and utilization known */}
-        {online && gpu?.utilization != null && (
+        {/* GPU util chip — desktop only (mobile keeps just the temp chip), and only when doing work */}
+        {online && gpu?.utilization != null && gpu.utilization > 0 && (
           <span
-            className="font-mono tabular-nums text-[0.6rem] shrink-0 px-1 py-0.5 rounded"
+            className="font-mono tabular-nums text-[0.6rem] shrink-0 px-1 py-0.5 rounded hidden md:inline-flex"
             style={{
               color:      'var(--v4-readout)',
               background: 'var(--v4-well)',
