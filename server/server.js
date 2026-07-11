@@ -18,6 +18,7 @@ import chaosRoutes from './routes/chaos.js';
 import adguardRoutes from './routes/adguard.js';
 import kioskRoutes from './routes/kiosk.js';
 import controlsRoutes from './routes/controls.js';
+import gamingRoutes from './routes/gaming.js';
 import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
@@ -1492,6 +1493,7 @@ async function pollTemps() {
 // SERVER CONTROLS — extracted to ./routes/controls.js (Phase 3 route split)
 // ============================================================================
 app.use(controlsRoutes);
+app.use(gamingRoutes);
 
 // ============================================================================
 // NTFY ALERT FEED
@@ -2397,12 +2399,13 @@ const SNAP_SECTIONS = {
   serverStatus:     '/api/controls/server-status',
   alerts:           '/api/alerts/recent',
   minecraft:        '/api/minecraft/status',
+  gaming:           '/api/gaming/status',
   automation:       '/api/automation/status',
   torrents:         '/api/torrents/transfer',
   printer:          '/api/printer/p1s',
   labHostServices:  '/api/lab/host-services',
 };
-const SNAP_TTL_MS = { automation: 60000, alerts: 30000, labHostServices: 30000, default: 15000 };
+const SNAP_TTL_MS = { automation: 60000, alerts: 30000, labHostServices: 30000, gaming: 20000, default: 15000 };
 
 // In-memory last-assembled snapshot per auth scope.
 // null until the first background tick completes.

@@ -231,6 +231,31 @@ router.post('/api/controls/claude/:machine/restart', authMiddleware, async (req,
   }
 });
 
+// GET /api/claude/terminal — read-only scrollback of the Claude tmux session on CT100.
+// SSHes to jobot@192.168.50.13 (same key/opts as the trigger route) and captures the
+// last 100 lines of the first tmux session's pane. Returns { lines } on success, or
+// { unavailable:true } when there's no tmux session or the capture fails.
+router.get('/api/claude/terminal', authMiddleware, async (req, res) => {
+  const HOST_SSH = ['-i', '/root/.ssh/jojeco_lab_key',
+    '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+    'jobot@192.168.50.13'];
+  // Capture the newest tmux session's pane; sentinel when no session/tmux.
+  const remote = 'tmux capture-pane -pt $(tmux ls -F "#{session_name}" 2>/dev/null | head -1) -S -100 2>/dev/null || echo "__NO_TMUX__"';
+  try {
+    const { stdout } = await execFileAsync('ssh', [...HOST_SSH, remote], { timeout: 12000, maxBuffer: 1024 * 1024 });
+    const text = (stdout || '').replace(/\r/g, '');
+    if (!text.trim() || text.includes('__NO_TMUX__')) {
+      return res.json({ unavailable: true });
+    }
+    // Trim trailing blank lines tmux pads the pane with.
+    const lines = text.split('\n');
+    while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+    res.json({ lines });
+  } catch {
+    res.json({ unavailable: true });
+  }
+});
+
 // GET /api/controls/trigger-status — returns status of all tracked trigger jobs
 router.get('/api/controls/trigger-status', authMiddleware, (req, res) => {
   const result = {};

@@ -69,7 +69,27 @@ export interface SnapshotSections {
   labHostServices: LabHostServicesSection | null;
   torrents: unknown | null;
   minecraft: Record<string, McServer> | null;
+  gaming: GamingSection | null;
   printer: PrinterStatus | null;
+}
+
+export interface GamingMcServer {
+  id: string;
+  name: string;
+  status: string;              // running | sleeping | starting | stopped
+  port: number | null;
+  players?: number;
+}
+export interface GamingVintageStory {
+  status: string;              // running | sleeping | stopped
+  players?: number;
+  uptime_s?: number;
+  port?: number;
+}
+export interface GamingSection {
+  s1Online: boolean;
+  minecraft: GamingMcServer[];
+  vintageStory: GamingVintageStory | null;
 }
 
 export interface Disk { label: string; used: number; size: number; percent: number }
