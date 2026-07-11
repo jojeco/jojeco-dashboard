@@ -11,6 +11,7 @@
  *   ?tile=a  — "Instrument bars": full-width 1-col cards, 4px meter bars, no sparklines
  *   ?tile=b  — "Big-number readout": 2-col grid, hero CPU%, sparkline as bg trace
  *   ?tile=c  — "Dense rows": single Console panel, one row per host, max density
+ *   ?tile=d  — "Instrument rows": C density + background CPU trace + fleet header + depth layers
  *   (no param) — current design unchanged
  */
 import { useState } from 'react';
@@ -19,6 +20,7 @@ import { HostTile, HostTileSkeleton } from '../components/HostTile';
 import { HostTileA, HostTileASkeleton } from '../components/HostTileA';
 import { HostTileB, HostTileBSkeleton } from '../components/HostTileB';
 import { HostTileCPanel, HostTileCSkeleton } from '../components/HostTileC';
+import { HostTileDPanel, HostTileDSkeleton } from '../components/HostTileD';
 import { AlertStrip } from '../components/AlertStrip';
 import { AutomationDigest } from '../components/AutomationDigest';
 import { ServiceHealthSummary } from '../components/ServiceHealthSummary';
@@ -33,11 +35,11 @@ import type { Machine } from '../../hooks/useSnapshot';
 const PRIORITY_MACHINES = ['CT100', 'S1', 'S2', 'S3', 'MacMini', 'macmini', 's1', 's2', 's3', 'ct100'];
 
 /** Read ?tile= from the URL — no router dependency needed */
-function useTileVariant(): 'a' | 'b' | 'c' | null {
+function useTileVariant(): 'a' | 'b' | 'c' | 'd' | null {
   const raw = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('tile')
     : null;
-  if (raw === 'a' || raw === 'b' || raw === 'c') return raw;
+  if (raw === 'a' || raw === 'b' || raw === 'c' || raw === 'd') return raw;
   return null;
 }
 
@@ -81,6 +83,9 @@ export default function HomePage() {
       }
       if (tileVariant === 'c') {
         return <HostTileCSkeleton />;
+      }
+      if (tileVariant === 'd') {
+        return <HostTileDSkeleton />;
       }
       // Default skeleton
       return (
@@ -132,6 +137,16 @@ export default function HomePage() {
     if (tileVariant === 'c') {
       return (
         <HostTileCPanel
+          machines={sorted}
+          onClickMachine={(m) => setSelectedMachine(m)}
+        />
+      );
+    }
+
+    // Variant D — instrument-grade dense rows
+    if (tileVariant === 'd') {
+      return (
+        <HostTileDPanel
           machines={sorted}
           onClickMachine={(m) => setSelectedMachine(m)}
         />
