@@ -16,7 +16,6 @@
  */
 import { useState } from 'react';
 import { useSnapshot } from '../../hooks/useSnapshot';
-import { HostTile, HostTileSkeleton } from '../components/HostTile';
 import { HostTileA, HostTileASkeleton } from '../components/HostTileA';
 import { HostTileB, HostTileBSkeleton } from '../components/HostTileB';
 import { HostTileCPanel, HostTileCSkeleton } from '../components/HostTileC';
@@ -33,6 +32,9 @@ import type { Machine } from '../../hooks/useSnapshot';
 
 // Which machine IDs to highlight (from context doc)
 const PRIORITY_MACHINES = ['CT100', 'S1', 'S2', 'S3', 'MacMini', 'macmini', 's1', 's2', 's3', 'ct100'];
+
+// Personal rigs — grouped at the bottom of the host panel (Jordan, 2026-07-11)
+const PERSONAL_MACHINES = ['jopc', 'macbook', 'jomac', 'ainspc'];
 
 /** Read ?tile= from the URL — no router dependency needed */
 function useTileVariant(): 'a' | 'b' | 'c' | 'd' | null {
@@ -84,15 +86,8 @@ export default function HomePage() {
       if (tileVariant === 'c') {
         return <HostTileCSkeleton />;
       }
-      if (tileVariant === 'd') {
-        return <HostTileDSkeleton />;
-      }
-      // Default skeleton
-      return (
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
-          {Array.from({ length: 5 }).map((_, i) => <HostTileSkeleton key={i} />)}
-        </div>
-      );
+      // Default = variant D skeleton
+      return <HostTileDSkeleton />;
     }
 
     if (sorted.length === 0) {
@@ -143,30 +138,14 @@ export default function HomePage() {
       );
     }
 
-    // Variant D — instrument-grade dense rows
-    if (tileVariant === 'd') {
-      return (
-        <HostTileDPanel
-          machines={sorted}
-          onClickMachine={(m) => setSelectedMachine(m)}
-        />
-      );
-    }
-
-    // Default — existing design unchanged
+    // Variant D — instrument-grade dense rows. DEFAULT since Jordan's approval 2026-07-11.
+    // Personal rigs (JoPc/JoMac/AinsPC) grouped at the bottom.
     return (
-      <div
-        className="grid gap-3 v4-stagger"
-        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}
-      >
-        {sorted.map(m => (
-          <HostTile
-            key={m.id}
-            machine={m}
-            onClick={() => setSelectedMachine(m)}
-          />
-        ))}
-      </div>
+      <HostTileDPanel
+        machines={sorted}
+        onClickMachine={(m) => setSelectedMachine(m)}
+        secondaryIds={PERSONAL_MACHINES}
+      />
     );
   }
 

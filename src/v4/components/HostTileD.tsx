@@ -475,6 +475,8 @@ function RowSeam() {
 interface Props {
   machines: Machine[];
   onClickMachine?: (machine: Machine) => void;
+  /** ids/names of machines to group at the bottom under a "personal rigs" divider (Jordan: JoPc + JoMac) */
+  secondaryIds?: string[];
 }
 
 // ── Main panel component ─────────────────────────────────────────────────────
@@ -491,7 +493,14 @@ interface Props {
  * useRef ring buffer + forced re-render trigger — but scoped per host rather
  * than per-panel.
  */
-export function HostTileDPanel({ machines, onClickMachine }: Props) {
+export function HostTileDPanel({ machines, onClickMachine, secondaryIds }: Props) {
+  const isSecondary = (m: Machine) =>
+    (secondaryIds ?? []).some(s => {
+      const t = s.toLowerCase();
+      return m.id.toLowerCase() === t || m.name.toLowerCase() === t;
+    });
+  const primary   = machines.filter(m => !isSecondary(m));
+  const secondary = machines.filter(isSecondary);
   // Connect to SSE stream for trace accumulation
   const { data } = useSnapshot('lab');
   // Force re-render when traces update (same pattern as LoadChartsPanel)
@@ -549,14 +558,39 @@ export function HostTileDPanel({ machines, onClickMachine }: Props) {
         {/* Fleet summary header */}
         <FleetHeader machines={machines} />
 
-        {/* Host rows */}
-        {machines.map((m, idx) => (
+        {/* Lab host rows */}
+        {primary.map((m, idx) => (
           <div key={m.id}>
             <HostRowD
               machine={m}
               onClick={onClickMachine ? () => onClickMachine(m) : undefined}
             />
-            {idx < machines.length - 1 && <RowSeam />}
+            {(idx < primary.length - 1 || secondary.length > 0) && <RowSeam />}
+          </div>
+        ))}
+
+        {/* Personal rigs — grouped at the bottom under a dimmed divider */}
+        {secondary.length > 0 && (
+          <div
+            className="flex items-center gap-2 px-3 pt-2.5 pb-1"
+            style={{ background: 'var(--v4-void)' }}
+          >
+            <span
+              className="font-mono uppercase leading-none shrink-0"
+              style={{ fontSize: '0.5625rem', color: 'var(--v4-trace)', letterSpacing: '0.08em' }}
+            >
+              personal rigs
+            </span>
+            <div className="flex-1" style={{ height: 1, background: 'var(--v4-hairline)', opacity: 0.6 }} aria-hidden />
+          </div>
+        )}
+        {secondary.map((m, idx) => (
+          <div key={m.id} style={{ background: 'var(--v4-void)' }}>
+            <HostRowD
+              machine={m}
+              onClick={onClickMachine ? () => onClickMachine(m) : undefined}
+            />
+            {idx < secondary.length - 1 && <RowSeam />}
           </div>
         ))}
       </div>
