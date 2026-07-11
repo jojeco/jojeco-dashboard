@@ -6,6 +6,15 @@ import db from './database.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 const SALT_ROUNDS = 10;
 
+// Random per-boot token for INTERNAL self-fetches (snapshot tick). Only ever
+// accepted from loopback — never leaves the process, never logged.
+export const INTERNAL_TOKEN = crypto.randomBytes(32).toString('hex');
+
+function isLoopback(req) {
+  const a = req.socket?.remoteAddress || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
 export function generateToken(userId, email) {
   return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '7d' });
 }
@@ -26,6 +35,14 @@ export function authMiddleware(req, res, next) {
   }
 
   const token = authHeader.substring(7);
+
+  // Internal snapshot-tick self-fetches: loopback only
+  if (token === INTERNAL_TOKEN && isLoopback(req)) {
+    req.user = { internal: true };
+    req.isGuest = false;
+    return next();
+  }
+
   const decoded = verifyToken(token);
 
   if (!decoded) {

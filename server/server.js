@@ -26,6 +26,7 @@ import {
   authMiddleware,
   optionalAuthMiddleware,
   hashPassword,
+  INTERNAL_TOKEN,
 } from './auth.js';
 import { lanOrAuth, sseAuthMiddleware } from './lib/middleware.js';
 
@@ -2453,7 +2454,7 @@ async function snapshotTick() {
   try {
     // Build both scopes in parallel so auth and guest caches stay warm
     const [authSnap, guestSnap] = await Promise.all([
-      buildSnapshotPayload('Bearer __background__'), // uses auth cache path
+      buildSnapshotPayload(`Bearer ${INTERNAL_TOKEN}`), // loopback-only internal token — auth-gated sections resolve
       buildSnapshotPayload(''),
     ]);
     // Auth scope background build uses a placeholder token; the section data
