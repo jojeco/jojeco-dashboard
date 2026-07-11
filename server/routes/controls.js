@@ -116,15 +116,21 @@ router.post('/api/controls/tdarr/:node/:action', authMiddleware, async (req, res
 });
 
 // POST /api/controls/trigger/:action
+// Scripts run ON THE CT100 HOST via SSH (2026-07-11 fix): the API container has no
+// git/rclone/cron env, so in-container exec broke sync-context ("git: command not
+// found") and would break backup. jobot has passwordless sudo for the root-cron
+// scripts. Aborting kills the SSH session; the host script MAY continue — abort is
+// best-effort for host triggers.
 router.post('/api/controls/trigger/:action', authMiddleware, async (req, res) => {
   const { action } = req.params;
+  const HOST_SSH = `ssh -i /root/.ssh/jojeco_lab_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=8 jobot@192.168.50.13`;
   const scripts = {
-    'health':        '/opt/jojeco-agent/scripts/dep-watcher.sh',
-    'backup':        '/opt/jojeco-agent/scripts/gdrive-backup.sh',
-    'snapshot':      '/opt/jojeco-agent/scripts/weekly-update.sh',
-    'claude-server3': '/opt/jojeco-agent/scripts/start-claude-fallback.sh server3',
-    'claude-server1': '/opt/jojeco-agent/scripts/start-claude-fallback.sh server1',
-    'sync-context':  '/opt/jojeco-agent/scripts/sync-context.sh',
+    'health':        { cmd: `${HOST_SSH} "sudo -n /opt/jojeco-agent/scripts/dep-watcher.sh"`,           timeout: 300000 },
+    'backup':        { cmd: `${HOST_SSH} "sudo -n /opt/jojeco-agent/scripts/gdrive-backup.sh"`,          timeout: 2 * 3600000 },
+    'snapshot':      { cmd: `${HOST_SSH} "sudo -n /opt/jojeco-agent/scripts/weekly-update.sh"`,          timeout: 2 * 3600000 },
+    'claude-server3': { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/start-claude-fallback.sh server3"`, timeout: 300000 },
+    'claude-server1': { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/start-claude-fallback.sh server1"`, timeout: 300000 },
+    'sync-context':  { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/sync-context.sh"`,                   timeout: 300000 },
   };
   if (!scripts[action]) return res.status(400).json({ error: 'Unknown action' });
 
@@ -138,7 +144,7 @@ router.post('/api/controls/trigger/:action', authMiddleware, async (req, res) =>
   triggerJobs[action] = { status: 'running', startedAt, finishedAt: null, output: null, error: null };
 
   const { exec } = await import('child_process');
-  const child = exec(scripts[action], { timeout: 300000 }, (err, stdout, stderr) => {
+  const child = exec(scripts[action].cmd, { timeout: scripts[action].timeout }, (err, stdout, stderr) => {
     delete triggerProcesses[action];
     const out = (stdout || '').trim().split('\n').slice(-8).join('\n');
     if (err && err.signal === 'SIGTERM') {
