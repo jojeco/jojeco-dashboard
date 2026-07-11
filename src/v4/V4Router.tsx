@@ -11,7 +11,7 @@ import HomePage from './pages/HomePage';
 import ServicesPage from './pages/ServicesPage';
 import MediaPage from './pages/MediaPage';
 import ControlsPage from './pages/ControlsPage';
-import SystemPage from './pages/SystemPage';
+import GamingPage from './pages/GamingPage';
 import LoginPage from './pages/LoginPage';
 import { useAuth } from '../contexts/AuthContext';
 import './v4.css';
@@ -86,15 +86,17 @@ export function V4Routes() {
         }
       />
       <Route
-        path="/v4/system"
+        path="/v4/gaming"
         element={
           <V4ProtectedRoute>
             <AppShell>
-              <SystemPage />
+              <GamingPage />
             </AppShell>
           </V4ProtectedRoute>
         }
       />
+      {/* Legacy /v4/system removed — the AI fleet moved to Services, telemetry lives on Home. */}
+      <Route path="/v4/system" element={<Navigate to="/v4" replace />} />
     </Routes>
   );
 }

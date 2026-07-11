@@ -3,7 +3,7 @@
  * DESIGN.md §5: mobile bottom tab bar (thumb reach), left rail on desktop.
  */
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Server, Film, Sliders, Cpu, LogOut, LogIn } from 'lucide-react';
+import { LayoutDashboard, Server, Film, Sliders, Gamepad2, LogOut, LogIn } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { LiveIndicator } from './LiveIndicator';
@@ -15,7 +15,7 @@ const TABS = [
   { id: 'services', label: 'Services', href: '/v4/services', icon: Server },
   { id: 'media',    label: 'Media',    href: '/v4/media',    icon: Film },
   { id: 'controls', label: 'Controls', href: '/v4/controls', icon: Sliders },
-  { id: 'system',   label: 'System',   href: '/v4/system',   icon: Cpu },
+  { id: 'gaming',   label: 'Gaming',   href: '/v4/gaming',   icon: Gamepad2 },
 ] as const;
 
 function useActiveTab() {

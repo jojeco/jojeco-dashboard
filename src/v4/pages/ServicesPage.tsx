@@ -14,11 +14,12 @@
  *  - No fabricated data — missing fields render "—" in Dimmed Trace
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, RotateCcw, Square, Play, Shield } from 'lucide-react';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { DetailModal } from '../components/DetailModal';
 import { Panel, PanelTitle, PageTitle, Mono, Hairline, Skeleton, EmptyState, StatusChip } from '../components/Primitives';
 import { ContainerLogTail } from '../components/ContainerLogTail';
+import { AiFleetPanel } from '../components/AiFleetPanel';
 import { getToken } from '../../services/api';
 import type { LabHostService, LabHostServicesGroup } from '../../hooks/useSnapshot';
 
@@ -34,6 +35,24 @@ interface DockerContainer {
   ports: string[];
   created: number;
   compose_project?: string;
+}
+
+// Containers the API refuses to stop/restart — flagged visually here too.
+const PROTECTED_CONTAINERS = new Set([
+  'nginx-proxy-manager', 'portainer', 'cloudflared', 'jojeco-dashboard-api',
+]);
+
+const CONTROL_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api') as string;
+
+async function containerAction(name: string, action: 'restart' | 'stop' | 'start'): Promise<{ ok: boolean; msg: string }> {
+  const token = getToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  try {
+    const res = await fetch(`${CONTROL_BASE}/controls/container/${name}/${action}`, { method: 'POST', headers });
+    const d = await res.json().catch(() => ({})) as Record<string, unknown>;
+    return { ok: res.ok, msg: String(d.message ?? d.error ?? (res.ok ? 'Done' : 'Failed')) };
+  } catch { return { ok: false, msg: 'Network error' }; }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -407,6 +426,115 @@ function ContainerRow({ container: c, onSelect }: ContainerRowProps) {
   );
 }
 
+// ── Container action controls (confirm-gated, ported from ControlsPage) ───────
+
+function ContainerActions({ container: c }: { container: DockerContainer }) {
+  const isProtected = PROTECTED_CONTAINERS.has(c.name);
+  const running = c.state === 'running';
+
+  const [pending, setPending] = useState<'restart' | 'stop' | 'start' | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  async function run(action: 'restart' | 'stop' | 'start') {
+    setBusy(true);
+    const r = await containerAction(c.name, action);
+    setResult(r);
+    setBusy(false);
+    setPending(null);
+  }
+
+  const btnBase = 'flex items-center gap-1.5 px-4 py-2.5 rounded-[0.5rem] text-[0.8125rem] font-medium min-h-[44px] flex-1 justify-center disabled:opacity-40 active:-translate-y-px transition-transform';
+
+  return (
+    <div className="flex flex-col gap-3">
+      {isProtected && (
+        <div className="flex items-center gap-2">
+          <Shield size={11} style={{ color: 'var(--v4-degraded)' }} />
+          <span className="text-[0.7rem]" style={{ color: 'var(--v4-degraded)' }}>
+            Protected — stop/restart blocked at API level
+          </span>
+        </div>
+      )}
+
+      {result && (
+        <Mono
+          className="text-[0.75rem] px-3 py-2 rounded-[0.5rem]"
+          style={{
+            color: result.ok ? 'var(--v4-nominal)' : 'var(--v4-fault)',
+            background: result.ok ? 'rgba(63,185,80,0.08)' : 'rgba(248,81,73,0.08)',
+          }}
+        >
+          {result.msg}
+        </Mono>
+      )}
+
+      {pending ? (
+        /* Inline confirm step (names the target — DESIGN.md destructive rule) */
+        <div className="flex flex-col gap-2 px-3 py-3 rounded-[0.5rem]" style={{ background: 'var(--v4-well)' }}>
+          <span className="text-[0.8125rem]" style={{ color: 'var(--v4-readout)' }}>
+            {pending === 'stop' ? `Stop "${c.name}"?` : pending === 'restart' ? `Restart "${c.name}"?` : `Start "${c.name}"?`}
+          </span>
+          <div className="flex gap-2 justify-end">
+            <button
+              className="px-4 py-2 rounded-[0.5rem] text-[0.8125rem] font-medium min-h-[40px]"
+              style={{ background: 'var(--v4-raised)', color: 'var(--v4-readout)', border: 'none', cursor: 'pointer' }}
+              onClick={() => setPending(null)}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button
+              className="px-4 py-2 rounded-[0.5rem] text-[0.8125rem] font-semibold min-h-[40px] active:-translate-y-px transition-transform"
+              style={{
+                background: pending === 'start' ? 'rgba(63,185,80,0.12)' : 'rgba(248,81,73,0.12)',
+                color: pending === 'start' ? 'var(--v4-nominal)' : 'var(--v4-fault)',
+                border: `1px solid ${pending === 'start' ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)'}`,
+                cursor: busy ? 'default' : 'pointer',
+              }}
+              onClick={() => run(pending)}
+              disabled={busy}
+            >
+              {busy ? '…' : pending.charAt(0).toUpperCase() + pending.slice(1)}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2 flex-wrap">
+          <button
+            className={btnBase}
+            style={{ background: 'var(--v4-raised)', color: 'var(--v4-readout)', border: 'none', cursor: busy ? 'default' : 'pointer' }}
+            disabled={busy}
+            onClick={() => setPending('restart')}
+          >
+            <RotateCcw size={13} className="shrink-0" /> Restart
+          </button>
+          {running ? (
+            <button
+              className={btnBase}
+              style={{ background: 'rgba(248,81,73,0.08)', color: 'var(--v4-fault)', border: '1px solid rgba(248,81,73,0.25)', cursor: busy || isProtected ? 'default' : 'pointer' }}
+              disabled={busy || isProtected}
+              onClick={() => setPending('stop')}
+              title={isProtected ? 'Protected container' : undefined}
+            >
+              <Square size={13} className="shrink-0" /> Stop
+            </button>
+          ) : (
+            <button
+              className={btnBase}
+              style={{ background: 'rgba(63,185,80,0.08)', color: 'var(--v4-nominal)', border: '1px solid rgba(63,185,80,0.25)', cursor: busy ? 'default' : 'pointer' }}
+              disabled={busy}
+              onClick={() => setPending('start')}
+            >
+              <Play size={13} className="shrink-0" /> Start
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Container detail modal body ───────────────────────────────────────────────
 
 function ContainerDetailBody({ container: c }: { container: DockerContainer }) {
@@ -473,6 +601,11 @@ function ContainerDetailBody({ container: c }: { container: DockerContainer }) {
       <div className="text-[0.75rem]" style={{ color: 'var(--v4-trace)' }}>
         <Mono trace className="text-[0.6875rem]">{c.status}</Mono>
       </div>
+
+      {/* Confirm-gated controls (ported from Controls page) */}
+      <Hairline />
+      <ContainerActions container={c} />
+
       {/* Log tail section */}
       <Hairline />
       <div>
@@ -753,6 +886,9 @@ export default function ServicesPage() {
         loading={dockerLoading}
         error={dockerError}
       />
+
+      {/* ── AI fleet (moved from the retired System tab) ──────────────── */}
+      <AiFleetPanel />
 
       {/* ── Service detail modal ──────────────────────────────────────── */}
       {selectedService && selectedGroup && (

@@ -23,6 +23,7 @@ import { HostTileDPanel, HostTileDSkeleton } from '../components/HostTileD';
 import { AlertStrip } from '../components/AlertStrip';
 import { AutomationDigest } from '../components/AutomationDigest';
 import { ServiceHealthSummary } from '../components/ServiceHealthSummary';
+import { GamingGlance } from '../components/GamingGlance';
 import { PanelTitle } from '../components/Primitives';
 import { HostDetailModal } from '../components/HostDetailModal';
 import { StoragePanel } from '../components/StoragePanel';
@@ -165,6 +166,9 @@ export default function HomePage() {
         {/* 3. Service health */}
         <ServiceHealthSummary />
 
+        {/* 3.25 Gaming glance */}
+        <GamingGlance />
+
         {/* 3.5 Storage overview */}
         <StoragePanel />
 
@@ -204,6 +208,7 @@ export default function HomePage() {
         {/* Rail (4): services + automation */}
         <div className="flex flex-col gap-4">
           <ServiceHealthSummary />
+          <GamingGlance />
           <AutomationDigest />
           <TorrentsPanel />
         </div>
