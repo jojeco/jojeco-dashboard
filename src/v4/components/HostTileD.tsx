@@ -195,7 +195,7 @@ function MetricCluster({
 }) {
   const color = metricColor(pct);
   return (
-    <div className="flex flex-col items-end shrink-0" style={{ minWidth: 38 }}>
+    <div className="flex flex-col items-end shrink-0" style={{ minWidth: 42 }}>
       <span
         className="font-mono tabular-nums leading-none"
         style={{ fontSize: '0.9375rem', color, fontVariantNumeric: 'tabular-nums' }}
@@ -393,8 +393,8 @@ function HostRowD({ machine, onClick }: RowProps) {
         )}
       </div>
 
-      {/* ── Right: three metric clusters ── */}
-      <div className="relative flex items-center gap-3 shrink-0 z-10">
+      {/* ── Right: three metric clusters, hairline seams between (Jordan: clearer separation) ── */}
+      <div className="relative flex items-center gap-3.5 shrink-0 z-10">
         {online && hasAgent ? (
           <>
             <MetricCluster
@@ -402,11 +402,13 @@ function HostRowD({ machine, onClick }: RowProps) {
               value={cpu != null ? `${cpu.toFixed(0)}%` : '—'}
               pct={cpu}
             />
+            <ClusterSeam />
             <MetricCluster
               label="RAM"
               value={mem != null ? `${mem.percent.toFixed(0)}%` : '—'}
               pct={mem?.percent ?? null}
             />
+            <ClusterSeam />
             <MetricCluster
               label="DSK"
               value={disk != null ? `${disk.percent.toFixed(0)}%` : '—'}
@@ -432,6 +434,23 @@ function HostRowD({ machine, onClick }: RowProps) {
         )}
       </div>
     </button>
+  );
+}
+
+// ── Vertical hairline seam between metric clusters ──────────────────────────
+
+function ClusterSeam() {
+  return (
+    <div
+      className="shrink-0"
+      style={{
+        width:      1,
+        height:     22,
+        background: 'var(--v4-hairline)',
+        opacity:    0.7,
+      }}
+      aria-hidden
+    />
   );
 }
 
