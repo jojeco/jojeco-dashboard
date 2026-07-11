@@ -1743,7 +1743,6 @@ const LAB_HOST_SERVICES = [
       { id: 's3-whisper',      label: 'faster-whisper',    port: 9000, checkUrl: 'http://192.168.50.12:9000' },
       { id: 's3-piper',        label: 'piper-tts',         port: 8400, checkUrl: 'http://192.168.50.12:8400' },
       { id: 's3-openwebui',    label: 'Open WebUI',        port: 3000, checkUrl: 'http://192.168.50.12:3000' },
-      { id: 's3-tdarr',        label: 'Tdarr (vestigial)', port: 8265, checkUrl: 'http://192.168.50.12:8265' },
       { id: 's3-dozzle',       label: 'Dozzle',            port: 8015, checkUrl: 'http://192.168.50.12:8015' },
     ],
   },
