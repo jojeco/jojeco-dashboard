@@ -195,7 +195,7 @@ function MetricCluster({
 }) {
   const color = metricColor(pct);
   return (
-    <div className="flex flex-col items-end shrink-0" style={{ minWidth: 42 }}>
+    <div className="flex flex-col items-end shrink-0" style={{ minWidth: 38 }}>
       <span
         className="font-mono tabular-nums leading-none"
         style={{ fontSize: '0.9375rem', color, fontVariantNumeric: 'tabular-nums' }}
@@ -379,22 +379,11 @@ function HostRowD({ machine, onClick }: RowProps) {
           );
         })()}
 
-        {/* GPU util chip — desktop only (mobile keeps just the temp chip), and only when doing work */}
-        {online && gpu?.utilization != null && gpu.utilization > 0 && (
-          <span
-            className="font-mono tabular-nums text-[0.6rem] shrink-0 px-1 py-0.5 rounded hidden md:inline-flex"
-            style={{
-              color:      'var(--v4-readout)',
-              background: 'var(--v4-well)',
-            }}
-          >
-            GPU {gpu.utilization.toFixed(0)}%
-          </span>
-        )}
+        {/* GPU util is now shown in the right-side metric cluster — no redundant chip needed */}
       </div>
 
-      {/* ── Right: three metric clusters, hairline seams between (Jordan: clearer separation) ── */}
-      <div className="relative flex items-center gap-3.5 shrink-0 z-10">
+      {/* ── Right: metric clusters CPU · RAM · [GPU] · DSK, hairline seams between ── */}
+      <div className="relative flex items-center gap-3 shrink-0 z-10">
         {online && hasAgent ? (
           <>
             <MetricCluster
@@ -408,6 +397,17 @@ function HostRowD({ machine, onClick }: RowProps) {
               value={mem != null ? `${mem.percent.toFixed(0)}%` : '—'}
               pct={mem?.percent ?? null}
             />
+            {/* GPU cluster — only for machines that report utilization */}
+            {gpu?.utilization != null && (
+              <>
+                <ClusterSeam />
+                <MetricCluster
+                  label="GPU"
+                  value={`${gpu.utilization.toFixed(0)}%`}
+                  pct={gpu.utilization}
+                />
+              </>
+            )}
             <ClusterSeam />
             <MetricCluster
               label="DSK"

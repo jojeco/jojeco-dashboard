@@ -1314,15 +1314,16 @@ export default function MediaPage() {
       />
 
       {/* ── Mobile layout: single column ───────────────────────────────── */}
+      {/* Order: status strip (above) → Tdarr → Downloads → Plex → arr queue → upcoming */}
       <div className="flex flex-col gap-4 xl:hidden">
-        {/* Plex now-streaming — top of page per request */}
-        <PlexPanel data={plexSessions} loading={plexLoading} />
+        <TdarrStrip tdarr={tdarr} />
         <DownloadsPanel
           torrents={torrents}
           loading={torrentsLoading}
           error={torrentsError}
           transferInfo={transferInfo}
         />
+        <PlexPanel data={plexSessions} loading={plexLoading} />
         <ArrPanel
           sonarr={sonarr}
           radarr={radarr}
@@ -1330,10 +1331,11 @@ export default function MediaPage() {
           upcoming={upcoming}
           loading={mediaLoading}
         />
-        <TdarrStrip tdarr={tdarr} />
       </div>
 
       {/* ── Desktop 8/4 command-center grid ────────────────────────────── */}
+      {/* Lead col: Downloads (active work) → Arr queue + upcoming */}
+      {/* Rail: Tdarr at top (active work) → Plex below */}
       <div
         className="hidden xl:grid gap-6"
         style={{ gridTemplateColumns: '8fr 4fr', alignItems: 'start' }}
@@ -1355,10 +1357,10 @@ export default function MediaPage() {
           />
         </div>
 
-        {/* Rail (4): Plex now-streaming + Tdarr */}
+        {/* Rail (4): Tdarr at top (active work) → Plex below */}
         <div className="flex flex-col gap-4">
-          <PlexPanel data={plexSessions} loading={plexLoading} />
           <TdarrStrip tdarr={tdarr} />
+          <PlexPanel data={plexSessions} loading={plexLoading} />
         </div>
       </div>
     </div>
