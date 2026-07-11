@@ -127,9 +127,16 @@ function DriveRow({ disk }: { disk: Disk }) {
 
 // ── Host group (header + drives) ──────────────────────────────────────────────
 
+// CIFS/network mounts of OTHER machines' drives — their numbers duplicate the owning
+// host's local rows, so they collapse into a one-line note (Jordan, 2026-07-11).
+const NETWORK_MOUNT_PATTERNS = [/^\/mnt\/s1-/, /^\/mnt\/backups/, /^\/mnt\/media$/];
+const isNetworkMount = (d: Disk) => NETWORK_MOUNT_PATTERNS.some(rx => rx.test(d.label));
+
 function HostGroup({ machine }: { machine: Machine }) {
+  const localDisks = machine.disks.filter(d => !isNetworkMount(d));
+  const netMounts  = machine.disks.filter(isNetworkMount);
   // Sort drives fullest-first within the group
-  const sortedDisks = [...machine.disks].sort((a, b) => b.percent - a.percent);
+  const sortedDisks = [...localDisks].sort((a, b) => b.percent - a.percent);
 
   return (
     <div className="flex flex-col">
@@ -142,6 +149,14 @@ function HostGroup({ machine }: { machine: Machine }) {
           <DriveRow key={d.label} disk={d} />
         ))}
       </div>
+      {netMounts.length > 0 && (
+        <div
+          className="font-mono text-[0.625rem] leading-none pt-1.5 pb-0.5"
+          style={{ color: 'var(--v4-trace)', letterSpacing: '0.02em' }}
+        >
+          ⇄ {netMounts.length} network mount{netMounts.length > 1 ? 's' : ''}: {netMounts.map(d => d.label).join(' · ')}
+        </div>
+      )}
     </div>
   );
 }
@@ -171,10 +186,11 @@ export function StoragePanel({ className, personalIds = DEFAULT_PERSONAL_IDS }: 
   const labMachines      = online.filter(m => !isPersonal(m, personalIds));
   const personalMachines = online.filter(m =>  isPersonal(m, personalIds));
 
-  // Sort each group: machine whose fullest drive is highest goes first
+  // Sort each group: machine whose fullest LOCAL drive is highest goes first
+  // (network mounts excluded — they mirror another host's numbers)
   const byFullestDrive = (a: Machine, b: Machine) => {
-    const maxA = a.disks.reduce((hi, d) => Math.max(hi, d.percent), 0);
-    const maxB = b.disks.reduce((hi, d) => Math.max(hi, d.percent), 0);
+    const maxA = a.disks.filter(d => !isNetworkMount(d)).reduce((hi, d) => Math.max(hi, d.percent), 0);
+    const maxB = b.disks.filter(d => !isNetworkMount(d)).reduce((hi, d) => Math.max(hi, d.percent), 0);
     return maxB - maxA;
   };
 
