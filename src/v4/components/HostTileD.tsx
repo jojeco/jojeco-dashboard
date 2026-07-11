@@ -359,13 +359,15 @@ function HostRowD({ machine, onClick }: RowProps) {
           </span>
         )}
 
-        {/* GPU temp chip — blue-tinted, only when present */}
+        {/* GPU temp chip — blue-tinted, only when present. Desktop-only: with the 4th
+            (GPU) metric cluster it crowds hostnames off a 390px row; temp lives beside
+            CPU in the detail modal on mobile. Hot temps still surface via color. */}
         {online && (gpu?.temp != null || temp != null) && (() => {
           const t = gpu?.temp ?? temp!;
           const hot = t > 85;
           return (
             <span
-              className="font-mono tabular-nums text-[0.6rem] shrink-0 px-1 py-0.5 rounded"
+              className={cn('font-mono tabular-nums text-[0.6rem] shrink-0 px-1 py-0.5 rounded', !hot && 'hidden sm:inline-block')}
               style={{
                 color: hot ? 'var(--v4-fault)' : CMD_BLUE,
                 background: hot
