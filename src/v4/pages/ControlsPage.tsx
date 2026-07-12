@@ -39,6 +39,7 @@ import { getToken } from '../../services/api';
 import { DetailModal } from '../components/DetailModal';
 import { AutomationJobDetailModal } from '../components/AutomationJobDetailModal';
 import { ClaudeTerminalViewer } from '../components/ClaudeTerminalViewer';
+import { UpdatesPanel } from '../components/UpdatesPanel';
 import {
   Panel, PanelTitle, PageTitle, Mono, Well, Hairline,
   StatusChip, Skeleton, EmptyState,
@@ -534,6 +535,7 @@ export default function ControlsPage() {
           onFireTrigger={handleFireTrigger}
           onAbortTrigger={handleAbortTrigger}
         />
+        <UpdatesPanel />
         <FailoverPanel
           failover={failover}
           output={failoverOut}
@@ -575,7 +577,7 @@ export default function ControlsPage() {
           />
         </div>
 
-        {/* Rail (4): automation + failover */}
+        {/* Rail (4): automation + updates + failover */}
         <div className="flex flex-col gap-4">
           <AutomationPanel
             jobs={snapAutomation}
@@ -586,6 +588,7 @@ export default function ControlsPage() {
             onFireTrigger={handleFireTrigger}
             onAbortTrigger={handleAbortTrigger}
           />
+          <UpdatesPanel />
           <FailoverPanel
             failover={failover}
             output={failoverOut}
