@@ -95,15 +95,24 @@ router.post('/api/gaming/:server/:action', authMiddleware, async (req, res) => {
     if (MC_IDS.has(server)) {
       // mc_manager pattern: POST /<id>/<action>. lazymc still owns auto sleep/wake;
       // these are the manual overrides the dashboard drives.
-      const r = await fetch(`${MC_BASE}/${server}/${action}`, {
+      // FIRE-AND-FORGET (2026-07-12 live BMC4 test): mc_manager blocks until a graceful
+      // stop completes — modded-server saves exceed any sane HTTP timeout, so the old
+      // 15s await reported false "unreachable" while the stop actually worked. Now:
+      // kick the request (2min ceiling), surface only FAST failures (3s window), and
+      // let the status poll show the real transition.
+      let failed = null;
+      const kicked = fetch(`${MC_BASE}/${server}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
-        signal: AbortSignal.timeout(15000),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) return res.status(502).json({ error: body.error || `MC manager ${r.status}` });
-      return res.json({ ok: true, message: body.message || `${server} ${action} sent` });
+        signal: AbortSignal.timeout(120000),
+      }).then(
+        (r) => { if (!r.ok) failed = `MC manager ${r.status}`; },
+        (e) => { failed = e.message; },
+      );
+      await Promise.race([kicked, new Promise((r) => setTimeout(r, 3000))]);
+      if (failed) return res.status(502).json({ error: `Game server unreachable — ${failed}` });
+      return res.json({ ok: true, message: `${server} ${action} sent — watch status for the transition` });
     }
 
     return res.status(400).json({ error: 'Unknown game server' });
