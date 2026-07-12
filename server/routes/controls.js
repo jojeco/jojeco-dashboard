@@ -131,6 +131,12 @@ router.post('/api/controls/trigger/:action', authMiddleware, async (req, res) =>
     'claude-server3': { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/start-claude-fallback.sh server3"`, timeout: 300000 },
     'claude-server1': { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/start-claude-fallback.sh server1"`, timeout: 300000 },
     'sync-context':  { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/sync-context.sh"`,                   timeout: 300000 },
+    // ── Runbooks: one-button fixes for known failure modes (run with --fix) ──
+    'rb-sshuser-lockout': { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/runbooks/fix-sshuser-lockout.sh --fix"`, timeout: 25 * 60000 },
+    'rb-mcmanager':       { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/runbooks/fix-mcmanager.sh --fix"`,        timeout: 120000 },
+    'rb-qbit-iface':      { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/runbooks/fix-qbit-iface.sh --fix"`,       timeout: 120000 },
+    'rb-restart-plex':    { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/runbooks/restart-plex.sh --fix"`,         timeout: 180000 },
+    'rb-remount-media':   { cmd: `${HOST_SSH} "/opt/jojeco-agent/scripts/runbooks/remount-s1-media.sh --fix"`,     timeout: 180000 },
   };
   if (!scripts[action]) return res.status(400).json({ error: 'Unknown action' });
 

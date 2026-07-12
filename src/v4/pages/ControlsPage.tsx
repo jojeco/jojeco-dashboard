@@ -28,7 +28,7 @@ import {
   Power, RotateCcw, Wifi, Bot, Square, Play,
   RefreshCw, Activity, Zap, ZapOff,
   RotateCw, ShieldCheck, Database, GitBranch,
-  AlertTriangle,
+  AlertTriangle, Wrench, KeyRound, Gamepad2, Film, FolderSync,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -108,6 +108,12 @@ const TRIGGERS: TriggerDef[] = [
   { id: 'backup',         label: 'GDrive Backup', desc: 'Dump databases and sync to Google Drive',             icon: Database    },
   { id: 'snapshot',       label: 'Update Check',  desc: 'Pull latest images, report critical updates',         icon: RefreshCw   },
   { id: 'sync-context',   label: 'Sync Context',  desc: 'Push memory, stacks & context to GitHub',             icon: GitBranch   },
+  // ── Runbooks: one-button fixes for known failure modes ──
+  { id: 'rb-sshuser-lockout', label: 'Fix sshuser Lockout', desc: 'Restart CIFS re-locker containers, wait for S1 sshuser to unlock', icon: KeyRound   },
+  { id: 'rb-mcmanager',       label: 'Fix McManager',       desc: 'Re-run the McManager task on S1 if its API is down',              icon: Gamepad2   },
+  { id: 'rb-qbit-iface',      label: 'Fix qBit VPN Bind',   desc: 'Clear stale qBittorrent interface binding and cycle it',          icon: Wrench     },
+  { id: 'rb-restart-plex',    label: 'Restart Plex',        desc: 'Trigger PlexWatchdog on S1 and verify Plex comes back',           icon: Film       },
+  { id: 'rb-remount-media',   label: 'Remount S1 Media',    desc: 'Cycle server1-media consumers to re-establish the CIFS mount',    icon: FolderSync },
 ];
 
 // ── Local types ───────────────────────────────────────────────────────────────
