@@ -16,9 +16,9 @@ export const MACHINES = {
   server2:  { ip: '192.168.50.11', user: 'root',      os: 'linux',   mac: '10:5a:95:21:00:82', label: 'Server 2 (Proxmox)' },
   server3:  { ip: '192.168.50.12', user: 'jojeco',    os: 'linux',   mac: '90:20:3a:1a:37:21', label: 'Server 3' },
   macmini:  { ip: '192.168.50.30', user: 'jj',        os: 'macos',   mac: '0c:4d:e9:c7:07:69', label: 'Mac Mini' },
-  jopc:     { ip: '192.168.50.20', user: 'sshuser',   os: 'windows', mac: process.env.JOPC_MAC  || '',                   label: 'JoPc' },
+  jopc:     { ip: '192.168.50.20', user: 'sshuser',   os: 'windows', mac: process.env.JOPC_MAC  || 'c8:7f:54:6a:5c:2d', label: 'JoPc' },
   macbook:  { ip: '192.168.50.40', user: 'jojeco',   os: 'macos',   mac: process.env.JOMAC_MAC || '76:86:2B:1E:45:C6', label: 'JoMac' },
-  ainspc:   { ip: '192.168.50.220', user: 'ainsl',   os: 'windows', mac: '',                                            label: "Ainsley's PC" },
+  ainspc:   { ip: '192.168.50.220', user: 'ainsl',   os: 'windows', mac: 'a0:02:a5:06:45:a0',                          label: "Ainsley's PC" },
 };
 
 export async function sshRun(machine, cmd) {

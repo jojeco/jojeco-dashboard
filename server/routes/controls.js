@@ -4,14 +4,25 @@
 // shared with the updates routes via ./lib/state.js. Extracted from server.js
 // (Phase 3 route split); byte-identical.
 import express from 'express';
-import { execFile } from 'child_process';
+import { execFile, exec } from 'child_process';
 import { promisify } from 'util';
 import { authMiddleware } from '../auth.js';
 import { MACHINES, sshRun } from '../lib/ssh.js';
 import { triggerJobs, triggerProcesses } from '../lib/state.js';
 
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 const router = express.Router();
+
+// Send a Wake-on-LAN magic packet from the CT100 HOST (not this container).
+// The API runs on a Docker bridge net whose broadcast domain is the bridge, so a
+// packet sent from here never reaches the physical LAN. jobot@192.168.50.13 is on
+// 192.168.50.0/24 (brd .255) with wakeonlan installed — shell out there and target
+// the LAN directed-broadcast so sleeping/off machines actually receive it.
+async function sendWol(mac) {
+  const cmd = `ssh -i /root/.ssh/jojeco_lab_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=8 jobot@192.168.50.13 "wakeonlan -i 192.168.50.255 ${mac}"`;
+  return execAsync(cmd, { timeout: 12000 });
+}
 
 // POST /api/controls/server/:machine/restart
 router.post('/api/controls/server/:machine/restart', authMiddleware, async (req, res) => {
@@ -51,8 +62,8 @@ router.post('/api/controls/server/:machine/wake', authMiddleware, async (req, re
   const m = MACHINES[machine];
   if (!m || !m.mac) return res.status(400).json({ error: 'Unknown machine or no MAC address' });
   try {
-    await execFileAsync('wakeonlan', [m.mac], { timeout: 5000 });
-    res.json({ ok: true, message: `Wake-on-LAN packet sent to ${m.label} (${m.mac})` });
+    await sendWol(m.mac);
+    res.json({ ok: true, message: `Wake-on-LAN packet sent to ${m.label} (${m.mac}) via LAN broadcast` });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
