@@ -33,7 +33,11 @@ import type { Machine } from '../../hooks/useSnapshot';
 export const GRID_COLS = { lg: 12, md: 12, sm: 6, xs: 1, xxs: 1 } as const;
 export const GRID_BREAKPOINTS = { lg: 1280, md: 996, sm: 768, xs: 480, xxs: 0 } as const;
 export const ROW_HEIGHT = 8;   // px per grid row unit — fine granularity for height tuning
-export const GRID_MARGIN: [number, number] = [16, 16];
+// Horizontal gap 16 between side-by-side widgets; VERTICAL 0 — react-grid-layout
+// applies margin between every row unit, and with the fine 8px row unit a nonzero
+// vertical margin balloons tall widgets (h*8 + (h-1)*16 → a huge void). The gap
+// between stacked widgets comes from .v4-widget padding-bottom instead (constant).
+export const GRID_MARGIN: [number, number] = [16, 0];
 
 export type BreakpointKey = keyof typeof GRID_COLS;
 
@@ -80,7 +84,7 @@ export const WIDGETS: WidgetDef[] = [
     id: 'hosts',
     title: 'Hosts',
     blurb: 'Instrument rows for every machine + personal rigs',
-    size: { wLg: 8, h: 76, minW: 4, minH: 24, hSm: 82 },
+    size: { wLg: 8, h: 58, minW: 4, minH: 24, hSm: 62 },
     render: ({ machines, loading, onClickMachine, personalIds }) =>
       loading
         ? <HostTileDSkeleton />
@@ -96,7 +100,7 @@ export const WIDGETS: WidgetDef[] = [
     id: 'services',
     title: 'Service Health',
     blurb: 'Per-host service up/down counts (tap for detail)',
-    size: { wLg: 4, h: 34, minW: 3, minH: 16 },
+    size: { wLg: 4, h: 30, minW: 3, minH: 16 },
     render: () => <ServiceHealthSummary />,
   },
   {
@@ -110,14 +114,14 @@ export const WIDGETS: WidgetDef[] = [
     id: 'storage',
     title: 'Storage',
     blurb: 'Drives grouped by host, fullest-first',
-    size: { wLg: 8, h: 56, minW: 4, minH: 20 },
+    size: { wLg: 8, h: 42, minW: 4, minH: 20 },
     render: () => <StoragePanel />,
   },
   {
     id: 'load',
     title: 'Load Charts',
     blurb: 'Live CPU history across servers',
-    size: { wLg: 8, h: 34, minW: 4, minH: 18 },
+    size: { wLg: 8, h: 40, minW: 4, minH: 18 },
     render: () => <LoadChartsPanel />,
   },
   {
@@ -173,7 +177,7 @@ export const WIDGET_MAP: Record<string, WidgetDef> =
 // Mirrors the previous Home: lead column = alerts, hosts, load, storage;
 // rail = services, gaming, automation, downloads. IDs on the DEFAULT board:
 export const DEFAULT_WIDGET_IDS = [
-  'alerts', 'hosts', 'services', 'load', 'gaming', 'storage', 'automation', 'downloads',
+  'hosts', 'services', 'load', 'gaming', 'storage', 'automation', 'downloads',
 ];
 
 // Build a Layouts object for a given set of widget ids using a shelf-packing
