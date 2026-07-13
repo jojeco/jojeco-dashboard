@@ -526,6 +526,15 @@ export default function ControlsPage() {
           onFireTrigger={handleFireTrigger}
           onAbortTrigger={handleAbortTrigger}
         />
+        <FailoverPanel
+          failover={failover}
+          output={failoverOut}
+          loading={loading}
+          onActivate={handleActivateFailover}
+          onDeactivate={handleDeactivateFailover}
+          onSync={handleSyncNow}
+          onRefresh={loadFailover}
+        />
         <AutomationPanel
           jobs={snapAutomation}
           triggerJobs={triggerJobs}
@@ -536,68 +545,64 @@ export default function ControlsPage() {
           onAbortTrigger={handleAbortTrigger}
         />
         <UpdatesPanel />
-        <FailoverPanel
-          failover={failover}
-          output={failoverOut}
-          loading={loading}
-          onActivate={handleActivateFailover}
-          onDeactivate={handleDeactivateFailover}
-          onSync={handleSyncNow}
-          onRefresh={loadFailover}
-        />
       </div>
 
       {/* ── Desktop layout (8/4 command-center grid) ──────────────────────── */}
-      <div
-        className="hidden xl:grid gap-6"
-        style={{ gridTemplateColumns: '8fr 4fr', alignItems: 'start' }}
-      >
-        {/* Lead column (8): header + servers + Claude */}
-        <div className="flex flex-col gap-4">
-          <PageHeader />
-          <ServersPanel
-            servers={SERVERS}
-            statusMap={serverStatusMap}
-            restarting={restarting}
-            loading={loading}
-            results={serverResults}
-            onWake={handleWake}
-            onRestart={handleRestart}
-            onShutdown={handleShutdown}
-          />
-          <ClaudePanel
-            loading={loading}
-            result={claudeResult}
-            triggerJobs={triggerJobs}
-            now={now}
-            onStop={handleClaudeStop}
-            onRestart={handleClaudeRestart}
-            onFireTrigger={handleFireTrigger}
-            onAbortTrigger={handleAbortTrigger}
-          />
-        </div>
+      {/* PageHeader spans the full width ABOVE the grid so both columns start
+          at the same Y — prevents the lead column from being pushed down relative
+          to the rail. */}
+      <div className="hidden xl:flex xl:flex-col xl:gap-4">
+        <PageHeader />
+        <div
+          className="grid gap-6"
+          style={{ gridTemplateColumns: '8fr 4fr', alignItems: 'start' }}
+        >
+          {/* Lead column (8): servers + Claude */}
+          <div className="flex flex-col gap-4">
+            <ServersPanel
+              servers={SERVERS}
+              statusMap={serverStatusMap}
+              restarting={restarting}
+              loading={loading}
+              results={serverResults}
+              onWake={handleWake}
+              onRestart={handleRestart}
+              onShutdown={handleShutdown}
+            />
+            <ClaudePanel
+              loading={loading}
+              result={claudeResult}
+              triggerJobs={triggerJobs}
+              now={now}
+              onStop={handleClaudeStop}
+              onRestart={handleClaudeRestart}
+              onFireTrigger={handleFireTrigger}
+              onAbortTrigger={handleAbortTrigger}
+            />
+          </div>
 
-        {/* Rail (4): automation + updates + failover */}
-        <div className="flex flex-col gap-4">
-          <AutomationPanel
-            jobs={snapAutomation}
-            triggerJobs={triggerJobs}
-            loading={loading}
-            now={now}
-            onJobClick={setSelectedJob}
-            onFireTrigger={handleFireTrigger}
-            onAbortTrigger={handleAbortTrigger}
-          />
-          <UpdatesPanel />
-          <FailoverPanel
-            failover={failover}
-            output={failoverOut}
-            loading={loading}
-            onActivate={handleActivateFailover}
-            onDeactivate={handleDeactivateFailover}
-            onSync={handleSyncNow}
-            onRefresh={loadFailover}
-          />
+          {/* Rail (4): failover (safety control — surfaces first) → automation → updates */}
+          <div className="flex flex-col gap-4">
+            <FailoverPanel
+              failover={failover}
+              output={failoverOut}
+              loading={loading}
+              onActivate={handleActivateFailover}
+              onDeactivate={handleDeactivateFailover}
+              onSync={handleSyncNow}
+              onRefresh={loadFailover}
+            />
+            <AutomationPanel
+              jobs={snapAutomation}
+              triggerJobs={triggerJobs}
+              loading={loading}
+              now={now}
+              onJobClick={setSelectedJob}
+              onFireTrigger={handleFireTrigger}
+              onAbortTrigger={handleAbortTrigger}
+            />
+            <UpdatesPanel />
+          </div>
         </div>
       </div>
     </>
