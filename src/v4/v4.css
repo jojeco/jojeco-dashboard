@@ -206,3 +206,66 @@
     display: none;
   }
 }
+
+/* ── Live status-dot pulse (shared by HostTileD, GamingGlance, widgets) ─── */
+@keyframes v4DotPulse {
+  0%, 100% { opacity: 1;    transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.88); }
+}
+.v4-dot-pulse { animation: v4DotPulse 4s ease-in-out infinite; }
+
+/* ── Home customizable grid (react-grid-layout) ──────────────────── */
+/* rgl brings its own styles.css; these override chrome to match DESIGN.md.  */
+
+/* Widget shell fills its grid cell; body scrolls internally if it overflows. */
+.v4-widget {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.v4-widget-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+/* thin, unobtrusive scrollbars inside widgets */
+.v4-widget-body::-webkit-scrollbar { width: 6px; height: 6px; }
+.v4-widget-body::-webkit-scrollbar-thumb { background: var(--v4-hairline); border-radius: 3px; }
+
+/* In edit mode, dashed affordance around each widget + drag chrome bar. */
+.v4-widget-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: var(--v4-raised);
+  border-top-left-radius: 0.75rem;
+  border-top-right-radius: 0.75rem;
+}
+.v4-widget-drag { cursor: grab; user-select: none; }
+.v4-home-grid--editing .react-grid-item {
+  outline: 1px dashed var(--v4-hairline);
+  outline-offset: 2px;
+  border-radius: 0.75rem;
+}
+/* In edit mode, block taps into widget content so drags don't trigger nav. */
+.v4-widget-body--editing { pointer-events: none; }
+
+/* rgl placeholder — where a dragged widget will drop. Command Blue wash. */
+.v4-home-grid .react-grid-item.react-grid-placeholder {
+  background: rgba(88, 166, 255, 0.14);
+  border: 1px dashed var(--v4-amber);
+  border-radius: 0.75rem;
+  opacity: 1;
+}
+/* dragged item floats above */
+.v4-home-grid .react-grid-item.react-draggable-dragging {
+  z-index: 30;
+  cursor: grabbing;
+}
+/* resize handle — recolor rgl's default sw/se handle to Command Blue */
+.v4-home-grid .react-resizable-handle::after {
+  border-right-color: var(--v4-amber);
+  border-bottom-color: var(--v4-amber);
+}
