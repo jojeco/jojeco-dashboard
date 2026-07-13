@@ -9,12 +9,21 @@
  *  - Per server: Start / Stop / Restart → POST /api/gaming/:server/:action
  *  - When S1 is offline: a single prominent "Wake Server 1" → POST /api/controls/server/server1/wake
  *
+ * Log viewer (MC only — VS keeper has no log endpoint):
+ *  - Logs / Errors toggle → GET /api/gaming/:server/logs|errors
+ *  - Expandable dark Well surface, mono, fetch-on-expand, refresh button.
+ *
+ * Layout:
+ *  - All game servers (3 MC + VS) in ONE unified "GAME SERVERS" grid.
+ *  - auto-fill minmax(300px, 1fr) — fills the width, no void, single-col on mobile.
+ *  - Per-card type chip (MC · VS) instead of separate section headers.
+ *
  * Status vocabulary (DESIGN.md stripes/chips — never color alone):
  *  RUNNING (nominal) · SLEEPING (standby, "wakes on join") · STOPPED (standby) ·
  *  STARTING (degraded) · S1 OFFLINE (fault)
  */
-import { useState, useCallback } from 'react';
-import { Gamepad2, Play, Square, RotateCcw, Power, Cpu, MemoryStick } from 'lucide-react';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { Gamepad2, Play, Square, RotateCcw, Power, Cpu, MemoryStick, FileText, AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { getToken } from '../../services/api';
@@ -38,6 +47,22 @@ async function authPost(path: string): Promise<{ ok: boolean; msg: string }> {
   } catch { return { ok: false, msg: 'Network error' }; }
 }
 
+async function fetchGameLogs(serverKey: string, type: 'logs' | 'errors'): Promise<{ lines: string[]; unavailable?: boolean; reason?: string }> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  try {
+    const res = await fetch(`${BASE}/gaming/${serverKey}/${type}`, { headers, signal: AbortSignal.timeout(8000) });
+    const d = await res.json().catch(() => ({})) as Record<string, unknown>;
+    if (d.unavailable) return { lines: [], unavailable: true, reason: String(d.reason ?? 'unavailable') };
+    const raw = (d[type] ?? []) as string[];
+    // Keep last 100 lines so the viewer stays manageable
+    return { lines: raw.slice(-100) };
+  } catch (e) {
+    return { lines: [], unavailable: true, reason: e instanceof Error ? e.message : 'fetch error' };
+  }
+}
+
 // ── Status → visual level/label ──────────────────────────────────────────────
 type Level = 'nominal' | 'degraded' | 'fault' | 'standby';
 
@@ -52,7 +77,7 @@ function statusView(status: string, s1Online: boolean): { level: Level; label: s
   }
 }
 
-// ── Confirm modal (DetailModal confirm pattern, matches ControlsPage) ─────────
+// ── Confirm modal ─────────────────────────────────────────────────────────────
 interface ConfirmState { open: boolean; title: string; body: string; confirmLabel: string; destructive: boolean; fn: () => void }
 const CONFIRM_DEFAULT: ConfirmState = { open: false, title: '', body: '', confirmLabel: 'Confirm', destructive: true, fn: () => {} };
 
@@ -87,7 +112,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
   );
 }
 
-// ── Toast banner (single, fades) ─────────────────────────────────────────────
+// ── Toast banner ─────────────────────────────────────────────────────────────
 function ToastBanner({ result, onDismiss }: { result: { ok: boolean; msg: string } | null; onDismiss: () => void }) {
   if (!result) return null;
   setTimeout(onDismiss, 4500);
@@ -131,19 +156,166 @@ function GameBtn({ label, icon: Icon, variant, disabled, loading, onClick }: {
   );
 }
 
+// ── Per-card log viewer (MC only) ────────────────────────────────────────────
+type LogType = 'logs' | 'errors';
+
+interface LogState {
+  lines: string[];
+  unavailable?: boolean;
+  reason?: string;
+}
+
+function GameLogViewer({ serverKey, hasLogs }: { serverKey: string; hasLogs: boolean }) {
+  const [activeLog, setActiveLog] = useState<LogType | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<Record<LogType, LogState | null>>({ logs: null, errors: null });
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const load = useCallback(async (type: LogType) => {
+    setLoading(true);
+    const result = await fetchGameLogs(serverKey, type);
+    setData(prev => ({ ...prev, [type]: { lines: result.lines, unavailable: result.unavailable, reason: result.reason } }));
+    setLoading(false);
+  }, [serverKey]);
+
+  const toggle = (type: LogType) => {
+    if (activeLog === type) { setActiveLog(null); return; }
+    setActiveLog(type);
+    if (!data[type]) void load(type);
+  };
+
+  const refresh = () => {
+    if (activeLog) {
+      setData(prev => ({ ...prev, [activeLog]: null }));
+      void load(activeLog);
+    }
+  };
+
+  useEffect(() => {
+    if (bottomRef.current && activeLog && data[activeLog] && !loading) {
+      bottomRef.current.scrollIntoView({ block: 'end' });
+    }
+  }, [data, activeLog, loading]);
+
+  if (!hasLogs) {
+    return (
+      <Mono trace className="text-[0.6875rem]">no log endpoint (VS keeper)</Mono>
+    );
+  }
+
+  const current = activeLog ? data[activeLog] : null;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* Log / Errors toggle row */}
+      <div className="flex gap-2">
+        {(['logs', 'errors'] as LogType[]).map(type => {
+          const isActive = activeLog === type;
+          const isErr = type === 'errors';
+          return (
+            <button
+              key={type}
+              onClick={() => toggle(type)}
+              className="flex items-center gap-1.5 flex-1 min-h-[36px] rounded-[0.5rem] text-[0.75rem] font-medium transition-colors"
+              style={{
+                background: isActive
+                  ? isErr ? 'rgba(248,81,73,0.10)' : 'rgba(88,166,255,0.10)'
+                  : 'var(--v4-console)',
+                color: isActive
+                  ? isErr ? 'var(--v4-fault)' : 'var(--v4-accent)'
+                  : 'var(--v4-readout)',
+                border: isActive
+                  ? `1px solid ${isErr ? 'rgba(248,81,73,0.3)' : 'rgba(88,166,255,0.25)'}`
+                  : 'none',
+                cursor: 'pointer',
+                padding: '7px 10px',
+                justifyContent: 'center',
+              }}
+            >
+              {isErr
+                ? <AlertTriangle size={11} className="shrink-0" />
+                : <FileText size={11} className="shrink-0" />
+              }
+              {isActive ? (type === 'logs' ? 'Hide Logs' : 'Hide Errors') : (type === 'logs' ? 'Logs' : 'Errors')}
+              {isActive ? <ChevronUp size={10} className="shrink-0 ml-auto" /> : <ChevronDown size={10} className="shrink-0 ml-auto" />}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Log body */}
+      {activeLog && (
+        <div className="relative rounded-[0.5rem] overflow-hidden" style={{ background: 'var(--v4-well)' }}>
+          {/* Refresh button */}
+          <button
+            onClick={refresh}
+            disabled={loading}
+            aria-label="Refresh"
+            className="absolute top-2 right-2 z-10 flex items-center justify-center rounded transition-opacity hover:opacity-80 disabled:opacity-40"
+            style={{ background: 'rgba(88,166,255,0.10)', border: 'none', cursor: loading ? 'default' : 'pointer', width: 22, height: 22, color: 'var(--v4-amber)' }}
+          >
+            <RefreshCw size={10} className={loading ? 'animate-spin' : ''} />
+          </button>
+
+          {loading ? (
+            <div className="flex flex-col gap-1 p-3 pr-8">
+              {(['w-3/4', 'w-1/2', 'w-4/5', 'w-2/3'] as const).map((w, i) => (
+                <Skeleton key={i} className={`h-4 ${w}`} />
+              ))}
+            </div>
+          ) : current?.unavailable ? (
+            <p className="px-3 py-2.5 text-[0.6875rem]" style={{ color: 'var(--v4-trace)', fontFamily: "'Geist Mono', monospace" }}>
+              {current.reason ?? 'unavailable'}
+            </p>
+          ) : current && current.lines.length === 0 ? (
+            <p className="px-3 py-2.5 text-[0.6875rem]" style={{ color: activeLog === 'errors' ? 'var(--v4-nominal)' : 'var(--v4-trace)', fontFamily: "'Geist Mono', monospace" }}>
+              {activeLog === 'errors' ? 'no errors found' : 'no log output'}
+            </p>
+          ) : (
+            <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 260 }}>
+              <div className="flex flex-col p-3 pr-8 min-w-max">
+                {(current?.lines ?? []).map((line, i) => (
+                  <span
+                    key={i}
+                    className="text-[0.6875rem] leading-5 whitespace-pre break-normal"
+                    style={{ color: activeLog === 'errors' ? 'var(--v4-fault)' : 'var(--v4-signal)', fontFamily: "'Geist Mono', monospace" }}
+                  >
+                    {line}
+                  </span>
+                ))}
+                <div ref={bottomRef} aria-hidden />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── One server card ──────────────────────────────────────────────────────────
 interface CardProps {
   name: string;
-  serverKey: string;               // mc id or 'vs' for the control endpoint
+  serverKey: string;
+  type: 'MC' | 'VS';
   status: string;
   port: number | null;
   players?: number;
+  uptime_s?: number;
   s1Online: boolean;
   loading: Record<string, boolean>;
   onAction: (serverKey: string, name: string, action: 'start' | 'stop' | 'restart', running: boolean) => void;
 }
 
-function ServerCard({ name, serverKey, status, port, players, s1Online, loading, onAction }: CardProps) {
+function fmtUptime(s: number): string {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function ServerCard({ name, serverKey, type, status, port, players, uptime_s, s1Online, loading, onAction }: CardProps) {
   const view = statusView(status, s1Online);
   const stripe = view.level === 'nominal' ? 'var(--v4-nominal)'
     : view.level === 'degraded' ? 'var(--v4-degraded)'
@@ -152,6 +324,7 @@ function ServerCard({ name, serverKey, status, port, players, s1Online, loading,
 
   const running = s1Online && ['running', 'starting'].includes(status?.toLowerCase());
   const busy = loading[`${serverKey}-start`] || loading[`${serverKey}-stop`] || loading[`${serverKey}-restart`];
+  const hasLogs = type === 'MC';
 
   return (
     <div
@@ -161,15 +334,30 @@ function ServerCard({ name, serverKey, status, port, players, s1Online, loading,
       {/* Header */}
       <div className="flex items-start justify-between gap-2 min-w-0">
         <div className="flex-1 min-w-0">
-          <div className="text-[0.875rem] font-semibold truncate tracking-tight" style={{ color: 'var(--v4-signal)' }}>
-            {name}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="text-[0.875rem] font-semibold truncate tracking-tight" style={{ color: 'var(--v4-signal)' }}>
+              {name}
+            </div>
+            {/* Type chip */}
+            <span
+              className="text-[0.6rem] font-bold uppercase tracking-widest shrink-0 px-1.5 py-0.5 rounded"
+              style={{
+                background: type === 'MC' ? 'rgba(63,185,80,0.12)' : 'rgba(88,166,255,0.12)',
+                color: type === 'MC' ? 'var(--v4-nominal)' : 'var(--v4-accent)',
+              }}
+            >
+              {type}
+            </span>
           </div>
-          <div className="flex items-center gap-2 mt-0.5">
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {port != null && <Mono trace className="text-[0.6875rem]">:{port}</Mono>}
             {players != null && (
               <Mono className="text-[0.6875rem]" style={{ color: players > 0 ? 'var(--v4-nominal)' : 'var(--v4-trace)' }}>
                 {players} player{players === 1 ? '' : 's'}
               </Mono>
+            )}
+            {uptime_s != null && uptime_s > 0 && (
+              <Mono trace className="text-[0.6875rem]">up {fmtUptime(uptime_s)}</Mono>
             )}
           </div>
         </div>
@@ -194,9 +382,14 @@ function ServerCard({ name, serverKey, status, port, players, s1Online, loading,
         />
         <GameBtn
           label="Restart" icon={RotateCcw} variant="neutral"
-          disabled={!s1Online || !running || busy} loading={!!loading[`${serverKey}-restart`]}
+          disabled={!s1Online || !running || !!busy} loading={!!loading[`${serverKey}-restart`]}
           onClick={() => onAction(serverKey, name, 'restart', running)}
         />
+      </div>
+
+      {/* Log viewer — separator */}
+      <div style={{ borderTop: '1px solid rgba(48,54,61,0.6)', paddingTop: '0.5rem' }}>
+        <GameLogViewer serverKey={serverKey} hasLogs={hasLogs} />
       </div>
     </div>
   );
@@ -243,7 +436,7 @@ export default function GamingPage() {
   const mc: GamingMcServer[] = gaming?.minecraft ?? [];
   const vs: GamingVintageStory | null = gaming?.vintageStory ?? null;
 
-  // Server 1 machine from the lab section (match by id/name)
+  // Server 1 machine from the lab section
   const s1Machine = (lab?.machines ?? []).find(
     m => ['s1', 'server1'].includes(m.id.toLowerCase()) || m.name.toLowerCase().includes('server 1'),
   ) ?? null;
@@ -359,49 +552,47 @@ export default function GamingPage() {
         </Panel>
       )}
 
-      {/* Server cards */}
+      {/* Unified GAME SERVERS grid — all 4 servers, no section split, no void */}
       {waiting ? (
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 w-full" />)}
+        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-48 w-full" />)}
         </div>
+      ) : totalCount === 0 ? (
+        <Mono trace className="text-[0.75rem]">No game servers reported</Mono>
       ) : (
         <>
-          <PanelTitle className="mb-3">Minecraft</PanelTitle>
-          <div className="grid gap-3 v4-stagger mb-6" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-            {mc.length === 0 ? (
-              <Mono trace className="text-[0.75rem]">No Minecraft servers reported</Mono>
-            ) : (
-              mc.map(s => (
-                <ServerCard
-                  key={s.id}
-                  name={s.name}
-                  serverKey={s.id}
-                  status={s.status}
-                  port={s.port}
-                  players={s.players}
-                  s1Online={s1Online}
-                  loading={loadingMap}
-                  onAction={onAction}
-                />
-              ))
-            )}
-          </div>
-
-          <PanelTitle className="mb-3">Vintage Story</PanelTitle>
-          <div className="grid gap-3 v4-stagger" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-            {vs ? (
+          <PanelTitle className="mb-3">Game Servers</PanelTitle>
+          <div
+            className="grid gap-3 v4-stagger"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}
+          >
+            {mc.map(s => (
               <ServerCard
-                name="Vintage Story"
-                serverKey="vs"
-                status={vs.status}
-                port={vs.port ?? null}
-                players={vs.players}
+                key={s.id}
+                name={s.name}
+                serverKey={s.id}
+                type="MC"
+                status={s.status}
+                port={s.port}
+                players={s.players}
                 s1Online={s1Online}
                 loading={loadingMap}
                 onAction={onAction}
               />
-            ) : (
-              <Mono trace className="text-[0.75rem]">Vintage Story keeper not reporting</Mono>
+            ))}
+            {vs && (
+              <ServerCard
+                name="Vintage Story"
+                serverKey="vs"
+                type="VS"
+                status={vs.status}
+                port={vs.port ?? null}
+                players={vs.players}
+                uptime_s={vs.uptime_s}
+                s1Online={s1Online}
+                loading={loadingMap}
+                onAction={onAction}
+              />
             )}
           </div>
         </>

@@ -3,14 +3,17 @@
 //
 // Backends (both on Server 1, 192.168.50.10):
 //   • Minecraft manager (mc_manager.py) — http://192.168.50.10:8765
-//       GET  /status        → { <id>: {id,name,public_port,backend_port,status}, ... }
-//                             status ∈ "running" | "sleeping" | "starting" | "stopped"
+//       GET  /status           → { <id>: {id,name,public_port,backend_port,status}, ... }
+//                                status ∈ "running" | "sleeping" | "starting" | "stopped"
+//       GET  /logs/<id>        → { logs: string[] }   (recent warn+error lines from log4j)
+//       GET  /errors/<id>      → { errors: string[] } (error-only lines)
 //       POST /<id>/start | /<id>/stop | /<id>/restart   (CORS: GET, POST, OPTIONS)
 //       lazymc fronts each server: "sleeping" = wakes automatically on player join.
 //   • Vintage Story keeper (vs-keeper.ps1) — http://192.168.50.10:8767
 //       GET  /status        → { state, players, uptime_s }
 //       POST /start | /stop  (POST requires a Content-Length / body)
 //       No /restart on the VS keeper → implemented here as stop-then-start.
+//       No log endpoint — VS keeper only exposes /status, /start, /stop.
 //
 // Everything is best-effort: when S1 is off (game rigs powered down), /status
 // returns { s1Online:false } and control actions surface a clear error.
@@ -119,6 +122,38 @@ router.post('/api/gaming/:server/:action', authMiddleware, async (req, res) => {
   } catch (e) {
     // Timeout / connection refused → S1 or the manager is down.
     return res.status(502).json({ error: `Game server unreachable — ${e.message}` });
+  }
+});
+
+// ── Logs / errors (MC only) ───────────────────────────────────────────────────
+// GET /api/gaming/:server/logs   → { logs: string[] }
+// GET /api/gaming/:server/errors → { errors: string[] }
+// VS keeper has no log endpoint; returns a clear 404 note so the UI can handle it.
+router.get('/api/gaming/:server/logs', authMiddleware, async (req, res) => {
+  const { server } = req.params;
+  if (server === 'vs') return res.json({ logs: [], unavailable: true, reason: 'VS keeper has no log endpoint' });
+  if (!MC_IDS.has(server)) return res.status(400).json({ error: 'Unknown game server' });
+  try {
+    const r = await fetch(`${MC_BASE}/logs/${server}`, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return res.status(502).json({ logs: [], unavailable: true, reason: `mc_manager ${r.status}` });
+    const data = await r.json();
+    return res.json({ logs: Array.isArray(data.logs) ? data.logs : [] });
+  } catch (e) {
+    return res.json({ logs: [], unavailable: true, reason: `S1 unreachable — ${e.message}` });
+  }
+});
+
+router.get('/api/gaming/:server/errors', authMiddleware, async (req, res) => {
+  const { server } = req.params;
+  if (server === 'vs') return res.json({ errors: [], unavailable: true, reason: 'VS keeper has no log endpoint' });
+  if (!MC_IDS.has(server)) return res.status(400).json({ error: 'Unknown game server' });
+  try {
+    const r = await fetch(`${MC_BASE}/errors/${server}`, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return res.status(502).json({ errors: [], unavailable: true, reason: `mc_manager ${r.status}` });
+    const data = await r.json();
+    return res.json({ errors: Array.isArray(data.errors) ? data.errors : [] });
+  } catch (e) {
+    return res.json({ errors: [], unavailable: true, reason: `S1 unreachable — ${e.message}` });
   }
 });
 
