@@ -7,6 +7,7 @@ import { LayoutDashboard, Server, Film, Sliders, Gamepad2, LogOut, LogIn } from 
 import { useAuth } from '../../contexts/AuthContext';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { LiveIndicator } from './LiveIndicator';
+import { AlertBell } from './AlertBell';
 import { cn } from '../lib/utils';
 
 // ── 5-tab nav (DESIGN.md: 5 tabs max) ───────────────────────────────────────
@@ -107,6 +108,11 @@ function DesktopRail() {
       {/* Spacer */}
       <div className="flex-1" />
 
+      {/* Alert bell */}
+      <div className="mb-1">
+        <AlertBell placement="rail" />
+      </div>
+
       {/* Live indicator */}
       <div className="mb-2">
         <LiveIndicator showLabel={false} />
@@ -166,9 +172,10 @@ function MobileHeader() {
         </span>
       </div>
 
-      {/* Right: status + live dot */}
-      <div className="flex items-center gap-3">
+      {/* Right: status + bell + live dot */}
+      <div className="flex items-center gap-1">
         <LabStatusSummary />
+        <AlertBell placement="header" />
         <LiveIndicator showLabel={false} />
       </div>
     </header>
