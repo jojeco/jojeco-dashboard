@@ -232,6 +232,9 @@
   min-height: 0;
   overflow: auto;
 }
+/* Phone stack: natural content height (no fixed grid-row height → no void/clip) */
+.v4-widget--stacked { height: auto; padding-bottom: 12px; }
+.v4-widget--stacked .v4-widget-body { overflow: visible; }
 /* thin, unobtrusive scrollbars inside widgets */
 .v4-widget-body::-webkit-scrollbar { width: 6px; height: 6px; }
 .v4-widget-body::-webkit-scrollbar-thumb { background: var(--v4-hairline); border-radius: 3px; }

@@ -10,7 +10,7 @@
  *
  * Layout + active-widget set persist to localStorage via lib/homeWidgets.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import RGL from 'react-grid-layout';
 type Layout = RGL.Layout;
 type Layouts = RGL.Layouts;
@@ -57,7 +57,22 @@ export default function HomeGrid() {
   const [editing, setEditing] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [board, setBoard] = useState<HomeBoardState>(() => loadBoard());
-  const [bp, setBp] = useState<BreakpointKey>('lg');
+  const bpFromWidth = (w: number): BreakpointKey =>
+    w >= 1280 ? 'lg' : w >= 996 ? 'md' : w >= 768 ? 'sm' : w >= 480 ? 'xs' : 'xxs';
+
+  const [bp, setBp] = useState<BreakpointKey>(
+    () => (typeof window !== 'undefined' ? bpFromWidth(window.innerWidth) : 'lg')
+  );
+
+  // Track breakpoint from window width so the phone-stack path works even though
+  // the desktop grid (which fires onBreakpointChange) isn't mounted on phones.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setBp(bpFromWidth(window.innerWidth));
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const isPhone = bp === 'xs' || bp === 'xxs';
 
@@ -207,7 +222,46 @@ export default function HomeGrid() {
         </div>
       )}
 
-      {/* ── The grid ────────────────────────────────────────────────── */}
+      {/* ── The board: natural stack on phones, drag/resize grid on desktop ──
+          On phones the fixed grid-row heights fight touch-sized content (voids/
+          clips), so we render a plain content-height column ordered by the desktop
+          layout. Drag/resize stays desktop-only; add/remove still works here. */}
+      {isPhone ? (
+        <div className="flex flex-col">
+          {[...board.activeIds]
+            .sort((a, b) => {
+              const la = board.layouts.lg?.find(l => l.i === a);
+              const lb = board.layouts.lg?.find(l => l.i === b);
+              return (la?.y ?? 0) - (lb?.y ?? 0) || (la?.x ?? 0) - (lb?.x ?? 0);
+            })
+            .map(id => {
+              const def = WIDGET_MAP[id];
+              if (!def) return null;
+              return (
+                <div key={id} className="v4-widget v4-widget--stacked">
+                  {editing && (
+                    <div className="v4-widget-chrome">
+                      <span className="text-[0.6875rem] uppercase tracking-[0.06em]" style={{ color: 'var(--v4-readout)' }}>
+                        {def.title}
+                      </span>
+                      <button
+                        onClick={() => removeWidget(id)}
+                        className="flex items-center justify-center rounded"
+                        style={{ width: 22, height: 22, background: 'transparent', cursor: 'pointer' }}
+                        aria-label={`Remove ${def.title}`}
+                      >
+                        <X size={14} style={{ color: 'var(--v4-fault)' }} />
+                      </button>
+                    </div>
+                  )}
+                  <div className="v4-widget-body">
+                    {def.render(renderCtx)}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      ) : (
       <ResponsiveGridLayout
         className={cn('v4-home-grid', editing && 'v4-home-grid--editing')}
         layouts={layouts}
@@ -256,6 +310,7 @@ export default function HomeGrid() {
           );
         })}
       </ResponsiveGridLayout>
+      )}
 
       {/* ── Host detail modal (shared) ──────────────────────────────── */}
       <HostDetailModal
