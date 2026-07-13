@@ -840,6 +840,152 @@ function ArrDetailModal({
 
 // ─── Arr queue panel ──────────────────────────────────────────────────────────
 
+// Classify an arr queue item: actively downloading (<100%, no warning) vs
+// "warning backlog" (100% or completed + import-warning, never truly in-flight).
+function isActivelyDownloading(item: ArrQueueItem): boolean {
+  const pct = item.size > 0 ? (item.size - item.sizeleft) / item.size : 0;
+  const isComplete = pct >= 0.999 || item.status.toLowerCase() === 'completed';
+  const hasWarning = !!(item.trackedDownloadStatus && item.trackedDownloadStatus !== 'Ok');
+  // Active = not complete, OR complete but NO warning (i.e. will finish shortly)
+  return !(isComplete && hasWarning);
+}
+
+// Group warning-backlog items by series/movie title so we can collapse them.
+interface WarningGroup {
+  seriesTitle: string;
+  kind: 'sonarr' | 'radarr';
+  count: number;
+  trackedStatus: string;
+  items: Array<ArrQueueItem & { _kind: 'sonarr' | 'radarr' }>;
+}
+
+function groupWarningItems(
+  items: Array<ArrQueueItem & { _kind: 'sonarr' | 'radarr' }>
+): WarningGroup[] {
+  const map = new Map<string, WarningGroup>();
+  for (const item of items) {
+    const key = item._kind === 'sonarr'
+      ? (item.series?.title || 'Unknown')
+      : (item.movie?.title || item.title);
+    const existing = map.get(key);
+    if (existing) {
+      existing.count++;
+      existing.items.push(item);
+    } else {
+      map.set(key, {
+        seriesTitle: key,
+        kind: item._kind,
+        count: 1,
+        trackedStatus: item.trackedDownloadStatus || 'Warning',
+        items: [item],
+      });
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => b.count - a.count);
+}
+
+// Upcoming calendar section (extracted so we can render it near the top of the panel)
+function UpcomingSection({
+  upcomingTab,
+  setUpcomingTab,
+  upcomingItems,
+  sortedEpisodes,
+  sortedMovies,
+}: {
+  upcomingTab: 'all' | 'episodes' | 'movies';
+  setUpcomingTab: (t: 'all' | 'episodes' | 'movies') => void;
+  upcomingItems: UpcomingItem[];
+  sortedEpisodes: UpcomingEpisode[];
+  sortedMovies: UpcomingMovie[];
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Calendar size={13} style={{ color: 'var(--v4-trace)' }} />
+          <span className="text-[0.75rem] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--v4-readout)' }}>
+            Upcoming
+          </span>
+        </div>
+        {/* Mini tab bar */}
+        <div className="flex gap-1">
+          {([
+            { key: 'all', label: `All (${sortedEpisodes.length + sortedMovies.length})` },
+            { key: 'episodes', label: `TV (${sortedEpisodes.length})` },
+            { key: 'movies', label: `Film (${sortedMovies.length})` },
+          ] as Array<{ key: typeof upcomingTab; label: string }>).map(t => (
+            <button
+              key={t.key}
+              onClick={() => setUpcomingTab(t.key)}
+              className="text-[0.6875rem] px-2 py-0.5 rounded"
+              style={{
+                background: upcomingTab === t.key
+                  ? 'color-mix(in srgb, var(--v4-amber) 12%, transparent)'
+                  : 'var(--v4-well)',
+                color: upcomingTab === t.key ? 'var(--v4-amber)' : 'var(--v4-trace)',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1 v4-stagger">
+        {upcomingItems.slice(0, 10).map(item => {
+          const isEp = item.type === 'episode';
+          const dateStr = isEp
+            ? (item as UpcomingEpisode).airDate
+            : ((item as UpcomingMovie).digitalRelease || (item as UpcomingMovie).physicalRelease || (item as UpcomingMovie).inCinemas);
+          const date = relativeDate(dateStr);
+
+          return (
+            <div
+              key={`${item.type}-${item.id}`}
+              className="flex items-center gap-2 px-3 py-2 rounded-[0.5rem]"
+              style={{ background: 'var(--v4-well)' }}
+            >
+              {isEp
+                ? <Tv size={12} style={{ color: 'var(--v4-amber)', flexShrink: 0 }} />
+                : <Film size={12} style={{ color: '#a78bfa', flexShrink: 0 }} />}
+              <div className="flex-1 min-w-0">
+                <div className="text-[0.8125rem] truncate" style={{ color: 'var(--v4-signal)' }}>
+                  {item.title}
+                </div>
+                {isEp && (item as UpcomingEpisode).episode && (
+                  <div className="text-[0.6875rem] truncate" style={{ color: 'var(--v4-trace)' }}>
+                    {(item as UpcomingEpisode).episode}
+                    {(item as UpcomingEpisode).episodeTitle
+                      ? ` — ${(item as UpcomingEpisode).episodeTitle}`
+                      : ''}
+                  </div>
+                )}
+              </div>
+              {date && (
+                <div className="shrink-0 text-right">
+                  <Mono className="text-[0.6875rem] block" style={{ color: 'var(--v4-readout)' }}>
+                    {date.label}
+                  </Mono>
+                  <span className="text-[0.6875rem] block" style={{ color: date.color }}>
+                    {date.note}
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {upcomingItems.length > 10 && (
+          <div className="text-center text-[0.6875rem] py-1" style={{ color: 'var(--v4-trace)' }}>
+            +{upcomingItems.length - 10} more
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 interface ArrPanelProps {
   sonarr: ArrQueueItem[];
   radarr: ArrQueueItem[];
@@ -848,18 +994,39 @@ interface ArrPanelProps {
   loading: boolean;
 }
 
+const QUEUE_PREVIEW_LIMIT = 6;
+
 function ArrPanel({ sonarr, radarr, arrStats, upcoming, loading }: ArrPanelProps) {
   const [selected, setSelected] = useState<{ item: ArrQueueItem; kind: 'sonarr' | 'radarr' } | null>(null);
   const [upcomingTab, setUpcomingTab] = useState<'all' | 'episodes' | 'movies'>('all');
+  // Whether the queue overflow rows are expanded
+  const [queueExpanded, setQueueExpanded] = useState(false);
+  // Whether a warning-group's detail is expanded (keyed by series title)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const sonarrItems = sonarr.map(i => ({ ...i, _kind: 'sonarr' as const }));
   const radarrItems = radarr.map(i => ({ ...i, _kind: 'radarr' as const }));
-  const queueAll = [...sonarrItems, ...radarrItems].sort((a, b) => {
-    // Progress descending
-    const pa = a.size > 0 ? (a.size - a.sizeleft) / a.size : 0;
-    const pb = b.size > 0 ? (b.size - b.sizeleft) / b.size : 0;
-    return pb - pa;
+  const allItems = [...sonarrItems, ...radarrItems];
+
+  // Partition into actively-downloading vs warning-backlog
+  const activeItems = allItems.filter(isActivelyDownloading).sort((a, b) => {
+    // Sort active: in-flight downloads first (by progress desc), then stalled, then failed
+    const priority = (i: typeof a) => {
+      if (i.status.toLowerCase() === 'failed') return 3;
+      if (i.trackedDownloadStatus && i.trackedDownloadStatus !== 'Ok') return 2;
+      const pct = i.size > 0 ? (i.size - i.sizeleft) / i.size : 0;
+      return pct > 0 ? 0 : 1; // downloading first
+    };
+    return priority(a) - priority(b);
   });
+  const warningItems = allItems.filter(i => !isActivelyDownloading(i));
+  const warningGroups = groupWarningItems(warningItems);
+
+  // The rows shown in the queue section before "show more"
+  // Active items take slots first; if fewer than QUEUE_PREVIEW_LIMIT active items,
+  // show summary of first warning group (collapsed) to fill up to the limit.
+  const visibleActive = activeItems.slice(0, QUEUE_PREVIEW_LIMIT);
+  const hiddenActiveCount = Math.max(0, activeItems.length - QUEUE_PREVIEW_LIMIT);
 
   const sortedEpisodes = [...upcoming.episodes].sort(
     (a, b) => new Date(a.airDate).getTime() - new Date(b.airDate).getTime()
@@ -877,6 +1044,76 @@ function ArrPanel({ sonarr, radarr, arrStats, upcoming, loading }: ArrPanelProps
         const db = b.type === 'episode' ? b.airDate : ((b as UpcomingMovie).digitalRelease || (b as UpcomingMovie).physicalRelease || (b as UpcomingMovie).inCinemas || '');
         return new Date(da).getTime() - new Date(db).getTime();
       });
+
+  function toggleGroup(title: string) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title); else next.add(title);
+      return next;
+    });
+  }
+
+  // Render a single active queue row
+  function renderActiveRow(item: ArrQueueItem & { _kind: 'sonarr' | 'radarr' }) {
+    const isShow = item._kind === 'sonarr';
+    const title = isShow
+      ? `${item.series?.title || 'Unknown'} — S${String(item.episode?.seasonNumber || 0).padStart(2, '0')}E${String(item.episode?.episodeNumber || 0).padStart(2, '0')}`
+      : `${item.movie?.title || item.title}${item.movie?.year ? ` (${item.movie.year})` : ''}`;
+    const pct = item.size > 0 ? (item.size - item.sizeleft) / item.size * 100 : 0;
+    const hasWarning = item.trackedDownloadStatus && item.trackedDownloadStatus !== 'Ok';
+
+    return (
+      <button
+        key={`${item._kind}-${item.id}`}
+        onClick={() => setSelected({ item, kind: item._kind })}
+        className="flex flex-col gap-2 px-3 py-3 text-left w-full v4-tile"
+        style={{
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          borderBottom: '1px solid var(--v4-hairline)',
+          borderRadius: 0,
+        }}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          {isShow
+            ? <Tv size={12} style={{ color: 'var(--v4-amber)', flexShrink: 0 }} />
+            : <Film size={12} style={{ color: '#a78bfa', flexShrink: 0 }} />}
+          <span className="text-[0.8125rem] font-medium truncate flex-1" style={{ color: 'var(--v4-signal)' }}>
+            {title}
+          </span>
+          <span
+            className="text-[0.6875rem] font-mono shrink-0"
+            style={{
+              color: item.status.toLowerCase() === 'failed' ? 'var(--v4-fault)'
+                : item.status.toLowerCase() === 'completed' ? 'var(--v4-nominal)'
+                : 'var(--v4-readout)',
+            }}
+          >
+            {item.status}
+          </span>
+        </div>
+
+        {item.size > 0 && <ProgressBar pct={pct} color="var(--v4-amber)" />}
+
+        <div className="flex items-center gap-3">
+          {item.size > 0 && (
+            <Mono className="text-[0.6875rem]" trace>{pct.toFixed(0)}%</Mono>
+          )}
+          {item.timeleft && item.timeleft !== '00:00:00' && (
+            <span className="flex items-center gap-1 text-[0.6875rem]" style={{ color: 'var(--v4-trace)' }}>
+              <Clock size={10} />{item.timeleft}
+            </span>
+          )}
+          {hasWarning && (
+            <span className="flex items-center gap-1 text-[0.6875rem]" style={{ color: 'var(--v4-degraded)' }}>
+              <AlertCircle size={10} />{item.trackedDownloadStatus}
+            </span>
+          )}
+        </div>
+      </button>
+    );
+  }
 
   return (
     <>
@@ -900,167 +1137,142 @@ function ArrPanel({ sonarr, radarr, arrStats, upcoming, loading }: ArrPanelProps
           )}
         </div>
 
-        {/* Queue */}
+        {/* ── UPCOMING (prominent, near the top) ─────────────────────────── */}
+        {upcomingItems.length > 0 && (
+          <>
+            <UpcomingSection
+              upcomingTab={upcomingTab}
+              setUpcomingTab={setUpcomingTab}
+              upcomingItems={upcomingItems}
+              sortedEpisodes={sortedEpisodes}
+              sortedMovies={sortedMovies}
+            />
+            <Hairline className="my-4" />
+          </>
+        )}
+
+        {/* ── ACTIVE DOWNLOADS QUEUE ─────────────────────────────────────── */}
+        <div className="flex items-center gap-2 mb-2">
+          <span
+            className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em]"
+            style={{ color: 'var(--v4-readout)' }}
+          >
+            Queue
+          </span>
+          {allItems.length > 0 && (
+            <Mono className="text-[0.6875rem]" trace>
+              {activeItems.length} active
+              {warningItems.length > 0 ? ` · ${warningItems.length} import warning` : ''}
+            </Mono>
+          )}
+        </div>
+
         {loading ? (
           <div className="flex flex-col gap-2">
             {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
           </div>
-        ) : queueAll.length === 0 ? (
+        ) : allItems.length === 0 ? (
           <div className="py-3 text-center text-[0.8125rem]" style={{ color: 'var(--v4-trace)' }}>
             Queue empty — Sonarr and Radarr are idle
           </div>
         ) : (
-          <div className="flex flex-col v4-stagger">
-            {queueAll.map(item => {
-              const isShow = item._kind === 'sonarr';
-              const title = isShow
-                ? `${item.series?.title || 'Unknown'} — S${String(item.episode?.seasonNumber || 0).padStart(2, '0')}E${String(item.episode?.episodeNumber || 0).padStart(2, '0')}`
-                : `${item.movie?.title || item.title}${item.movie?.year ? ` (${item.movie.year})` : ''}`;
+          <>
+            {/* Active downloads: up to QUEUE_PREVIEW_LIMIT inline */}
+            {activeItems.length === 0 && (
+              <div className="py-2 text-[0.8125rem]" style={{ color: 'var(--v4-trace)' }}>
+                No active downloads
+              </div>
+            )}
+            <div className="flex flex-col">
+              {visibleActive.map(renderActiveRow)}
+            </div>
 
-              const pct = item.size > 0 ? (item.size - item.sizeleft) / item.size * 100 : 0;
-              const hasWarning = item.trackedDownloadStatus && item.trackedDownloadStatus !== 'Ok';
-
-              return (
+            {/* Expand overflow active rows */}
+            {hiddenActiveCount > 0 && (
+              <>
+                {queueExpanded && (
+                  <div
+                    className="flex flex-col overflow-auto"
+                    style={{ maxHeight: 400 }}
+                  >
+                    {activeItems.slice(QUEUE_PREVIEW_LIMIT).map(renderActiveRow)}
+                  </div>
+                )}
                 <button
-                  key={`${item._kind}-${item.id}`}
-                  onClick={() => setSelected({ item, kind: item._kind })}
-                  className="flex flex-col gap-2 px-3 py-3 text-left w-full v4-tile"
+                  className="w-full py-2 text-[0.75rem] font-medium text-center v4-tile"
                   style={{
                     background: 'none',
                     border: 'none',
+                    borderTop: visibleActive.length > 0 ? '1px solid var(--v4-hairline)' : 'none',
                     cursor: 'pointer',
-                    borderBottom: '1px solid var(--v4-hairline)',
-                    borderRadius: 0,
+                    color: 'var(--v4-amber)',
                   }}
+                  onClick={() => setQueueExpanded(e => !e)}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    {isShow
-                      ? <Tv size={12} style={{ color: 'var(--v4-amber)', flexShrink: 0 }} />
-                      : <Film size={12} style={{ color: '#a78bfa', flexShrink: 0 }} />}
-                    <span className="text-[0.8125rem] font-medium truncate flex-1" style={{ color: 'var(--v4-signal)' }}>
-                      {title}
-                    </span>
-                    <span
-                      className="text-[0.6875rem] font-mono shrink-0"
-                      style={{
-                        color: item.status.toLowerCase() === 'failed' ? 'var(--v4-fault)'
-                          : item.status.toLowerCase() === 'completed' ? 'var(--v4-nominal)'
-                          : 'var(--v4-readout)',
-                      }}
-                    >
-                      {item.status}
-                    </span>
-                  </div>
-
-                  {item.size > 0 && <ProgressBar pct={pct} color="var(--v4-amber)" />}
-
-                  <div className="flex items-center gap-3">
-                    {item.size > 0 && (
-                      <Mono className="text-[0.6875rem]" trace>{pct.toFixed(0)}%</Mono>
-                    )}
-                    {item.timeleft && item.timeleft !== '00:00:00' && (
-                      <span className="flex items-center gap-1 text-[0.6875rem]" style={{ color: 'var(--v4-trace)' }}>
-                        <Clock size={10} />{item.timeleft}
-                      </span>
-                    )}
-                    {hasWarning && (
-                      <span className="flex items-center gap-1 text-[0.6875rem]" style={{ color: 'var(--v4-degraded)' }}>
-                        <AlertCircle size={10} />{item.trackedDownloadStatus}
-                      </span>
-                    )}
-                  </div>
+                  {queueExpanded ? `Show less` : `+${hiddenActiveCount} more active`}
                 </button>
-              );
-            })}
-          </div>
-        )}
+              </>
+            )}
 
-        {/* Upcoming section */}
-        {upcomingItems.length > 0 && (
-          <>
-            <Hairline className="my-4" />
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Calendar size={13} style={{ color: 'var(--v4-trace)' }} />
-                <span className="text-[0.75rem] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--v4-readout)' }}>
-                  Upcoming
-                </span>
-              </div>
-              {/* Mini tab bar */}
-              <div className="flex gap-1">
-                {([
-                  { key: 'all', label: `All (${sortedEpisodes.length + sortedMovies.length})` },
-                  { key: 'episodes', label: `TV (${sortedEpisodes.length})` },
-                  { key: 'movies', label: `Film (${sortedMovies.length})` },
-                ] as Array<{ key: typeof upcomingTab; label: string }>).map(t => (
-                  <button
-                    key={t.key}
-                    onClick={() => setUpcomingTab(t.key)}
-                    className="text-[0.6875rem] px-2 py-0.5 rounded"
-                    style={{
-                      background: upcomingTab === t.key
-                        ? 'color-mix(in srgb, var(--v4-amber) 12%, transparent)'
-                        : 'var(--v4-well)',
-                      color: upcomingTab === t.key ? 'var(--v4-amber)' : 'var(--v4-trace)',
-                      border: 'none',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* Warning-backlog groups: collapsed summaries */}
+            {warningGroups.length > 0 && (
+              <div className="mt-2">
+                <div
+                  className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] mb-1 px-1"
+                  style={{ color: 'var(--v4-trace)' }}
+                >
+                  Import warnings (completed, pending import)
+                </div>
+                {warningGroups.map(group => {
+                  const isExpanded = expandedGroups.has(group.seriesTitle);
+                  return (
+                    <div key={group.seriesTitle}>
+                      {/* Group summary row — tap to expand */}
+                      <button
+                        className="flex items-center gap-2 px-3 py-2.5 w-full text-left v4-tile"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          borderBottom: '1px solid var(--v4-hairline)',
+                          borderRadius: 0,
+                        }}
+                        onClick={() => toggleGroup(group.seriesTitle)}
+                      >
+                        {group.kind === 'sonarr'
+                          ? <Tv size={12} style={{ color: 'var(--v4-amber)', flexShrink: 0 }} />
+                          : <Film size={12} style={{ color: '#a78bfa', flexShrink: 0 }} />}
+                        <span className="text-[0.8125rem] font-medium truncate flex-1" style={{ color: 'var(--v4-signal)' }}>
+                          {group.seriesTitle}
+                        </span>
+                        <span className="text-[0.6875rem] font-mono shrink-0" style={{ color: 'var(--v4-degraded)' }}>
+                          {group.count} ep{group.count !== 1 ? 's' : ''} · import warning
+                        </span>
+                        <ChevronRight
+                          size={12}
+                          style={{
+                            color: 'var(--v4-trace)',
+                            flexShrink: 0,
+                            transform: isExpanded ? 'rotate(90deg)' : 'none',
+                            transition: 'transform 150ms ease-out',
+                          }}
+                        />
+                      </button>
 
-            <div className="flex flex-col gap-1 v4-stagger">
-              {upcomingItems.slice(0, 10).map(item => {
-                const isEp = item.type === 'episode';
-                const dateStr = isEp
-                  ? (item as UpcomingEpisode).airDate
-                  : ((item as UpcomingMovie).digitalRelease || (item as UpcomingMovie).physicalRelease || (item as UpcomingMovie).inCinemas);
-                const date = relativeDate(dateStr);
-
-                return (
-                  <div
-                    key={`${item.type}-${item.id}`}
-                    className="flex items-center gap-2 px-3 py-2 rounded-[0.5rem]"
-                    style={{ background: 'var(--v4-well)' }}
-                  >
-                    {isEp
-                      ? <Tv size={12} style={{ color: 'var(--v4-amber)', flexShrink: 0 }} />
-                      : <Film size={12} style={{ color: '#a78bfa', flexShrink: 0 }} />}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[0.8125rem] truncate" style={{ color: 'var(--v4-signal)' }}>
-                        {item.title}
-                      </div>
-                      {isEp && (item as UpcomingEpisode).episode && (
-                        <div className="text-[0.6875rem] truncate" style={{ color: 'var(--v4-trace)' }}>
-                          {(item as UpcomingEpisode).episode}
-                          {(item as UpcomingEpisode).episodeTitle
-                            ? ` — ${(item as UpcomingEpisode).episodeTitle}`
-                            : ''}
+                      {/* Expanded episode list with scroll cap */}
+                      {isExpanded && (
+                        <div
+                          className="overflow-auto"
+                          style={{ maxHeight: 400, background: 'var(--v4-well)' }}
+                        >
+                          {group.items.map(item => renderActiveRow(item))}
                         </div>
                       )}
                     </div>
-                    {date && (
-                      <div className="shrink-0 text-right">
-                        <Mono className="text-[0.6875rem] block" style={{ color: 'var(--v4-readout)' }}>
-                          {date.label}
-                        </Mono>
-                        <span className="text-[0.6875rem] block" style={{ color: date.color }}>
-                          {date.note}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {upcomingItems.length > 10 && (
-                <div className="text-center text-[0.6875rem] py-1" style={{ color: 'var(--v4-trace)' }}>
-                  +{upcomingItems.length - 10} more
-                </div>
-              )}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
       </Panel>
