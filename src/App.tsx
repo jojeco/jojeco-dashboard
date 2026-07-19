@@ -26,8 +26,6 @@ import { Birthday } from './Pages/Birthday';
 import MediaAndTorrentsPageV3 from './Pages/Media';
 import ChaosPage from './Pages/Chaos';
 import ControlsPage from './Pages/Controls';
-import MinecraftPage from './Pages/Minecraft';
-import KioskPage from './Pages/Kiosk/KioskPage';
 import JarvisPage from './Pages/JarvisPage';
 import HomeAssistantPage from './Pages/HomeAssistantPage';
 import AlertsPage from './Pages/AlertsPage';
@@ -292,8 +290,8 @@ function LegacyShell() {
           {/* /ai removed — Odysseus (port 7000) replaced LibreChat */}
           <Route path="/chaos"    element={<ChaosPage />} />
           <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="/minecraft"  element={<ProtectedRoute><ErrorBoundary><MinecraftPage /></ErrorBoundary></ProtectedRoute>} />
-          <Route path="/kiosk"      element={<ErrorBoundary><KioskPage /></ErrorBoundary>} />
+          <Route path="/minecraft"  element={<Navigate to="/v4/gaming" replace />} />
+          <Route path="/kiosk"      element={<Navigate to="/v4/kiosk" replace />} />
           <Route path="/jarvis"     element={<ProtectedRoute><ErrorBoundary><JarvisPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/home"       element={<ProtectedRoute><ErrorBoundary><HomeAssistantPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/alerts"     element={<ProtectedRoute><ErrorBoundary><AlertsPage /></ErrorBoundary></ProtectedRoute>} />

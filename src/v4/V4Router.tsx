@@ -13,6 +13,7 @@ import MediaPage from './pages/MediaPage';
 import ControlsPage from './pages/ControlsPage';
 import GamingPage from './pages/GamingPage';
 import LoginPage from './pages/LoginPage';
+import KioskPage from './pages/KioskPage';
 import { useAuth } from '../contexts/AuthContext';
 import './v4.css';
 
@@ -95,6 +96,9 @@ export function V4Routes() {
           </V4ProtectedRoute>
         }
       />
+      {/* Kiosk — fullscreen, no shell, no auth required */}
+      <Route path="/v4/kiosk" element={<KioskPage />} />
+
       {/* Legacy /v4/system removed — the AI fleet moved to Services, telemetry lives on Home. */}
       <Route path="/v4/system" element={<Navigate to="/v4" replace />} />
     </Routes>

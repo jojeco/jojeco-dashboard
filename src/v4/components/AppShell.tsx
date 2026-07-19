@@ -1,9 +1,10 @@
+import { useState, useEffect } from 'react';
 /**
  * v4 AppShell — mobile bottom tab bar + desktop left rail nav
  * DESIGN.md §5: mobile bottom tab bar (thumb reach), left rail on desktop.
  */
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Server, Film, Sliders, Gamepad2, LogOut, LogIn } from 'lucide-react';
+import { LayoutDashboard, Server, Film, Sliders, Gamepad2, LogOut, LogIn, Thermometer } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { LiveIndicator } from './LiveIndicator';
@@ -24,6 +25,41 @@ function useActiveTab() {
   return TABS.find(t => t.href === pathname)?.id ?? 'home';
 }
 
+
+// ── AC temperature readout ───────────────────────────────────────────────────
+const AC_API = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api').replace('/api', '');
+
+function AcTemps() {
+  const [temps, setTemps] = useState<{ indoor: number | null; outdoor: number | null }>({ indoor: null, outdoor: null });
+
+  useEffect(() => {
+    const fetch_ = () =>
+      fetch(`${AC_API}/api/ac/status`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => d && setTemps({ indoor: d.indoor_temp, outdoor: d.outdoor_temp }))
+        .catch(() => {});
+    fetch_();
+    const id = setInterval(fetch_, 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (temps.indoor == null) return null;
+
+  return (
+    <span
+      className="flex items-center gap-1 font-mono text-[0.6875rem] tabular-nums"
+      style={{ color: 'var(--v4-readout)' }}
+      title={`Indoor: ${temps.indoor}°C · Outdoor: ${temps.outdoor}°C`}
+    >
+      <Thermometer size={11} style={{ color: 'var(--v4-amber)', flexShrink: 0 }} />
+      {temps.indoor}°
+      {temps.outdoor != null && (
+        <span style={{ color: 'var(--v4-trace)' }}>· {temps.outdoor}°</span>
+      )}
+    </span>
+  );
+}
+
 // ── Lab status summary (header) ──────────────────────────────────────────────
 function LabStatusSummary() {
   const { data: lhs } = useSnapshot('labHostServices');
@@ -42,7 +78,7 @@ function LabStatusSummary() {
       className="font-mono text-[0.6875rem] tabular-nums"
       style={{ color: hasIssue ? 'var(--v4-fault)' : 'var(--v4-readout)' }}
     >
-      {total - down}/{total} svc{down > 0 ? ` · ${down} down` : ' · all up'}
+      {total - down}/{total} svc{down > 0 ? ` · ${down} down` : ''}
     </span>
   );
 }
@@ -174,6 +210,7 @@ function MobileHeader() {
 
       {/* Right: status + bell + live dot */}
       <div className="flex items-center gap-1">
+        <AcTemps />
         <LabStatusSummary />
         <AlertBell placement="header" />
         <LiveIndicator showLabel={false} />
@@ -234,7 +271,8 @@ function DesktopTopBar() {
       >
         JojeCo Lab
       </span>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
+        <AcTemps />
         <LabStatusSummary />
         <LiveIndicator />
       </div>
