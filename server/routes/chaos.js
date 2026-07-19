@@ -2,7 +2,7 @@
 // (status/run/abort). Extracted from server.js (Phase 3 route split);
 // byte-identical.
 import express from 'express';
-import { authMiddleware, optionalAuthMiddleware } from '../auth.js';
+import { authMiddleware } from '../auth.js';
 
 const router = express.Router();
 
@@ -34,7 +34,7 @@ const CHAOS_SERVICES = [
   { id: 'ntfy',           name: 'ntfy',           category: 'Comms',   url: 'http://192.168.50.13:8080', dependsOn: [] },
 ];
 
-router.get('/api/chaos/services', optionalAuthMiddleware, async (req, res) => {
+router.get('/api/chaos/services', authMiddleware, async (req, res) => {
   const results = await Promise.all(CHAOS_SERVICES.map(async svc => {
     const start = Date.now();
     try {

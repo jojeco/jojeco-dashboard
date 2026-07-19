@@ -38,6 +38,7 @@ import { AutomationJobRow } from './AutomationJobRow';
 import { TriggerCard } from './TriggerCard';
 import { FailoverPanel } from './FailoverPanel';
 import { ContainerControls } from './ContainerControls';
+import { AcCard } from './AcCard';
 import { UpdatesPanel } from './UpdatesPanel';
 
 import type { TriggerJob, AutomationJob, UpdateResult, FailoverStatus, Container, Toast } from './types';
@@ -581,7 +582,13 @@ export default function ControlsPage() {
         />
       </section>
 
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      {/* Air Conditioner */}
+      <section>
+        <SectionLabel>Air Conditioner</SectionLabel>
+        <AcCard />
+      </section>
+
+            <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

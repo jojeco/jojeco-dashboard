@@ -19,6 +19,7 @@ import adguardRoutes from './routes/adguard.js';
 import kioskRoutes from './routes/kiosk.js';
 import controlsRoutes from './routes/controls.js';
 import gamingRoutes from './routes/gaming.js';
+import acRoutes from './routes/ac.js';
 import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
@@ -1494,6 +1495,7 @@ async function pollTemps() {
 // ============================================================================
 app.use(controlsRoutes);
 app.use(gamingRoutes);
+app.use(acRoutes);
 
 // ============================================================================
 // NTFY ALERT FEED
