@@ -2389,6 +2389,74 @@ app.get('/api/printer/p1s', optionalAuthMiddleware, (req, res) => {
 });
 
 // ============================================================================
+// FILAMENT INVENTORY & 3D PRINTER WEBHOOKS
+// ============================================================================
+
+app.get('/api/filament', optionalAuthMiddleware, (req, res) => {
+  try {
+    const spools = db.prepare('SELECT * FROM filament_spools ORDER BY status ASC, created_at DESC').all();
+    res.json(spools);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/filament/:id/update', requireAuth, express.json(), (req, res) => {
+  const { id } = req.params;
+  const { weight_remaining_g, status, color_name, sku } = req.body;
+  const now = Date.now();
+  try {
+    db.prepare(`
+      UPDATE filament_spools 
+      SET weight_remaining_g = ?, status = ?, color_name = COALESCE(?, color_name), sku = COALESCE(?, sku), updated_at = ?
+      WHERE id = ?
+    `).run(weight_remaining_g, status, color_name, sku, now, id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Webhook for Home Assistant to call on print completion
+// HA automation payload: { "rfid": "...", "weight_used_g": 12.5, "tray_id_name": "A00-Y4", "color_hex": "E4BD68FF" }
+app.post('/api/printer/webhook/print-finished', express.json(), (req, res) => {
+  const { rfid, weight_used_g, color_hex, tray_id_name } = req.body;
+  
+  if (!weight_used_g || weight_used_g <= 0) {
+    return res.json({ success: false, reason: 'invalid_weight' });
+  }
+
+  try {
+    const now = Date.now();
+    // Try to find the exact spool. If no RFID, match by color_hex/tray_id_name and status='active'
+    let spool = null;
+    
+    // We don't have RFID saved initially from the baseline, so we match on sku/color
+    // The tray_id_name in AMS matches our sku prefix, e.g. "A00-Y4"
+    if (tray_id_name) {
+      const activeSpools = db.prepare(`SELECT * FROM filament_spools WHERE status = 'active'`).all();
+      spool = activeSpools.find(s => s.sku && s.sku.includes(tray_id_name));
+    }
+    
+    if (spool) {
+      const newWeight = Math.max(0, spool.weight_remaining_g - weight_used_g);
+      const newStatus = newWeight <= 0 ? 'empty' : 'active';
+      db.prepare(`UPDATE filament_spools SET weight_remaining_g = ?, status = ?, updated_at = ? WHERE id = ?`)
+        .run(newWeight, newStatus, now, spool.id);
+        
+      console.log(`[filament] Deducted ${weight_used_g}g from spool ${spool.id} (${spool.color_name}). Remaining: ${newWeight}g`);
+      return res.json({ success: true, spool_id: spool.id, new_weight: newWeight });
+    } else {
+      console.log(`[filament] Could not find active spool matching tray_id_name: ${tray_id_name}`);
+      return res.status(404).json({ success: false, reason: 'spool_not_found' });
+    }
+  } catch (error) {
+    console.error('[filament] Webhook error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // Aggregated snapshot + SSE stream — shared data layer for the v3/v4 frontend.
 //
 // PERF (2026-07-11): Zero-wait paint architecture.

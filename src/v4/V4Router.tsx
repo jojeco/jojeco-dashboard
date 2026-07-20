@@ -14,6 +14,7 @@ import ControlsPage from './pages/ControlsPage';
 import GamingPage from './pages/GamingPage';
 import LoginPage from './pages/LoginPage';
 import KioskPage from './pages/KioskPage';
+import PrinterPage from './pages/PrinterPage';
 import { useAuth } from '../contexts/AuthContext';
 import './v4.css';
 
@@ -92,6 +93,16 @@ export function V4Routes() {
           <V4ProtectedRoute>
             <AppShell>
               <GamingPage />
+            </AppShell>
+          </V4ProtectedRoute>
+        }
+      />
+      <Route
+        path="/v4/printer"
+        element={
+          <V4ProtectedRoute>
+            <AppShell>
+              <PrinterPage />
             </AppShell>
           </V4ProtectedRoute>
         }

@@ -75,6 +75,20 @@ function initDB() {
       is_online INTEGER NOT NULL,
       FOREIGN KEY (service_id) REFERENCES services (id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS filament_spools (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      brand TEXT NOT NULL,
+      type TEXT NOT NULL,
+      color_name TEXT NOT NULL,
+      color_hex TEXT,
+      sku TEXT,
+      weight_initial_g INTEGER NOT NULL,
+      weight_remaining_g INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   // Create indexes

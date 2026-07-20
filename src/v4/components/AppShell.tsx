@@ -4,20 +4,21 @@ import { useState, useEffect } from 'react';
  * DESIGN.md §5: mobile bottom tab bar (thumb reach), left rail on desktop.
  */
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Server, Film, Sliders, Gamepad2, LogOut, LogIn, Thermometer } from 'lucide-react';
+import { LayoutDashboard, Server, Film, Sliders, Gamepad2, LogOut, LogIn, Thermometer, Printer } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { LiveIndicator } from './LiveIndicator';
 import { AlertBell } from './AlertBell';
 import { cn } from '../lib/utils';
 
-// ── 5-tab nav (DESIGN.md: 5 tabs max) ───────────────────────────────────────
+// ── 6-tab nav ───────────────────────────────────────
 const TABS = [
   { id: 'home',     label: 'Home',     href: '/v4',          icon: LayoutDashboard },
   { id: 'services', label: 'Services', href: '/v4/services', icon: Server },
   { id: 'media',    label: 'Media',    href: '/v4/media',    icon: Film },
   { id: 'controls', label: 'Controls', href: '/v4/controls', icon: Sliders },
   { id: 'gaming',   label: 'Gaming',   href: '/v4/gaming',   icon: Gamepad2 },
+  { id: 'printer',  label: 'Printer',  href: '/v4/printer',  icon: Printer },
 ] as const;
 
 function useActiveTab() {
