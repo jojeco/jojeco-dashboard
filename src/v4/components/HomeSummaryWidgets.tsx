@@ -257,3 +257,23 @@ export function DownloadsMiniWidget() {
     </TapPanel>
   );
 }
+
+// ── Quick Links Widget ────────────────────────────────────────────────────────
+
+import { QuickLinks } from './QuickLinks';
+
+export function QuickLinksWidget() {
+  const { data } = useSnapshot('labHostServices');
+  const services = data?.groups?.flatMap(g => g.services) || [];
+  
+  return (
+    <Panel className="p-4 h-full flex flex-col v4-tile">
+      <div className="flex items-center gap-2 mb-3">
+        <PanelTitle>Quick Links</PanelTitle>
+      </div>
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+        <QuickLinks services={services} variant="grid" category="lab" />
+      </div>
+    </Panel>
+  );
+}

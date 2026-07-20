@@ -24,6 +24,7 @@ import { TorrentsPanel } from '../components/TorrentsPanel';
 import { GamingGlance } from '../components/GamingGlance';
 import {
   MediaSummaryWidget, ServicesMatrixWidget, GameServersWidget, DownloadsMiniWidget,
+  QuickLinksWidget,
 } from '../components/HomeSummaryWidgets';
 
 import type { Machine } from '../../hooks/useSnapshot';
@@ -167,6 +168,13 @@ export const WIDGETS: WidgetDef[] = [
     blurb: 'Compact speed + connection glance',
     size: { wLg: 3, h: 20, minW: 2, minH: 12 },
     render: () => <DownloadsMiniWidget />,
+  },
+  {
+    id: 'quickLinks',
+    title: 'Quick Links',
+    blurb: 'Launch lab services (Nextcloud, Grafana, etc.)',
+    size: { wLg: 4, h: 24, minW: 3, minH: 14 },
+    render: () => <QuickLinksWidget />,
   },
 ];
 

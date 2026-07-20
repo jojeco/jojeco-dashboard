@@ -29,6 +29,7 @@ import { useSnapshot } from '../../hooks/useSnapshot';
 import {
   Panel, PanelTitle, Mono, StatusChip, StatusDot, Skeleton, Hairline,
 } from '../components/Primitives';
+import { QuickLinks } from '../components/QuickLinks';
 import { DetailModal } from '../components/DetailModal';
 import { fmtBytes, cn } from '../lib/utils';
 import { getToken } from '../../services/api';
@@ -1526,8 +1527,15 @@ export default function MediaPage() {
       />
 
       {/* ── Mobile layout: single column ───────────────────────────────── */}
-      {/* Order: status strip (above) → Tdarr → Downloads → Plex → arr queue → upcoming */}
+      {/* Order: status strip (above) → quick links → Tdarr → Downloads → Plex → arr queue → upcoming */}
       <div className="flex flex-col gap-4 xl:hidden">
+        {labHostServices?.groups && (
+          <QuickLinks 
+            services={labHostServices.groups.flatMap(g => g.services)} 
+            variant="strip" 
+            category="media" 
+          />
+        )}
         <TdarrStrip tdarr={tdarr} />
         <DownloadsPanel
           torrents={torrents}
@@ -1547,7 +1555,7 @@ export default function MediaPage() {
 
       {/* ── Desktop 8/4 command-center grid ────────────────────────────── */}
       {/* Lead col: Downloads (active work) → Arr queue + upcoming */}
-      {/* Rail: Tdarr at top (active work) → Plex below */}
+      {/* Rail: Quick links → Tdarr at top (active work) → Plex below */}
       <div
         className="hidden xl:grid gap-6"
         style={{ gridTemplateColumns: '8fr 4fr', alignItems: 'start' }}
@@ -1569,8 +1577,16 @@ export default function MediaPage() {
           />
         </div>
 
-        {/* Rail (4): Tdarr at top (active work) → Plex below */}
+        {/* Rail (4): Quick links → Tdarr at top (active work) → Plex below */}
         <div className="flex flex-col gap-4">
+          {labHostServices?.groups && (
+            <QuickLinks 
+              services={labHostServices.groups.flatMap(g => g.services)} 
+              variant="strip" 
+              category="media" 
+              className="flex-wrap pb-0 overflow-visible"
+            />
+          )}
           <TdarrStrip tdarr={tdarr} />
           <PlexPanel data={plexSessions} loading={plexLoading} />
         </div>

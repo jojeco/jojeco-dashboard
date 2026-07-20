@@ -18,9 +18,11 @@ import { ExternalLink, RotateCcw, Square, Play, Shield } from 'lucide-react';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { DetailModal } from '../components/DetailModal';
 import { Panel, PanelTitle, PageTitle, Mono, Hairline, Skeleton, EmptyState, StatusChip } from '../components/Primitives';
+import { QuickLinks, getServiceUrl } from '../components/QuickLinks';
 import { ContainerLogTail } from '../components/ContainerLogTail';
 import { AiFleetPanel } from '../components/AiFleetPanel';
 import { getToken } from '../../services/api';
+import { cn } from '../lib/utils';
 import type { LabHostService, LabHostServicesGroup } from '../../hooks/useSnapshot';
 
 // ── Docker container types (full shape from /api/docker/containers) ──────────
@@ -78,12 +80,6 @@ function uptimeSince(created: number): string {
   return `${Math.floor(diff / 86400)}d`;
 }
 
-/** Derive a web UI URL from hostIp + port. Returns null when port is unknown. */
-function guessUrl(hostIp: string, port: number | undefined): string | null {
-  if (!port || !hostIp) return null;
-  return `http://${hostIp}:${port}`;
-}
-
 // ── Service detail modal body ─────────────────────────────────────────────────
 
 interface ServiceDetailProps {
@@ -93,7 +89,8 @@ interface ServiceDetailProps {
 }
 
 function ServiceDetailBody({ service, group, matchedContainer }: ServiceDetailProps) {
-  const url = guessUrl(group.hostIp, service.port);
+  const { url, isLanOnly, isRemote } = getServiceUrl({ ...service, hostIp: group.hostIp });
+  const disabledRemotely = isRemote && isLanOnly;
   const stripe = stripeColor(service.online);
 
   return (
@@ -225,19 +222,30 @@ function ServiceDetailBody({ service, group, matchedContainer }: ServiceDetailPr
       {url && (
         <>
           <Hairline />
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 py-2.5 rounded-[0.5rem] text-[0.875rem] font-medium transition-opacity hover:opacity-80 active:-translate-y-px"
-            style={{
-              background: 'color-mix(in srgb, var(--v4-amber) 12%, transparent)',
-              color: 'var(--v4-amber)',
-            }}
-          >
-            <ExternalLink size={14} aria-hidden />
-            Open in browser
-          </a>
+          <div className="flex flex-col gap-2 text-center">
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "flex items-center justify-center gap-2 py-2.5 rounded-[0.5rem] text-[0.875rem] font-medium transition-opacity",
+                disabledRemotely ? "opacity-50 pointer-events-none" : "hover:opacity-80 active:-translate-y-px"
+              )}
+              style={{
+                background: 'color-mix(in srgb, var(--v4-amber) 12%, transparent)',
+                color: 'var(--v4-amber)',
+              }}
+              title={disabledRemotely ? 'Available on LAN only' : ''}
+            >
+              <ExternalLink size={14} aria-hidden />
+              Open in browser
+            </a>
+            {disabledRemotely && (
+              <span className="text-[0.6875rem] uppercase tracking-wide" style={{ color: 'var(--v4-trace)' }}>
+                LAN Only — unavailable remotely
+              </span>
+            )}
+          </div>
         </>
       )}
     </div>
@@ -766,6 +774,37 @@ function useDockerContainers() {
   return { containers, loading, error };
 }
 
+function QuickLinksSection({ allServices }: { allServices: any[] }) {
+  const [show, setShow] = useState(true);
+  
+  const quicklinks = allServices.filter(s => s.quicklink && s.category === 'lab');
+  if (quicklinks.length === 0) return null;
+
+  return (
+    <Panel className="p-4">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <PanelTitle>Launch</PanelTitle>
+        <button
+          onClick={() => setShow(v => !v)}
+          className="text-[0.75rem] font-medium"
+          style={{
+            background: 'none',
+            border: 'none',
+            color: show ? 'var(--v4-trace)' : 'var(--v4-amber)',
+            cursor: 'pointer',
+            padding: 0,
+          }}
+        >
+          {show ? 'Hide' : `+${quicklinks.length} links`}
+        </button>
+      </div>
+      {show && (
+        <QuickLinks services={allServices} variant="grid" category="lab" />
+      )}
+    </Panel>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function ServicesPage() {
@@ -841,6 +880,11 @@ export default function ServicesPage() {
           />
         )}
       </div>
+
+      {/* ── Quick Links ────────────────────────────────────────────────── */}
+      {allServices.length > 0 && (
+        <QuickLinksSection allServices={allServices} />
+      )}
 
       {/* ── Host-grouped service matrix ───────────────────────────────── */}
       <Panel className="p-4">
