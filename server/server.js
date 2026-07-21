@@ -21,6 +21,9 @@ import controlsRoutes from './routes/controls.js';
 import gamingRoutes from './routes/gaming.js';
 import acRoutes from './routes/ac.js';
 import servicesRoutes from './routes/services.js';
+import ripRoutes from './routes/rip.js';
+import tdarrRoutes from './routes/tdarr.js';
+import aiRoutes from './routes/ai.js';
 import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
@@ -66,6 +69,9 @@ app.use(servicesRoutes);
 // ============================================================================
 
 const NETDATA_URL = process.env.NETDATA_URL || 'http://netdata:19999';
+// LITELLM_KEY is also used by the AI chat proxy (routes/ai.js has its own copy);
+// retained here for the inline ops/fleet LiteLLM health+spend probe.
+const LITELLM_KEY = process.env.LITELLM_KEY;  // required — set in server/.env
 
 async function fetchNetdata(path) {
   const res = await fetch(`${NETDATA_URL}${path}`);
@@ -343,131 +349,12 @@ app.use(dockerRoutes);
 app.use(mediaRoutes);
 
 // ============================================================================
-// CD RIP STATUS ROUTE
+// STANDALONE PROXY ROUTES — extracted to ./routes/{rip,tdarr,ai}.js (Phase 4 split)
+// CD rip status, Tdarr status, and the LiteLLM AI chat SSE proxy
 // ============================================================================
-
-const RIP_STATUS_URL = process.env.RIP_STATUS_URL || 'http://192.168.50.10:9998';
-
-app.get('/api/rip/status', authMiddleware, async (req, res) => {
-  try {
-    const r = await fetch(`${RIP_STATUS_URL}/`, { signal: AbortSignal.timeout(3000) });
-    if (!r.ok) throw new Error(`${r.status}`);
-    const text = await r.text();
-    // Strip UTF-8 BOM that PowerShell Set-Content adds
-    const clean = text.startsWith('\uFEFF') ? text.slice(1) : text;
-    res.json(JSON.parse(clean));
-  } catch {
-    res.json({ status: 'idle', album: '', track: 0, total: 0, percent: 0, trackName: '', updatedAt: '' });
-  }
-});
-
-// ============================================================================
-// TDARR ROUTE
-
-const TDARR_URL = 'http://192.168.50.13:8265';
-
-app.get('/api/tdarr/status', authMiddleware, async (req, res) => {
-  try {
-    const [statsRes, nodesRes] = await Promise.allSettled([
-      fetch(`${TDARR_URL}/api/v2/cruddb`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { collection: 'StatisticsJSONDB', mode: 'getAll', docID: 'statistics' } }),
-        signal: AbortSignal.timeout(5000),
-      }),
-      fetch(`${TDARR_URL}/api/v2/get-nodes`, { signal: AbortSignal.timeout(5000) }),
-    ]);
-
-    const stats = statsRes.status === 'fulfilled' && statsRes.value.ok
-      ? (await statsRes.value.json())[0] : null;
-
-    const nodesRaw = nodesRes.status === 'fulfilled' && nodesRes.value.ok
-      ? await nodesRes.value.json() : {};
-
-    const workers = [];
-    for (const node of Object.values(nodesRaw)) {
-      const n = node;
-      for (const w of Object.values(n.workers || {})) {
-        if (w.status !== 'No tasks') {
-          workers.push({
-            node: n.nodeName,
-            type: w.workerType,
-            status: w.status,
-            file: w.file ? w.file.split('/').pop() : '',
-            percentage: Math.round(w.percentage || 0),
-            fps: w.fps || 0,
-          });
-        }
-      }
-    }
-
-    res.json({
-      total: stats?.totalFileCount || 0,
-      transcoded: stats?.totalTranscodeCount || 0,
-      transcodeQueue: stats?.table0Count || 0,
-      noAction: stats?.table2Count || 0,       // table2 = no action needed (already correct format)
-      transcodeErrors: stats?.table3Count || 0, // table3 = transcode errors
-      healthErrors: stats?.table5Count || 0,
-      healthOk: stats?.table6Count || 0,
-      tdarrScore: parseFloat(stats?.tdarrScore || 0),
-      sizeDiffGB: stats ? Math.round((stats.sizeDiff || 0) * 10) / 10 : 0,
-      workers,
-    });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to reach Tdarr' });
-  }
-});
-
-// ============================================================================
-// AI CHAT ROUTE
-// ============================================================================
-
-const LITELLM_URL = 'http://192.168.50.13:4000/v1/chat/completions';
-const LITELLM_KEY = process.env.LITELLM_KEY;  // required — set in server/.env
-
-app.post('/api/ai/chat', authMiddleware, async (req, res) => {
-  const { model = 'local-smart', messages, max_tokens = 2000, temperature = 0.7 } = req.body;
-  if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: 'messages array required' });
-  }
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
-
-  try {
-    const upstream = await fetch(LITELLM_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LITELLM_KEY}`,
-      },
-      body: JSON.stringify({ model, messages, stream: true, max_tokens, temperature }),
-      signal: AbortSignal.timeout(180000),
-    });
-
-    if (!upstream.ok) {
-      const errText = await upstream.text();
-      res.write(`data: {"error":"LiteLLM ${upstream.status}: ${errText.slice(0,200)}"}\n\n`);
-      res.end();
-      return;
-    }
-
-    const reader = upstream.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(decoder.decode(value, { stream: true }));
-    }
-    res.end();
-  } catch (err) {
-    res.write(`data: {"error":"${String(err.message).replace(/"/g, "'")}"}\n\n`);
-    res.end();
-  }
-});
+app.use(ripRoutes);
+app.use(tdarrRoutes);
+app.use(aiRoutes);
 
 // ============================================================================
 // LAB OVERVIEW ROUTES
