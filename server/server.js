@@ -24,6 +24,9 @@ import servicesRoutes from './routes/services.js';
 import ripRoutes from './routes/rip.js';
 import tdarrRoutes from './routes/tdarr.js';
 import aiRoutes from './routes/ai.js';
+import alertsRoutes from './routes/alerts.js';
+import logsRoutes from './routes/logs.js';
+import automationRoutes from './routes/automation.js';
 import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
@@ -1000,185 +1003,12 @@ app.use(gamingRoutes);
 app.use(acRoutes);
 
 // ============================================================================
-// NTFY ALERT FEED
+// ALERTS / LOGS / AUTOMATION — extracted to ./routes/{alerts,logs,automation}.js
+// (Phase 4 route split): ntfy alert feed, Loki container log tail, cron job status
 // ============================================================================
-
-const NTFY_BASE = process.env.NTFY_URL || 'http://192.168.50.13:8080';
-const NTFY_TOPIC = 'jojeco-alerts';
-
-app.get('/api/alerts/recent', authMiddleware, async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit) || 20, 50);
-  try {
-    const r = await fetch(`${NTFY_BASE}/${NTFY_TOPIC}/json?poll=1&since=48h`, { signal: AbortSignal.timeout(5000) });
-    if (!r.ok) return res.status(502).json({ error: 'ntfy unreachable' });
-    const text = await r.text();
-    const messages = text.trim().split('\n').filter(Boolean).map(line => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).filter(m => m && m.event === 'message').reverse().slice(0, limit).map(m => ({
-      id: m.id,
-      time: m.time,
-      title: m.title || null,
-      message: m.message,
-      priority: m.priority || 3,
-      tags: m.tags || [],
-    }));
-    res.json(messages);
-  } catch (e) {
-    res.status(502).json({ error: 'Failed to fetch alerts', detail: e.message });
-  }
-});
-
-// GET /api/alerts/history?hours=48 — full ntfy history, newest first, 30s cache
-const alertHistoryCache = { at: 0, data: null };
-const ALERT_HISTORY_TTL = 30_000;
-
-app.get('/api/alerts/history', authMiddleware, async (req, res) => {
-  const hours = Math.min(parseInt(req.query.hours) || 48, 168);
-  if (alertHistoryCache.data && Date.now() - alertHistoryCache.at < ALERT_HISTORY_TTL) {
-    return res.json(alertHistoryCache.data);
-  }
-  try {
-    const r = await fetch(`${NTFY_BASE}/${NTFY_TOPIC}/json?poll=1&since=${hours}h`, { signal: AbortSignal.timeout(6000) });
-    if (!r.ok) return res.status(502).json({ error: 'ntfy unreachable' });
-    const text = await r.text();
-    const messages = text.trim().split('\n').filter(Boolean).map(line => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).filter(m => m && m.event === 'message').reverse().map(m => ({
-      id: m.id,
-      time: m.time,
-      title: m.title || null,
-      message: m.message,
-      priority: m.priority || 3,
-      tags: m.tags || [],
-    }));
-    alertHistoryCache.data = messages;
-    alertHistoryCache.at = Date.now();
-    res.json(messages);
-  } catch (e) {
-    res.status(502).json({ error: 'Failed to fetch alert history', detail: e.message });
-  }
-});
-
-// ============================================================================
-// LOKI CONTAINER LOG TAIL
-// ============================================================================
-
-const LOKI_BASE = process.env.LOKI_URL || 'http://192.168.50.13:3110';
-// Per-container in-memory cache: containerName → { at, lines }
-const lokiCache = new Map();
-const LOKI_TTL = 10_000; // 10s
-
-app.get('/api/logs/container/:name', authMiddleware, async (req, res) => {
-  const containerName = req.params.name;
-  const lines = Math.min(parseInt(req.query.lines) || 100, 300);
-
-  const cacheKey = `${containerName}:${lines}`;
-  const hit = lokiCache.get(cacheKey);
-  if (hit && Date.now() - hit.at < LOKI_TTL) {
-    return res.json(hit.data);
-  }
-
-  try {
-    // Query Loki: get last N lines for the container, ordered newest-last
-    const now = Date.now();
-    const start = (now - 24 * 60 * 60 * 1000) * 1e6; // nanoseconds, 24h window
-    const end   = now * 1e6;
-    const query = encodeURIComponent(`{container="${containerName}"}`);
-    const url   = `${LOKI_BASE}/loki/api/v1/query_range?query=${query}&start=${start}&end=${end}&limit=${lines}&direction=backward`;
-
-    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!r.ok) {
-      const errText = await r.text().catch(() => '');
-      if (r.status === 404 || r.status === 400) {
-        return res.json({ unavailable: true, reason: `Loki: ${r.status}` });
-      }
-      return res.status(502).json({ unavailable: true, reason: `Loki ${r.status}: ${errText.slice(0, 200)}` });
-    }
-
-    const data = await r.json();
-    // Loki streams: data.data.result[].values = [[tsNs, line], ...] sorted newest-first
-    const rawEntries = (data?.data?.result ?? []).flatMap(stream =>
-      (stream.values ?? []).map(([tsNs, line]) => ({
-        ts: Math.floor(parseInt(tsNs) / 1e6), // convert ns → ms
-        line,
-      }))
-    );
-    // Sort ascending (oldest first = newest last), cap to N lines
-    rawEntries.sort((a, b) => a.ts - b.ts);
-    const result = rawEntries.slice(-lines);
-
-    lokiCache.set(cacheKey, { at: Date.now(), data: result });
-    res.json(result);
-  } catch (e) {
-    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-      return res.json({ unavailable: true, reason: 'Loki timeout' });
-    }
-    console.error('[logs] Loki error:', e.message);
-    res.json({ unavailable: true, reason: 'Loki unreachable' });
-  }
-});
-
-// ============================================================================
-// AUTOMATION STATUS
-// ============================================================================
-
-app.get('/api/automation/status', authMiddleware, async (req, res) => {
-  const jobs = [
-    { id: 's3-check',         label: 'S3 Check',            logFile: '/host/log/jojeco-s3-check.log',         schedule: 'Daily 6:00 AM',   maxAgeHours: 28,  emptyIsOk: true },
-    { id: 'storage',          label: 'Storage Monitor',     logFile: '/host/log/jojeco-storage.log',           schedule: 'Every 6 h',       maxAgeHours: 7    },
-    { id: 'health',           label: 'Daily Health Report', logFile: '/host/log/jojeco-health.log',            schedule: 'Daily 8:00 AM',   maxAgeHours: 26   },
-    { id: 'backup',           label: 'GDrive Backup',       logFile: '/host/log/jojeco-gdrive-backup.log',     schedule: 'Daily 4:00 AM',   maxAgeHours: 26   },
-    { id: 's3-sync',          label: 'S3 Volume Sync',      logFile: '/host/log/s3-volume-sync.log',           schedule: 'Daily 3:00 AM',   maxAgeHours: 26   },
-    { id: 'backup-verify',    label: 'Backup Verify',       logFile: '/host/log/jojeco-backup-verify.log',     schedule: 'Daily 5:30 AM',   maxAgeHours: 26   },
-    { id: 'sonarr-maint',     label: 'Sonarr Maintenance',  logFile: '/host/log/jojeco-sonarr-maint.log',      schedule: 'Sunday 4:00 AM',  maxAgeHours: 200  },
-    { id: 'depwatch',         label: 'Dependency Watcher',  logFile: '/host/log/jojeco-dep-watcher.log',       schedule: 'Every 5 min',     maxAgeHours: 0.2  },
-    { id: 'update',           label: 'Weekly Update',       logFile: '/host/log/jojeco-weekly-update.log',     schedule: 'Sunday 3:00 AM',  maxAgeHours: 200  },
-  ];
-
-  const results = await Promise.all(jobs.map(async (job) => {
-    try {
-      const { stdout } = await execFileAsync('tail', ['-n', '30', job.logFile], { timeout: 3000 });
-      const lines = stdout.trim().split('\n').filter(Boolean);
-      // s3-check: empty log means every check passed (script only logs failures)
-      if (job.emptyIsOk && lines.length === 0) {
-        // Failure-only log that's empty = every check passed; an old mtime just means
-        // "no failures since then", not stale (a failing check would keep writing)
-        const stat = await import('fs/promises').then(m => m.stat(job.logFile)).catch(() => null);
-        const mtimeTs = stat ? stat.mtimeMs : null;
-        const lastRun = mtimeTs ? new Date(mtimeTs).toISOString() : null;
-        return { ...job, status: 'ok', healthy: true, lastRun, lastRunTs: mtimeTs, lastLines: ['(empty — all checks passed)'] };
-      }
-      // Find last timestamp anywhere in log
-      let lastRunTs = null;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const m = lines[i].match(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/);
-        if (m) { lastRunTs = new Date(m[1]).getTime(); break; }
-        const m2 = lines[i].match(/(\w{3} \w{3} +\d+ \d{2}:\d{2}:\d{2} \w+ \d{4})/); // "Mon Apr 20 10:08:08 UTC 2026"
-        if (m2) { lastRunTs = new Date(m2[1]).getTime(); break; }
-      }
-      // No parseable timestamp in the log lines (e.g. storage-monitor KEY=VALUE output) →
-      // fall back to file mtime as the last-run signal
-      if (!lastRunTs) {
-        const stat = await import('fs/promises').then(m => m.stat(job.logFile)).catch(() => null);
-        if (stat) lastRunTs = stat.mtimeMs;
-      }
-      const lastRun = lastRunTs ? new Date(lastRunTs).toISOString() : null;
-      const stale = lastRunTs ? (Date.now() - lastRunTs) > job.maxAgeHours * 3600000 : true;
-      const hasError = lines.some(l => /error|fail|fatal/i.test(l) && !/0 errors|no errors?|attempt \d+\/\d+ succeeded/i.test(l));
-      // emptyIsOk jobs only log failures — old failure lines mean "no recent failures", not stale
-      // (if it were still failing, the log would keep updating and not be stale)
-      if (job.emptyIsOk && stale) {
-        return { ...job, status: 'ok', healthy: true, lastRun, lastRunTs, lastLines: ['(no recent failures)'] };
-      }
-      const healthy = !stale && !hasError;
-      return { ...job, status: hasError ? 'error' : stale ? 'stale' : 'ok', healthy, lastRun, lastRunTs, lastLines: lines.slice(-5) };
-    } catch {
-      return { ...job, status: 'unknown', healthy: false, lastRun: null, lastRunTs: null, lastLines: [] };
-    }
-  }));
-
-  res.json(results);
-});
+app.use(alertsRoutes);
+app.use(logsRoutes);
+app.use(automationRoutes);
 
 // ============================================================================
 // UPDATE CHECKER
