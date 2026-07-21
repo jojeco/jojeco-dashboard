@@ -2401,7 +2401,7 @@ app.get('/api/filament', optionalAuthMiddleware, (req, res) => {
   }
 });
 
-app.post('/api/filament/:id/update', requireAuth, express.json(), (req, res) => {
+app.post('/api/filament/:id/update', authMiddleware, express.json(), (req, res) => {
   const { id } = req.params;
   const { weight_remaining_g, status, color_name, sku } = req.body;
   const now = Date.now();
