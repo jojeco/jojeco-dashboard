@@ -401,4 +401,42 @@ router.post('/api/services/seed', authMiddleware, (req, res) => {
   }
 });
 
+// ============================================================================
+// 7-DAY SPARKLINE DATA — per-service uptime %, 24 buckets over the last 7 days,
+// derived from the health_checks table. Same domain (services + health_checks)
+// as the rest of this module. Extracted from server.js (Phase 4 route split).
+// ============================================================================
+
+router.get('/api/health/sparklines', authMiddleware, (req, res) => {
+  try {
+    const since7d = Date.now() - 7 * 24 * 3600000;
+    const services = db.prepare('SELECT id, name FROM services').all();
+    const result = {};
+    for (const svc of services) {
+      // Get hourly buckets of uptime % over last 7 days
+      const rows = db.prepare(
+        'SELECT timestamp, status FROM health_checks WHERE service_id = ? AND timestamp > ? ORDER BY timestamp ASC'
+      ).all(svc.id, since7d);
+
+      if (rows.length === 0) { result[svc.id] = []; continue; }
+
+      // Group into 24 buckets (one per 7h period = 7 days)
+      const bucketMs = 7 * 24 * 3600000 / 24;
+      const now = Date.now();
+      const buckets = Array.from({ length: 24 }, (_, i) => {
+        const bucketEnd = now - (23 - i) * bucketMs;
+        const bucketStart = bucketEnd - bucketMs;
+        const inBucket = rows.filter(r => r.timestamp >= bucketStart && r.timestamp < bucketEnd);
+        if (inBucket.length === 0) return null;
+        const online = inBucket.filter(r => r.status === 'online').length;
+        return Math.round((online / inBucket.length) * 100);
+      });
+      result[svc.id] = buckets;
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch sparkline data' });
+  }
+});
+
 export default router;

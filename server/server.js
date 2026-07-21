@@ -27,6 +27,7 @@ import aiRoutes from './routes/ai.js';
 import alertsRoutes from './routes/alerts.js';
 import logsRoutes from './routes/logs.js';
 import automationRoutes from './routes/automation.js';
+import minecraftRoutes from './routes/minecraft.js';
 import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
@@ -1081,9 +1082,26 @@ const LAB_HOST_SERVICES = [
       { id: 'lidarr',         label: 'Lidarr',           port: 8686, checkUrl: 'http://192.168.50.13:8686', quicklink: true, category: 'media', externalUrl: null, icon: 'Headphones' },
       { id: 'qbittorrent',    label: 'qBittorrent',      port: 9091, checkUrl: 'http://192.168.50.13:9091', quicklink: true, category: 'media', externalUrl: null, icon: 'Download' },
       { id: 'tdarr',          label: 'Tdarr',            port: 8265, checkUrl: 'http://192.168.50.13:8265', quicklink: true, category: 'media', externalUrl: null, icon: 'Video' },
-      { id: 'duplicati',      label: 'Duplicati',        port: 8200, checkUrl: 'http://192.168.50.13:8200' },
-      { id: 'job-agent',      label: 'Job Agent',        port: 3400, checkUrl: 'http://192.168.50.13:3400' },
-      { id: 'jojeco-router',  label: 'jojeco-router',    port: 4001, checkUrl: 'http://192.168.50.13:4001' },
+      { id: 'duplicati',      label: 'Duplicati',        port: 8200, checkUrl: 'http://192.168.50.13:8200', quicklink: true, category: 'lab', externalUrl: null, icon: 'ShieldCheck' },
+      { id: 'job-agent',      label: 'Job Agent',        port: 3400, checkUrl: 'http://192.168.50.13:3400', quicklink: true, category: 'lab', externalUrl: null, icon: 'Briefcase' },
+      { id: 'jojeco-router',  label: 'jojeco-router',    port: 4001, checkUrl: 'http://192.168.50.13:4001', quicklink: true, category: 'lab', externalUrl: null, icon: 'Route' },
+      { id: 'freshrss',        label: 'FreshRSS',          port: 8012, checkUrl: 'http://192.168.50.13:8012', quicklink: true, category: 'lab', externalUrl: null, icon: 'Rss' },
+      { id: 'it-tools',        label: 'IT Tools',          port: 8014, checkUrl: 'http://192.168.50.13:8014', quicklink: true, category: 'lab', externalUrl: null, icon: 'Wrench' },
+      { id: 'jojeco-chaosmonkey', label: 'ChaosMonkey',    port: 3006, checkUrl: 'http://192.168.50.13:3006', quicklink: true, category: 'lab', externalUrl: null, icon: 'Zap' },
+      { id: 'jojeco-forge',    label: 'Forge',             port: 3200, checkUrl: 'http://192.168.50.13:3200', quicklink: true, category: 'lab', externalUrl: null, icon: 'Hammer' },
+      { id: 'jojeco-playground', label: 'Playground',      port: 3100, checkUrl: 'http://192.168.50.13:3100', quicklink: true, category: 'lab', externalUrl: null, icon: 'Code' },
+      { id: 'jojeco-prints',   label: '3D Prints',         port: 3015, checkUrl: 'http://192.168.50.13:3015', quicklink: true, category: 'lab', externalUrl: null, icon: 'Printer' },
+      { id: 'jojeco-showcase', label: 'Showcase',          port: 3011, checkUrl: 'http://192.168.50.13:3011', quicklink: true, category: 'lab', externalUrl: null, icon: 'LayoutGrid' },
+      { id: 'litellm-ui',      label: 'LiteLLM',           port: 4000, checkUrl: 'http://192.168.50.13:4000/ui', quicklink: true, category: 'lab', externalUrl: null, icon: 'Cpu' },
+      { id: 'netdata',         label: 'Netdata',           port: 19999, checkUrl: 'http://192.168.50.13:19999', quicklink: true, category: 'lab', externalUrl: null, icon: 'LineChart' },
+      { id: 'npm',             label: 'NPM Proxy',         port: 81,   checkUrl: 'http://192.168.50.13:81', quicklink: true, category: 'lab', externalUrl: null, icon: 'Waypoints' },
+      { id: 'searxng',         label: 'SearXNG',           port: 8020, checkUrl: 'http://192.168.50.13:8020', quicklink: true, category: 'lab', externalUrl: null, icon: 'Compass' },
+      { id: 'stirling-pdf',    label: 'Stirling PDF',      port: 8013, checkUrl: 'http://192.168.50.13:8013', quicklink: true, category: 'lab', externalUrl: null, icon: 'FileEdit' },
+      { id: 'vikunja',         label: 'Vikunja',           port: 3456, checkUrl: 'http://192.168.50.13:3456', quicklink: true, category: 'lab', externalUrl: null, icon: 'CheckSquare' },
+      { id: 'wallabag',        label: 'Wallabag',          port: 8011, checkUrl: 'http://192.168.50.13:8011', quicklink: true, category: 'lab', externalUrl: null, icon: 'BookOpen' },
+      { id: 'wallos',          label: 'Wallos',            port: 8282, checkUrl: 'http://192.168.50.13:8282', quicklink: true, category: 'lab', externalUrl: null, icon: 'CreditCard' },
+      { id: 'cadvisor',        label: 'cAdvisor',          port: 8090, checkUrl: 'http://192.168.50.13:8090', quicklink: true, category: 'lab', externalUrl: null, icon: 'PieChart' },
+      { id: 'glances',         label: 'Glances',           port: 61208, checkUrl: 'http://192.168.50.13:61208', quicklink: true, category: 'lab', externalUrl: null, icon: 'Gauge' },
     ],
   },
   {
@@ -1097,12 +1115,12 @@ const LAB_HOST_SERVICES = [
     host: 'Server 3 (S3)',
     hostIp: '192.168.50.12',
     services: [
-      { id: 's3-speedtest',    label: 'Speedtest Tracker', port: 8765, checkUrl: 'http://192.168.50.12:8765' },
-      { id: 's3-comfyui',      label: 'ComfyUI',           port: 8188, checkUrl: 'http://192.168.50.12:8188' },
-      { id: 's3-whisper',      label: 'faster-whisper',    port: 9000, checkUrl: 'http://192.168.50.12:9000' },
-      { id: 's3-piper',        label: 'piper-tts',         port: 8400, checkUrl: 'http://192.168.50.12:8400' },
-      { id: 's3-openwebui',    label: 'Open WebUI',        port: 3000, checkUrl: 'http://192.168.50.12:3000' },
-      { id: 's3-dozzle',       label: 'Dozzle',            port: 8015, checkUrl: 'http://192.168.50.12:8015' },
+      { id: 's3-speedtest',    label: 'Speedtest Tracker', port: 8765, checkUrl: 'http://192.168.50.12:8765', quicklink: true, category: 'lab', externalUrl: null, icon: 'Gauge' },
+      { id: 's3-comfyui',      label: 'ComfyUI',           port: 8188, checkUrl: 'http://192.168.50.12:8188', quicklink: true, category: 'lab', externalUrl: null, icon: 'Image' },
+      { id: 's3-whisper',      label: 'faster-whisper',    port: 9000, checkUrl: 'http://192.168.50.12:9000', quicklink: true, category: 'lab', externalUrl: null, icon: 'Mic' },
+      { id: 's3-piper',        label: 'piper-tts',         port: 8400, checkUrl: 'http://192.168.50.12:8400', quicklink: true, category: 'lab', externalUrl: null, icon: 'Volume2' },
+      { id: 's3-openwebui',    label: 'Open WebUI',        port: 3000, checkUrl: 'http://192.168.50.12:3000', quicklink: true, category: 'lab', externalUrl: null, icon: 'MessageCircle' },
+      { id: 's3-dozzle',       label: 'Dozzle',            port: 8015, checkUrl: 'http://192.168.50.12:8015', quicklink: true, category: 'lab', externalUrl: null, icon: 'ScrollText' },
     ],
   },
   {
@@ -1111,14 +1129,14 @@ const LAB_HOST_SERVICES = [
     services: [
       { id: 's1-plex',         label: 'Plex',              port: 32400, checkUrl: 'http://192.168.50.10:32400/identity', quicklink: true, category: 'media', externalUrl: 'https://plex.jojeco.ca', icon: 'Play' },
       { id: 's1-vintagestory', label: 'Vintage Story',     port: 42420, checkUrl: null, tcp: true },
-      { id: 's1-mcmanager',    label: 'MC Manager',        port: 8765,  checkUrl: 'http://192.168.50.10:8765/status' },
+      { id: 's1-mcmanager',    label: 'MC Manager',        port: 8765,  checkUrl: 'http://192.168.50.10:8765/status', quicklink: true, category: 'lab', externalUrl: null, icon: 'Gamepad2' },
     ],
   },
   {
     host: 'Mac Mini',
     hostIp: '192.168.50.30',
     services: [
-      { id: 'macmini-kuma',    label: 'Uptime Kuma',       port: 3001, checkUrl: 'http://192.168.50.30:3001' },
+      { id: 'macmini-kuma',    label: 'Uptime Kuma',       port: 3001, checkUrl: 'http://192.168.50.30:3001', quicklink: true, category: 'lab', externalUrl: null, icon: 'HeartPulse' },
       { id: 'macmini-adguard', label: 'AdGuard',           port: 3000, checkUrl: 'http://192.168.50.30:3000', quicklink: true, category: 'lab', externalUrl: null, icon: 'Shield' },
     ],
   },
@@ -1520,42 +1538,6 @@ app.get('/api/backup-status', lanOrAuth, async (req, res) => {
 });
 
 // ============================================================================
-// 7-DAY SPARKLINE DATA
-// ============================================================================
-
-app.get('/api/health/sparklines', authMiddleware, (req, res) => {
-  try {
-    const since7d = Date.now() - 7 * 24 * 3600000;
-    const services = db.prepare('SELECT id, name FROM services').all();
-    const result = {};
-    for (const svc of services) {
-      // Get hourly buckets of uptime % over last 7 days
-      const rows = db.prepare(
-        'SELECT timestamp, status FROM health_checks WHERE service_id = ? AND timestamp > ? ORDER BY timestamp ASC'
-      ).all(svc.id, since7d);
-
-      if (rows.length === 0) { result[svc.id] = []; continue; }
-
-      // Group into 24 buckets (one per 7h period = 7 days)
-      const bucketMs = 7 * 24 * 3600000 / 24;
-      const now = Date.now();
-      const buckets = Array.from({ length: 24 }, (_, i) => {
-        const bucketEnd = now - (23 - i) * bucketMs;
-        const bucketStart = bucketEnd - bucketMs;
-        const inBucket = rows.filter(r => r.timestamp >= bucketStart && r.timestamp < bucketEnd);
-        if (inBucket.length === 0) return null;
-        const online = inBucket.filter(r => r.status === 'online').length;
-        return Math.round((online / inBucket.length) * 100);
-      });
-      result[svc.id] = buckets;
-    }
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to fetch sparkline data' });
-  }
-});
-
-// ============================================================================
 // ADGUARD STATS PROXY — extracted to ./routes/adguard.js (Phase 3 route split)
 // ============================================================================
 app.use(adguardRoutes);
@@ -1566,18 +1548,9 @@ app.use(adguardRoutes);
 app.use(jarvisRoutes);
 
 // ============================================================================
-// MINECRAFT PROXY
+// MINECRAFT PROXY — extracted to ./routes/minecraft.js (Phase 4 route split)
 // ============================================================================
-
-app.get('/api/minecraft/status', lanOrAuth, async (req, res) => {
-  try {
-    const r = await fetch('http://192.168.50.10:8765/status', { signal: AbortSignal.timeout(4000) });
-    const data = await r.json();
-    res.json(data);
-  } catch {
-    res.status(502).json({ error: 'MC API unreachable' });
-  }
-});
+app.use(minecraftRoutes);
 
 // ============================================================================
 // KIOSK API ROUTES — extracted to ./routes/kiosk.js (Phase 3 route split)
