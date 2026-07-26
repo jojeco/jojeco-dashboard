@@ -1,7 +1,7 @@
-// JojeCo Lab — v3 Service Worker
+// JojeCo Lab — v4 Service Worker
 // Cache-first for static assets; network-first for API calls.
 
-const CACHE = 'jojeco-v3-assets-v1';
+const CACHE = 'jojeco-v4-assets-v1';
 
 const PRECACHE = [
   '/',
@@ -57,10 +57,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first for navigation (HTML pages) to always get fresh app shell
+  // Network-first for navigation (HTML pages) to always get fresh app shell.
+  // Only fall back to the cached shell when truly offline — a transient fetch
+  // error while online should surface as a normal browser error, not silently
+  // serve a stale cached app shell with no indication it's out of date.
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('/index.html') ?? fetch(request))
+      fetch(request).catch(() => {
+        if (!self.navigator.onLine) {
+          return caches.match('/index.html').then((cached) => cached ?? fetch(request));
+        }
+        return fetch(request);
+      })
     );
   }
 });

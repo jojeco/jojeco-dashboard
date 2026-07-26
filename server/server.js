@@ -29,6 +29,7 @@ import logsRoutes from './routes/logs.js';
 import automationRoutes from './routes/automation.js';
 import minecraftRoutes from './routes/minecraft.js';
 import resilienceRoutes from './routes/resilience.js';
+import toolsRoutes from './routes/tools.js';
 import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
@@ -1419,6 +1420,7 @@ app.use(resilienceRoutes);
 // KIOSK API ROUTES — extracted to ./routes/kiosk.js (Phase 3 route split)
 // ============================================================================
 app.use(kioskRoutes);
+app.use(toolsRoutes);
 
 // ============================================================================
 // ============================================================================

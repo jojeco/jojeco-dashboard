@@ -86,3 +86,4 @@ coverage
 .next
 .nuxt
 .vercel
+server/dump_mqtt.js

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Power, Wind, ChevronUp, ChevronDown } from 'lucide-react';
+import { getToken } from '@/services/api';
 
 const BASE = (import.meta.env.VITE_API_URL || 'http://192.168.50.13:3001/api').replace('/api', '');
 const MODES = ['AUTO', 'COOL', 'FAN_ONLY', 'DRY'] as const;
@@ -16,7 +17,8 @@ export function AcCard() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const r = await fetch(`${BASE}/api/ac/status`);
+      const token = getToken();
+      const r = await fetch(`${BASE}/api/ac/status`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setState(await r.json()); setError(null);
     } catch (e: any) { setError(e.message); }
@@ -27,7 +29,8 @@ export function AcCard() {
   const post = async (path: string, body: object) => {
     setLoading(true);
     try {
-      const r = await fetch(`${BASE}/api/ac/${path}`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body:JSON.stringify(body) });
+      const token = getToken();
+      const r = await fetch(`${BASE}/api/ac/${path}`, { method:'POST', headers:{'Content-Type':'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, credentials:'include', body:JSON.stringify(body) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setState(await r.json());
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }

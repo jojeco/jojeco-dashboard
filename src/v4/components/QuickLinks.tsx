@@ -49,7 +49,7 @@ export function QuickLinks({ services, variant, category, className }: QuickLink
       )}
     >
       {filtered.map(svc => {
-        const { url, isLanOnly, isRemote } = getServiceUrl(svc);
+        const { url, isLanOnly } = getServiceUrl(svc);
         const Icon = (LucideIcons as any)[svc.icon] || LucideIcons.ExternalLink;
         
         let statusColor = 'var(--v4-standby)'; // Unknown/missing
@@ -57,7 +57,8 @@ export function QuickLinks({ services, variant, category, className }: QuickLink
           statusColor = svc.online ? 'var(--v4-nominal)' : 'var(--v4-fault)';
         }
 
-        const disabledRemotely = isRemote && isLanOnly;
+        // Allow clicking LAN links even if we appear to be remote (VPN/split-DNS)
+        const disabledRemotely = false;
 
         return (
           <a
@@ -72,7 +73,7 @@ export function QuickLinks({ services, variant, category, className }: QuickLink
               variant === 'strip' ? 'w-auto' : 'w-full'
             )}
             style={{ background: 'var(--v4-console)' }}
-            title={disabledRemotely ? 'Available on LAN only' : `Open ${svc.label}`}
+            title={isLanOnly ? 'LAN Only Link' : `Open ${svc.label}`}
           >
             {/* Status edge stripe */}
             <div 

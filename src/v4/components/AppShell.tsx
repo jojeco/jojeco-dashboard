@@ -4,12 +4,13 @@ import { useState, useEffect } from 'react';
  * DESIGN.md §5: mobile bottom tab bar (thumb reach), left rail on desktop.
  */
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Server, Film, Sliders, Gamepad2, LogOut, LogIn, Thermometer, Printer } from 'lucide-react';
+import { LayoutDashboard, Server, Film, Sliders, Gamepad2, LogOut, LogIn, Thermometer, Printer, Wrench } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { LiveIndicator } from './LiveIndicator';
 import { AlertBell } from './AlertBell';
 import { cn } from '../lib/utils';
+import { getToken } from '../../services/api';
 
 // ── 6-tab nav ───────────────────────────────────────
 const TABS = [
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'controls', label: 'Controls', href: '/v4/controls', icon: Sliders },
   { id: 'gaming',   label: 'Gaming',   href: '/v4/gaming',   icon: Gamepad2 },
   { id: 'printer',  label: 'Printer',  href: '/v4/printer',  icon: Printer },
+  { id: 'tools',    label: 'Tools',    href: '/v4/tools',    icon: Wrench },
 ] as const;
 
 function useActiveTab() {
@@ -34,11 +36,13 @@ function AcTemps() {
   const [temps, setTemps] = useState<{ indoor: number | null; outdoor: number | null }>({ indoor: null, outdoor: null });
 
   useEffect(() => {
-    const fetch_ = () =>
-      fetch(`${AC_API}/api/ac/status`)
+    const fetch_ = () => {
+      const token = getToken();
+      fetch(`${AC_API}/api/ac/status`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined })
         .then(r => r.ok ? r.json() : null)
         .then(d => d && setTemps({ indoor: d.indoor_temp, outdoor: d.outdoor_temp }))
         .catch(() => {});
+    };
     fetch_();
     const id = setInterval(fetch_, 60000);
     return () => clearInterval(id);
