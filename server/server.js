@@ -30,6 +30,7 @@ import automationRoutes from './routes/automation.js';
 import minecraftRoutes from './routes/minecraft.js';
 import resilienceRoutes from './routes/resilience.js';
 import toolsRoutes from './routes/tools.js';
+import jobsRoutes from './routes/jobs.js';
 import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
@@ -1421,6 +1422,7 @@ app.use(resilienceRoutes);
 // ============================================================================
 app.use(kioskRoutes);
 app.use(toolsRoutes);
+app.use(jobsRoutes);
 
 // ============================================================================
 // ============================================================================

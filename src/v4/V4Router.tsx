@@ -16,6 +16,7 @@ import LoginPage from './pages/LoginPage';
 import KioskPage from './pages/KioskPage';
 import PrinterPage from './pages/PrinterPage';
 import ToolsPage from './pages/ToolsPage';
+import JobsPage from './pages/JobsPage';
 import { useAuth } from '../contexts/AuthContext';
 import './v4.css';
 
@@ -114,6 +115,17 @@ export function V4Routes() {
           <V4ProtectedRoute>
             <AppShell>
               <ToolsPage />
+            </AppShell>
+          </V4ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/v4/jobs"
+        element={
+          <V4ProtectedRoute>
+            <AppShell>
+              <JobsPage />
             </AppShell>
           </V4ProtectedRoute>
         }
