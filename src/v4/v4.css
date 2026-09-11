@@ -297,48 +297,64 @@
 /* On xl+, expand the left rail to show labels alongside icons.
    On lg (1280-1439), use a slightly wider icon-only rail (72px).     */
 
+/* ── v5 Desktop Layout Additions ─────────────────────────────────── */
+
+/* Rail labels and brand text: hidden by default, shown at xl+ only */
+.v5-rail-label,
+.v5-rail-brand {
+  display: none;
+}
+
+/* ── v5 left rail sizing ─────────────────────────────────────────── */
+.v5-root .v5-rail {
+  width: 56px;      /* default: icon-only, same as v4 */
+  align-items: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* lg (1280px+): slightly wider icon-only rail */
 @media (min-width: 1280px) {
   .v5-root .v5-rail {
-    width: 72px;
+    width: 64px;
   }
 }
 
+/* xl (1440px+): full labeled rail */
 @media (min-width: 1440px) {
   .v5-root .v5-rail {
-    width: 220px;
+    width: 200px;
     align-items: flex-start;
     padding-left: 12px;
     padding-right: 12px;
   }
-  .v5-root .v5-rail-item {
-    width: 100%;
-    justify-content: flex-start;
-    gap: 10px;
-    padding-left: 10px;
-    border-radius: 0.5rem;
-  }
-  .v5-root .v5-rail-label {
-    display: block;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    letter-spacing: 0.01em;
-  }
+
+  .v5-root .v5-rail-item,
   .v5-root .v5-rail-logo {
     width: 100%;
     justify-content: flex-start;
     gap: 10px;
-    padding-left: 10px;
+    padding-left: 8px;
   }
-  .v5-root .v5-rail-brand {
+
+  .v5-rail-label,
+  .v5-rail-brand {
     display: block;
-    font-size: 0.9375rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Bottom controls align-left too */
+  .v5-root .v5-rail > div:last-child {
+    align-items: flex-start;
+    padding-left: 8px;
+    width: 100%;
   }
 }
 
 /* ── v5 Home: viewport-locked 3-column grid ──────────────────────── */
-/* Mobile: single column stack (default) */
+/* Mobile: normal stacked layout */
 .v5-home-grid {
   display: flex;
   flex-direction: column;
@@ -368,16 +384,26 @@
   flex-direction: column;
 }
 
-/* Desktop: 3-column fixed-height grid, no page scroll */
+/* Desktop: 3-column fixed-height grid */
 @media (min-width: 1280px) {
+  /* Make the main content area height-constrained so the grid fills it */
+  .v5-root main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* On desktop the mobile nav padding is wasted — zero it out */
+    padding-bottom: 1rem !important;
+  }
+
   .v5-home-grid {
     display: grid;
     /* 40% | 30% | 30% */
     grid-template-columns: 5fr 3fr 4fr;
     grid-template-rows: 1fr;
     gap: 12px;
-    /* Full height minus top bar (44px) and page padding (32px top + bottom) */
-    height: calc(100dvh - 44px - 2rem);
+    /* Fill available height of main element */
+    flex: 1 1 0;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -388,8 +414,7 @@
 
   .v5-col-left {
     grid-column: 1;
-    /* Hosts takes ~65%, services takes ~35% */
-    grid-template-rows: 65fr 35fr;
+    grid-template-rows: 62fr 38fr;
   }
 
   .v5-col-mid {
@@ -399,11 +424,10 @@
 
   .v5-col-right {
     grid-column: 3;
-    /* Gaming ~40%, storage ~60% */
-    grid-template-rows: 40fr 60fr;
+    grid-template-rows: 42fr 58fr;
   }
 
-  /* Each panel fills its row and allows internal scrolling */
+  /* Panels fill their rows */
   .v5-col .v5-panel {
     flex: 1 1 0;
     overflow: hidden;
@@ -411,7 +435,6 @@
     flex-direction: column;
   }
 
-  /* Make inner content areas scroll */
   .v5-panel-hosts,
   .v5-panel-services,
   .v5-panel-gaming,
@@ -421,13 +444,13 @@
 
   .v5-panel-fill {
     height: 100%;
+    flex: 1 1 0;
   }
 }
 
-/* Widescreen (≥1600px): slightly adjust proportions */
+/* Wide screens: bigger gap */
 @media (min-width: 1600px) {
   .v5-home-grid {
-    grid-template-columns: 5fr 3fr 4fr;
     gap: 16px;
   }
 }
