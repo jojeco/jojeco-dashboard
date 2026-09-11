@@ -295,6 +295,51 @@ async function fetchServer2() {
   }
 }
 
+async function fetchServer4() {
+  const SSH_OPTS = [
+    '-i', '/root/.ssh/jojeco_lab_key',
+    '-o', 'StrictHostKeyChecking=accept-new',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=6',
+    '-o', 'ProxyCommand=ssh -i /root/.ssh/jojeco_lab_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=6 -W %h:%p sshuser@192.168.50.10',
+  ];
+  try {
+    const cmd = [
+      'cat /proc/loadavg',
+      'cat /proc/meminfo',
+      'cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0',
+      'cat /sys/class/thermal/thermal_zone1/temp 2>/dev/null || echo 0',
+      'df -B1 /',
+    ].join(' && ');
+    const { stdout } = await execFileAsync('ssh', [...SSH_OPTS, 'root@192.168.50.14', cmd], { timeout: 10000 });
+    const lines = stdout.split('\n');
+    const load1 = parseFloat(lines[0]?.split(' ')[0] ?? '0');
+    const cpuCores = 4; // i5-6th-gen has 4 cores (6500T)
+    const cpu = Math.min(100, Math.round((load1 / cpuCores) * 1000) / 10);
+    const memTotal = parseInt(lines.find(l => l.startsWith('MemTotal'))?.match(/(\d+)/)?.[1] ?? '0') * 1024;
+    const memAvail = parseInt(lines.find(l => l.startsWith('MemAvailable'))?.match(/(\d+)/)?.[1] ?? '0') * 1024;
+    const memUsed = memTotal - memAvail;
+    const temps = [];
+    const tz0 = parseInt(lines.find(l => /^(\d+)$/.test(l))?.trim() ?? '0');
+    if (tz0 > 0 && tz0 < 120000) temps.push({ type: 'CPU', value: Math.round(tz0 / 100) / 10 });
+    const dfLine = lines.find(l => /\s+\/$/.test(l) && !l.startsWith('Filesystem'));
+    let disk = null;
+    if (dfLine) {
+      const [, total, used] = dfLine.trim().split(/\s+/);
+      const t = parseInt(total), u = parseInt(used);
+      if (t > 0) disk = { used: Math.round(u / 1073741824 * 10) / 10, total: Math.round(t / 1073741824 * 10) / 10, percent: Math.round((u / t) * 1000) / 10 };
+    }
+    return {
+      id: 'server4', name: 'Server 4 (Vault)', host: '192.168.50.14', os: 'Proxmox 9', online: true, cpu,
+      memory: { used: Math.round(memUsed / 1048576), total: Math.round(memTotal / 1048576), percent: memTotal > 0 ? Math.round((memUsed / memTotal) * 1000) / 10 : 0 },
+      disk,
+      temps,
+    };
+  } catch {
+    return { id: 'server4', name: 'Server 4 (Vault)', host: '192.168.50.14', os: 'Proxmox 9', online: false, temps: [] };
+  }
+}
+
 async function fetchServer3() {
   try {
     const res = await fetch('http://192.168.50.12:9100/metrics', { signal: AbortSignal.timeout(5000) });
@@ -336,7 +381,7 @@ async function fetchServer3() {
 }
 
 app.get('/api/system/servers', authMiddleware, async (req, res) => {
-  const servers = await Promise.all([fetchServer1(), fetchServer2(), fetchServer3()]);
+  const servers = await Promise.all([fetchServer1(), fetchServer2(), fetchServer3(), fetchServer4()]);
   res.json(servers);
 });
 
@@ -371,6 +416,7 @@ const LAB_MACHINES = [
   { id: 'server1', name: 'Server 1', host: '192.168.50.10', role: 'Plex + Games',    os: 'Windows 10',  always_on: true,  gpu_label: 'GTX 1060' },
   { id: 'server3', name: 'Server 3', host: '192.168.50.12', role: 'LLM Node',        os: 'Ubuntu',      always_on: true,  gpu_label: 'GTX 1060 Max-Q' },
   { id: 'server2', name: 'Server 2', host: '192.168.50.13', role: 'Docker Host',     os: 'Debian LXC',  always_on: true,  gpu_label: null },
+  { id: 'server4', name: 'Server 4', host: '192.168.50.14', role: 'Vault + Monitor', os: 'Proxmox 9',   always_on: true,  gpu_label: null },
   { id: 'macmini', name: 'Mac Mini', host: '192.168.50.30', role: 'DNS + Monitor',   os: 'macOS',       always_on: true,  gpu_label: null },
   { id: 'jopc',    name: 'JoPc',     host: '192.168.50.20', role: 'RTX 3080 Ti',     os: 'Windows',     always_on: false, gpu_label: 'RTX 3080 Ti' },
   { id: 'macbook', name: 'MacBook',  host: '192.168.50.40', role: 'M4 (burst)',      os: 'macOS',       always_on: false, gpu_label: null },
@@ -690,6 +736,7 @@ const LAB_PROCESS_HOSTS = {
   server1: { host: '192.168.50.10', os: 'windows' },
   server2: { host: '192.168.50.13', os: 'linux' },
   server3: { host: '192.168.50.12', os: 'linux' },
+  server4: { host: '192.168.50.14', os: 'linux' },
   macmini: { host: '192.168.50.30', os: 'linux' },
   jopc:    { host: '192.168.50.20', os: 'windows' },
   macbook: { host: '192.168.50.40', os: 'linux' },
@@ -1064,7 +1111,7 @@ const LAB_HOST_SERVICES = [
     hostIp: '192.168.50.13',
     services: [
       { id: 'nextcloud',      label: 'Nextcloud',        port: 8880, checkUrl: 'http://192.168.50.13:8880', quicklink: true, category: 'lab', externalUrl: 'https://cloud.jojeco.ca', icon: 'Cloud' },
-      { id: 'files',          label: 'Files',            port: 8085, checkUrl: 'http://192.168.50.13:8085', quicklink: true, category: 'lab', externalUrl: 'https://files.jojeco.ca', icon: 'FolderOpen' },
+      { id: 'files',          label: 'Files',            port: 8085, checkUrl: 'http://192.168.50.100:8085', quicklink: true, category: 'lab', externalUrl: 'https://files.jojeco.ca', icon: 'FolderOpen' },
       { id: 'paperless',      label: 'Paperless',        port: 8010, checkUrl: 'http://192.168.50.13:8010', quicklink: true, category: 'lab', externalUrl: null, icon: 'FileText' },
       { id: 'grafana',        label: 'Grafana',          port: 3002, checkUrl: 'http://192.168.50.13:3002', quicklink: true, category: 'lab', externalUrl: 'https://grafana.jojeco.ca', icon: 'BarChart2' },
       { id: 'portainer',      label: 'Portainer',        port: 9000, checkUrl: 'http://192.168.50.13:9000', quicklink: true, category: 'lab', externalUrl: 'https://portainer.jojeco.ca', icon: 'Box' },
@@ -1131,7 +1178,10 @@ const LAB_HOST_SERVICES = [
     hostIp: '192.168.50.10',
     services: [
       { id: 's1-plex',         label: 'Plex',              port: 32400, checkUrl: 'http://192.168.50.10:32400/identity', quicklink: true, category: 'media', externalUrl: 'https://plex.jojeco.ca', icon: 'Play' },
-      { id: 's1-vintagestory', label: 'Vintage Story',     port: 42420, checkUrl: null, tcp: true },
+      // NEVER tcpCheck 42420: vs-keeper arms a wake-on-connect listener on the
+      // game port while VS is stopped, so probing it silently restarts the
+      // server (~30s after any manual stop). Use the keeper's status API.
+      { id: 's1-vintagestory', label: 'Vintage Story',     port: 42420, checkUrl: null, stateUrl: 'http://192.168.50.10:8767/status' },
       { id: 's1-mcmanager',    label: 'MC Manager',        port: 8765,  checkUrl: 'http://192.168.50.10:8765/status', quicklink: true, category: 'lab', externalUrl: null, icon: 'Gamepad2' },
     ],
   },
@@ -1158,7 +1208,19 @@ async function fetchLabHostServices() {
     const services = await Promise.all(group.services.map(async svc => {
       let online = false;
       let responseTime = null;
-      if (svc.tcp) {
+      if (svc.stateUrl) {
+        // Keeper-style JSON status API ({"state":"running|starting|sleeping"}).
+        // Used for servers with wake-on-connect: a raw TCP probe of the GAME
+        // port would be treated as a player connecting and wake the server, so
+        // we must never tcpCheck those. See vs-keeper.ps1 on S1.
+        try {
+          const r = await fetch(svc.stateUrl, { signal: AbortSignal.timeout(4000) });
+          if (r.ok) {
+            const d = await r.json();
+            online = d.state === 'running' || d.state === 'starting';
+          }
+        } catch { /* keeper unreachable -> offline */ }
+      } else if (svc.tcp) {
         const ok = await tcpCheck(group.hostIp, svc.port, 3000);
         online = ok;
         responseTime = null;

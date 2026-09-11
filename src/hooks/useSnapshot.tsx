@@ -79,9 +79,16 @@ export interface GamingMcServer {
   status: string;              // running | sleeping | starting | stopped
   port: number | null;
   players?: number;
+  playerNames?: string[];
 }
 export interface GamingVintageStory {
   status: string;              // running | sleeping | stopped
+  players?: number;
+  uptime_s?: number;
+  port?: number;
+}
+export interface GamingPalworld {
+  status: string;
   players?: number;
   uptime_s?: number;
   port?: number;
@@ -90,6 +97,7 @@ export interface GamingSection {
   s1Online: boolean;
   minecraft: GamingMcServer[];
   vintageStory: GamingVintageStory | null;
+  palworld: GamingPalworld | null;
 }
 
 export interface Disk { label: string; used: number; size: number; percent: number }

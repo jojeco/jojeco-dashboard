@@ -53,9 +53,17 @@
       - jojeco-dashboard-api
     restart: unless-stopped
     networks:
+      # `proxy` is REQUIRED — nginx-proxy-manager lives on it and cannot reach
+      # this container without it. It used to be attached by hand, so every
+      # `docker compose up -d` (and every Watchtower auto-update) silently
+      # dropped it and public dash.jojeco.ca returned 502 while the container
+      # looked perfectly healthy locally. Declared here so it survives rebuilds.
       - jojeco-network
+      - proxy
     environment:
       - NODE_ENV=production
+    volumes:
+      - /opt/mc-resources:/mc-packs:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/ || exit 1"]
       interval: 30s
@@ -109,6 +117,9 @@
 networks:
   jojeco-network:
     driver: bridge
+  # Shared reverse-proxy network owned by the infrastructure stack.
+  proxy:
+    external: true
 
 volumes:
   netdataconfig:

@@ -22,19 +22,20 @@ import { authMiddleware } from '../auth.js';
 
 const router = express.Router();
 
-const MC_BASE = 'http://192.168.50.10:8765';
-const VS_BASE = 'http://192.168.50.10:8767';
+const MC_BASE  = 'http://192.168.50.10:8765';
+const VS_BASE  = 'http://192.168.50.10:8767';
+const PAL_BASE = 'http://192.168.50.10:8768';
 
 // Valid Minecraft server ids come from the manager's /status keys; we still keep
 // a static allow-list of known ids as a guard for the control endpoints.
-const MC_IDS = new Set(['main', 'bmc4', 'ftb']);
+const MC_IDS = new Set(['main', 'bmc4', 'ftb', 'crossplay', 'homestead']);
 const ACTIONS = new Set(['start', 'stop', 'restart']);
 
 // ── Status aggregation ────────────────────────────────────────────────────────
 // GET /api/gaming/status — one payload for the whole Gaming tab.
-// Shape: { s1Online, minecraft: [ {id,name,status,port,players?} ], vintageStory: {status,players?,uptime_s?} }
+// Shape: { s1Online, minecraft:[...], vintageStory:{...}, palworld:{status,players?,uptime_s?} }
 router.get('/api/gaming/status', authMiddleware, async (req, res) => {
-  const out = { s1Online: false, minecraft: [], vintageStory: null };
+  const out = { s1Online: false, minecraft: [], vintageStory: null, palworld: null };
 
   // Minecraft manager
   let mcOk = false;
@@ -42,14 +43,17 @@ router.get('/api/gaming/status', authMiddleware, async (req, res) => {
     const r = await fetch(`${MC_BASE}/status`, { signal: AbortSignal.timeout(4000) });
     if (r.ok) {
       const data = await r.json();
-      out.minecraft = Object.values(data).map((s) => ({
-        id: s.id,
-        name: s.name,
-        status: s.status,                 // running | sleeping | starting | stopped
-        port: s.public_port ?? null,
-        // mc_manager /status does not report player counts; leave undefined.
-        players: typeof s.players === 'number' ? s.players : undefined,
-      }));
+      out.minecraft = Object.values(data).map((s) => {
+        const names = Array.isArray(s.players) ? s.players : [];
+        return {
+          id: s.id,
+          name: s.name,
+          status: s.status,                 // running | sleeping | starting | stopped
+          port: s.public_port ?? null,
+          players: names.length > 0 ? names.length : (typeof s.players === 'number' ? s.players : undefined),
+          playerNames: names.length > 0 ? names : undefined,
+        };
+      });
       mcOk = true;
     }
   } catch { /* S1 or MC manager unreachable */ }
@@ -70,8 +74,24 @@ router.get('/api/gaming/status', authMiddleware, async (req, res) => {
     }
   } catch { /* VS keeper unreachable */ }
 
-  // If either manager answered, S1 is up enough to run game servers.
-  out.s1Online = mcOk || vsOk;
+  // Palworld keeper
+  let palOk = false;
+  try {
+    const r = await fetch(`${PAL_BASE}/status`, { signal: AbortSignal.timeout(4000) });
+    if (r.ok) {
+      const d = await r.json();
+      out.palworld = {
+        status: d.state ?? 'unknown',
+        players: typeof d.players === 'number' ? d.players : undefined,
+        uptime_s: typeof d.uptime_s === 'number' ? d.uptime_s : undefined,
+        port: 8211,
+      };
+      palOk = true;
+    }
+  } catch { /* pal keeper unreachable */ }
+
+  // If any manager answered, S1 is up enough to run game servers.
+  out.s1Online = mcOk || vsOk || palOk;
   res.json(out);
 });
 
@@ -82,6 +102,17 @@ router.post('/api/gaming/:server/:action', authMiddleware, async (req, res) => {
   if (!ACTIONS.has(action)) return res.status(400).json({ error: 'Invalid action' });
 
   try {
+    if (server === 'palworld') {
+      if (action === 'restart') {
+        await palPost('/stop');
+        await new Promise((r) => setTimeout(r, 3000));
+        await palPost('/start');
+        return res.json({ ok: true, message: 'Palworld restarting (stop → start)' });
+      }
+      await palPost(`/${action}`);
+      return res.json({ ok: true, message: `Palworld ${action} sent` });
+    }
+
     if (server === 'vs') {
       // VS keeper exposes only /start and /stop (POST needs a body). Restart = stop→start.
       if (action === 'restart') {
@@ -168,4 +199,29 @@ async function vsPost(path) {
   return r.json().catch(() => ({}));
 }
 
+async function palPost(path) {
+  const r = await fetch(`${PAL_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) throw new Error(`pal keeper ${r.status}`);
+  return r.json().catch(() => ({}));
+}
+
+// ── Chunky pregen progress (MC only) ─────────────────────────────────────────
+// GET /api/gaming/:server/chunky → proxies mc_manager /chunky/<id>
+// Returns { running, percent?, eta?, rate?, world?, chunks?, current_x?, current_z? }
+router.get('/api/gaming/:server/chunky', authMiddleware, async (req, res) => {
+  const { server } = req.params;
+  if (!MC_IDS.has(server)) return res.status(400).json({ error: 'Unknown game server' });
+  try {
+    const r = await fetch(`${MC_BASE}/chunky/${server}`, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return res.json({ running: false, error: `mc_manager ${r.status}` });
+    return res.json(await r.json());
+  } catch (e) {
+    return res.json({ running: false, error: `S1 unreachable — ${e.message}` });
+  }
+});
 export default router;

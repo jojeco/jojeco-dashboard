@@ -36,6 +36,22 @@
   /* Tile radius */
   --v4-tile-r:  0.75rem;
   --v4-card-r:  1rem;
+
+  /* ── Compatibility aliases ─────────────────────────────────────────
+     Several pages (JobsPage in particular) reference these names, which
+     were never defined — so `color: var(--v4-text)` resolved to nothing
+     and those elements silently inherited whatever colour surrounded
+     them. The Jobs score badge was unreadable for exactly this reason.
+     Defined as aliases of the canonical tokens rather than new colours,
+     so there is no visual drift. Note --v4-amber is BLUE (#58a6ff);
+     the name is historical and wrong, which is why --v4-blue exists. */
+  --v4-accent:  var(--v4-amber);    /* #58a6ff */
+  --v4-primary: var(--v4-amber);
+  --v4-blue:    var(--v4-amber);
+  --v4-green:   var(--v4-nominal);  /* #3fb950 */
+  --v4-text:    var(--v4-signal);   /* #e6edf3 */
+  --v4-surface: var(--v4-console);  /* #161b22 */
+  --v4-bg-deep: var(--v4-void);     /* #0d1117 */
 }
 
 /* ── v4 root shell ───────────────────────────────────────────────── */

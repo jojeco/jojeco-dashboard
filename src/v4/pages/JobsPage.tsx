@@ -27,9 +27,13 @@ const FILTER_TABS: { id: Filter; label: string }[] = [
 ];
 
 function scoreBg(score: number) {
-  if (score >= 9) return 'var(--v4-green)';
-  if (score >= 7) return 'var(--v4-amber)';
-  return 'var(--v4-trace)';
+  if (score >= 9) return 'rgba(63,185,80,0.85)';
+  if (score >= 7) return 'rgba(210,153,34,0.85)';
+  return 'rgba(88,166,255,0.25)';
+}
+function scoreColor(score: number) {
+  if (score >= 7) return '#fff';
+  return 'var(--v4-accent)';
 }
 
 function relativeTime(iso: string) {
@@ -166,7 +170,7 @@ export default function JobsPage() {
                   {/* Score badge */}
                   <div
                     className="shrink-0 w-7 h-7 rounded flex items-center justify-center text-[0.75rem] font-bold mt-0.5"
-                    style={{ background: scoreBg(job.score), color: 'var(--v4-void)' }}
+                    style={{ background: scoreBg(job.score), color: scoreColor(job.score) }}
                   >
                     {job.score}
                   </div>

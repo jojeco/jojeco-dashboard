@@ -100,7 +100,7 @@ function DesktopRail() {
 
   return (
     <aside
-      className="hidden xl:flex flex-col items-center gap-1 py-4 shrink-0"
+      className="hidden lg:flex flex-col items-center gap-1 py-4 shrink-0"
       style={{
         width: 56,
         background: 'var(--v4-console)',
@@ -194,10 +194,11 @@ function MobileHeader() {
 
   return (
     <header
-      className="xl:hidden sticky top-0 z-20 flex items-center justify-between px-4"
+      className="lg:hidden sticky top-0 z-20 flex items-center justify-between px-4"
       style={{
         background: 'var(--v4-raised)',
-        height: 48,
+        paddingTop: 'env(safe-area-inset-top)',
+        height: 'calc(48px + env(safe-area-inset-top))',
       }}
     >
       {/* Logo + page name */}
@@ -257,7 +258,7 @@ function MobileBottomNav() {
       {/* Secondary tab overflow sheet */}
       {moreOpen && (
         <div
-          className="xl:hidden fixed inset-x-4 rounded-[0.75rem] overflow-hidden"
+          className="lg:hidden fixed inset-x-4 rounded-[0.75rem] overflow-hidden"
           style={{
             bottom: 'calc(60px + env(safe-area-inset-bottom))',
             background: 'var(--v4-console)',
@@ -293,7 +294,7 @@ function MobileBottomNav() {
       )}
 
       <nav
-        className="xl:hidden fixed bottom-0 inset-x-0 z-20 flex items-stretch"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-20 flex items-stretch"
         style={{
           background: 'var(--v4-console)',
           borderTop: '1px solid var(--v4-hairline)',
@@ -346,7 +347,7 @@ function MobileBottomNav() {
 function DesktopTopBar() {
   return (
     <header
-      className="hidden xl:flex items-center justify-between px-6 shrink-0"
+      className="hidden lg:flex items-center justify-between px-6 shrink-0"
       style={{
         height: 44,
         background: 'var(--v4-raised)',

@@ -30,7 +30,7 @@ import { getToken } from '../../services/api';
 import { DetailModal } from '../components/DetailModal';
 import { Panel, PanelTitle, PageTitle, Mono, StatusChip, Skeleton } from '../components/Primitives';
 import { fmtBytes } from '../lib/utils';
-import type { GamingMcServer, GamingVintageStory, Machine } from '../../hooks/useSnapshot';
+import type { GamingMcServer, GamingVintageStory, GamingPalworld, Machine } from '../../hooks/useSnapshot';
 
 // ── API ─────────────────────────────────────────────────────────────────────
 const BASE = (import.meta.env.VITE_API_URL || 'http://192.168.50.13:3001/api') as string;
@@ -165,6 +165,46 @@ interface LogState {
   reason?: string;
 }
 
+// ── Chunky pregen progress ───────────────────────────────────────────
+interface ChunkyData { running: boolean; percent?: number; eta?: string; rate?: number; world?: string; error?: string }
+
+function ChunkyProgress({ serverKey }: { serverKey: string }) {
+  const [data, setData] = useState<ChunkyData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    try {
+      const token = getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const r = await fetch(`${BASE}/gaming/${serverKey}/chunky`, { headers, signal: AbortSignal.timeout(6000) });
+      setData(await r.json() as ChunkyData);
+    } catch { setData(null); } finally { setLoading(false); }
+  };
+
+  useEffect(() => { void load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [serverKey]);
+
+  if (loading) return <Skeleton className="h-5 w-full" />;
+  if (!data || data.error || !data.running) return null;
+
+  const pct = data.percent ?? 0;
+  return (
+    <div className="flex flex-col gap-1.5 pt-2" style={{ borderTop: '1px solid rgba(48,54,61,0.6)' }}>
+      <div className="flex items-center justify-between">
+        <Mono className="text-[0.6875rem]" style={{ color: 'var(--v4-amber)' }}>Chunky pregen — {data.world}</Mono>
+        <Mono className="text-[0.6875rem]" style={{ color: 'var(--v4-readout)' }}>{pct.toFixed(1)}%</Mono>
+      </div>
+      <div className="rounded-full overflow-hidden" style={{ height: 4, background: 'var(--v4-console)' }}>
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: 'var(--v4-amber)' }} />
+      </div>
+      <div className="flex gap-3">
+        {data.eta && <Mono trace className="text-[0.625rem]">ETA {data.eta}</Mono>}
+        {data.rate && <Mono trace className="text-[0.625rem]">{data.rate} cps</Mono>}
+      </div>
+    </div>
+  );
+}
+
 function GameLogViewer({ serverKey, hasLogs }: { serverKey: string; hasLogs: boolean }) {
   const [activeLog, setActiveLog] = useState<LogType | null>(null);
   const [loading, setLoading] = useState(false);
@@ -297,12 +337,14 @@ function GameLogViewer({ serverKey, hasLogs }: { serverKey: string; hasLogs: boo
 interface CardProps {
   name: string;
   serverKey: string;
-  type: 'MC' | 'VS';
+  type: 'MC' | 'VS' | 'PAL';
   status: string;
   port: number | null;
   players?: number;
+  playerNames?: string[];
   uptime_s?: number;
   s1Online: boolean;
+  showChunky?: boolean;
   loading: Record<string, boolean>;
   onAction: (serverKey: string, name: string, action: 'start' | 'stop' | 'restart', running: boolean) => void;
 }
@@ -315,7 +357,7 @@ function fmtUptime(s: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function ServerCard({ name, serverKey, type, status, port, players, uptime_s, s1Online, loading, onAction }: CardProps) {
+function ServerCard({ name, serverKey, type, status, port, players, playerNames, uptime_s, s1Online, showChunky, loading, onAction }: CardProps) {
   const view = statusView(status, s1Online);
   const stripe = view.level === 'nominal' ? 'var(--v4-nominal)'
     : view.level === 'degraded' ? 'var(--v4-degraded)'
@@ -324,7 +366,7 @@ function ServerCard({ name, serverKey, type, status, port, players, uptime_s, s1
 
   const running = s1Online && ['running', 'starting'].includes(status?.toLowerCase());
   const busy = loading[`${serverKey}-start`] || loading[`${serverKey}-stop`] || loading[`${serverKey}-restart`];
-  const hasLogs = type === 'MC';
+  const hasLogs = type === 'MC' && serverKey !== 'palworld';
 
   return (
     <div
@@ -342,8 +384,8 @@ function ServerCard({ name, serverKey, type, status, port, players, uptime_s, s1
             <span
               className="text-[0.6rem] font-bold uppercase tracking-widest shrink-0 px-1.5 py-0.5 rounded"
               style={{
-                background: type === 'MC' ? 'rgba(63,185,80,0.12)' : 'rgba(88,166,255,0.12)',
-                color: type === 'MC' ? 'var(--v4-nominal)' : 'var(--v4-accent)',
+                background: type === 'MC' ? 'rgba(63,185,80,0.12)' : type === 'PAL' ? 'rgba(248,166,40,0.12)' : 'rgba(88,166,255,0.12)',
+                color: type === 'MC' ? 'var(--v4-nominal)' : type === 'PAL' ? 'var(--v4-amber)' : 'var(--v4-accent)',
               }}
             >
               {type}
@@ -360,6 +402,27 @@ function ServerCard({ name, serverKey, type, status, port, players, uptime_s, s1
               <Mono trace className="text-[0.6875rem]">up {fmtUptime(uptime_s)}</Mono>
             )}
           </div>
+          {playerNames && playerNames.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {playerNames.map(p => {
+                const isBedrock = p.startsWith('.');
+                const display = isBedrock ? p.slice(1) : p;
+                return (
+                  <span
+                    key={p}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] font-medium"
+                    style={{
+                      background: isBedrock ? 'rgba(88,166,255,0.10)' : 'rgba(63,185,80,0.10)',
+                      color: isBedrock ? 'var(--v4-accent)' : 'var(--v4-nominal)',
+                    }}
+                    title={isBedrock ? `${display} (Bedrock)` : display}
+                  >
+                    {display}{isBedrock && <span style={{ color: 'var(--v4-trace)', fontSize: '0.5rem' }}>BE</span>}
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
         <StatusChip level={view.level} label={view.label} className="shrink-0" />
       </div>
@@ -386,6 +449,8 @@ function ServerCard({ name, serverKey, type, status, port, players, uptime_s, s1
           onClick={() => onAction(serverKey, name, 'restart', running)}
         />
       </div>
+
+      {showChunky && <ChunkyProgress serverKey={serverKey} />}
 
       {/* Log viewer — separator */}
       <div style={{ borderTop: '1px solid rgba(48,54,61,0.6)', paddingTop: '0.5rem' }}>
@@ -435,6 +500,7 @@ export default function GamingPage() {
   const s1Online = gaming?.s1Online ?? false;
   const mc: GamingMcServer[] = gaming?.minecraft ?? [];
   const vs: GamingVintageStory | null = gaming?.vintageStory ?? null;
+  const pal: GamingPalworld | null = gaming?.palworld ?? null;
 
   // Server 1 machine from the lab section
   const s1Machine = (lab?.machines ?? []).find(
@@ -443,8 +509,9 @@ export default function GamingPage() {
 
   const runningCount =
     mc.filter(s => s.status?.toLowerCase() === 'running').length +
-    (vs?.status?.toLowerCase() === 'running' ? 1 : 0);
-  const totalCount = mc.length + (vs ? 1 : 0);
+    (vs?.status?.toLowerCase() === 'running' ? 1 : 0) +
+    (pal?.status?.toLowerCase() === 'running' ? 1 : 0);
+  const totalCount = mc.length + (vs ? 1 : 0) + (pal ? 1 : 0);
 
   const setLoad = (key: string, v: boolean) => setLoadingMap(l => ({ ...l, [key]: v }));
 
@@ -575,7 +642,9 @@ export default function GamingPage() {
                 status={s.status}
                 port={s.port}
                 players={s.players}
+                playerNames={s.playerNames}
                 s1Online={s1Online}
+                showChunky={s.id === 'homestead'}
                 loading={loadingMap}
                 onAction={onAction}
               />
@@ -589,6 +658,20 @@ export default function GamingPage() {
                 port={vs.port ?? null}
                 players={vs.players}
                 uptime_s={vs.uptime_s}
+                s1Online={s1Online}
+                loading={loadingMap}
+                onAction={onAction}
+              />
+            )}
+            {pal && (
+              <ServerCard
+                name="Palworld"
+                serverKey="palworld"
+                type="PAL"
+                status={pal.status}
+                port={pal.port ?? null}
+                players={pal.players}
+                uptime_s={pal.uptime_s}
                 s1Online={s1Online}
                 loading={loadingMap}
                 onAction={onAction}
