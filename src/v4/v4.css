@@ -291,3 +291,143 @@
   border-right-color: var(--v4-amber);
   border-bottom-color: var(--v4-amber);
 }
+/* ── v5 Desktop Layout Additions ─────────────────────────────────── */
+
+/* ── Wider desktop rail (v5) ─────────────────────────────────────── */
+/* On xl+, expand the left rail to show labels alongside icons.
+   On lg (1280-1439), use a slightly wider icon-only rail (72px).     */
+
+@media (min-width: 1280px) {
+  .v5-root .v5-rail {
+    width: 72px;
+  }
+}
+
+@media (min-width: 1440px) {
+  .v5-root .v5-rail {
+    width: 220px;
+    align-items: flex-start;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .v5-root .v5-rail-item {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 10px;
+    padding-left: 10px;
+    border-radius: 0.5rem;
+  }
+  .v5-root .v5-rail-label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .v5-root .v5-rail-logo {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 10px;
+    padding-left: 10px;
+  }
+  .v5-root .v5-rail-brand {
+    display: block;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* ── v5 Home: viewport-locked 3-column grid ──────────────────────── */
+/* Mobile: single column stack (default) */
+.v5-home-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.v5-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.v5-panel {
+  border-radius: var(--v4-tile-r);
+  background: var(--v4-console);
+  overflow: hidden;
+}
+
+.v5-panel-fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: var(--v4-tile-r);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Desktop: 3-column fixed-height grid, no page scroll */
+@media (min-width: 1280px) {
+  .v5-home-grid {
+    display: grid;
+    /* 40% | 30% | 30% */
+    grid-template-columns: 5fr 3fr 4fr;
+    grid-template-rows: 1fr;
+    gap: 12px;
+    /* Full height minus top bar (44px) and page padding (32px top + bottom) */
+    height: calc(100dvh - 44px - 2rem);
+    overflow: hidden;
+  }
+
+  .v5-col {
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .v5-col-left {
+    grid-column: 1;
+    /* Hosts takes ~65%, services takes ~35% */
+    grid-template-rows: 65fr 35fr;
+  }
+
+  .v5-col-mid {
+    grid-column: 2;
+    grid-template-rows: 1fr;
+  }
+
+  .v5-col-right {
+    grid-column: 3;
+    /* Gaming ~40%, storage ~60% */
+    grid-template-rows: 40fr 60fr;
+  }
+
+  /* Each panel fills its row and allows internal scrolling */
+  .v5-col .v5-panel {
+    flex: 1 1 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Make inner content areas scroll */
+  .v5-panel-hosts,
+  .v5-panel-services,
+  .v5-panel-gaming,
+  .v5-panel-storage {
+    min-height: 0;
+  }
+
+  .v5-panel-fill {
+    height: 100%;
+  }
+}
+
+/* Widescreen (≥1600px): slightly adjust proportions */
+@media (min-width: 1600px) {
+  .v5-home-grid {
+    grid-template-columns: 5fr 3fr 4fr;
+    gap: 16px;
+  }
+}

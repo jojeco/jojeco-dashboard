@@ -7,7 +7,7 @@
  */
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
-import HomePage from './pages/HomePage';
+import HomePage from './pages/HomePageV5';
 import ServicesPage from './pages/ServicesPage';
 import MediaPage from './pages/MediaPage';
 import ControlsPage from './pages/ControlsPage';

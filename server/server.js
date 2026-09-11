@@ -30,6 +30,7 @@ import automationRoutes from './routes/automation.js';
 import minecraftRoutes from './routes/minecraft.js';
 import resilienceRoutes from './routes/resilience.js';
 import toolsRoutes from './routes/tools.js';
+import sabRoutes from './routes/sabnzbd.js';
 import jobsRoutes from './routes/jobs.js';
 import { triggerJobs } from './lib/state.js';
 
@@ -389,6 +390,7 @@ app.get('/api/system/servers', authMiddleware, async (req, res) => {
 // QBITTORRENT PROXY ROUTES — extracted to ./routes/torrents.js (Phase 3 split)
 // ============================================================================
 app.use(torrentsRoutes);
+app.use(sabRoutes);
 
 // ============================================================================
 // DOCKER PROXY ROUTES — extracted to ./routes/docker.js (Phase 3 route split)
