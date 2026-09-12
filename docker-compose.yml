@@ -78,7 +78,7 @@
     container_name: netdata
     hostname: jojeco-server
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 1024m
     cap_add:
       - SYS_PTRACE
       - SYS_ADMIN
