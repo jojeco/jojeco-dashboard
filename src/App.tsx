@@ -21,12 +21,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SnapshotProvider, useSnapshot } from './hooks/useSnapshot';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './Pages/Login';
-import ServicesPage from './Pages/Services';
 import { Birthday } from './Pages/Birthday';
-import MediaAndTorrentsPageV3 from './Pages/Media';
 import ChaosPage from './Pages/Chaos';
-import ControlsPage from './Pages/Controls';
-import JarvisPage from './Pages/JarvisPage';
 import HomeAssistantPage from './Pages/HomeAssistantPage';
 import AlertsPage from './Pages/AlertsPage';
 import { AlertBell } from './components/AlertCenter';
@@ -283,16 +279,16 @@ function LegacyShell() {
           <Route path="/"         element={<Navigate to="/v4" replace />} />
           <Route path="/login"    element={<Login />} />
           <Route path="/birthday" element={<Birthday />} />
-          <Route path="/services" element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
-          <Route path="/torrents" element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
-          <Route path="/docker"   element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
-          <Route path="/media"    element={<ProtectedRoute><MediaAndTorrentsPageV3 /></ProtectedRoute>} />
+          <Route path="/services"   element={<Navigate to="/v4/services" replace />} />
+          <Route path="/torrents"   element={<Navigate to="/v4/media" replace />} />
+          <Route path="/docker"     element={<Navigate to="/v4/services" replace />} />
+          <Route path="/media"      element={<Navigate to="/v4/media" replace />} />
           {/* /ai removed — Odysseus (port 7000) replaced LibreChat */}
           <Route path="/chaos"    element={<ChaosPage />} />
-          <Route path="/controls"   element={<ProtectedRoute><ErrorBoundary><ControlsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/controls"   element={<Navigate to="/v4/controls" replace />} />
           <Route path="/minecraft"  element={<Navigate to="/v4/gaming" replace />} />
           <Route path="/kiosk"      element={<Navigate to="/v4/kiosk" replace />} />
-          <Route path="/jarvis"     element={<ProtectedRoute><ErrorBoundary><JarvisPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/jarvis"     element={<Navigate to="/v4/jarvis" replace />} />
           <Route path="/home"       element={<ProtectedRoute><ErrorBoundary><HomeAssistantPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/alerts"     element={<ProtectedRoute><ErrorBoundary><AlertsPage /></ErrorBoundary></ProtectedRoute>} />
         </Routes>

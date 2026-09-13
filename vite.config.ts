@@ -22,7 +22,7 @@ export default defineConfig({
           'vendor-ui': ['lucide-react', '@radix-ui/react-dialog', '@radix-ui/react-tooltip'],
           'v4': [
             './src/v4/V4Router',
-            './src/v4/pages/HomePage',
+            './src/v4/pages/HomePageV5',
             './src/v4/pages/ServicesPage',
             './src/v4/pages/MediaPage',
             './src/v4/pages/ControlsPage',
