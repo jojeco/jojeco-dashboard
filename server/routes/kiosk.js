@@ -9,6 +9,7 @@ const router = express.Router();
 // Local copy of the LiteLLM key constant (byte-identical to server.js); kept
 // module-scoped so this route file is self-contained.
 const LITELLM_KEY = process.env.LITELLM_KEY;  // required — set in server/.env
+const LITELLM_ADMIN_KEY = process.env.LITELLM_ADMIN_KEY || LITELLM_KEY;  // needs admin role for /global/spend
 
 const KIOSK_UPTIME_KUMA_URL   = process.env.KIOSK_UPTIME_KUMA_URL   || 'http://192.168.50.30:3001';
 const KIOSK_GRAFANA_URL       = process.env.KIOSK_GRAFANA_URL        || 'http://192.168.50.13:3002';
@@ -21,7 +22,7 @@ router.get('/api/kiosk/litellm-spend', optionalAuthMiddleware, async (req, res) 
   if (req.isGuest) return res.json({ spend: null });  // spend figures are auth-only
   try {
     const r = await fetch('http://192.168.50.13:4000/global/spend', {
-      headers: { Authorization: `Bearer ${LITELLM_KEY}` },
+      headers: { Authorization: `Bearer ${LITELLM_ADMIN_KEY}` },
       signal: AbortSignal.timeout(5000),
     });
     if (!r.ok) return res.json({ spend: null, error: `LiteLLM HTTP ${r.status}` });

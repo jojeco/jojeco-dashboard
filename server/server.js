@@ -80,6 +80,7 @@ const NETDATA_URL = process.env.NETDATA_URL || 'http://netdata:19999';
 // LITELLM_KEY is also used by the AI chat proxy (routes/ai.js has its own copy);
 // retained here for the inline ops/fleet LiteLLM health+spend probe.
 const LITELLM_KEY = process.env.LITELLM_KEY;  // required — set in server/.env
+const LITELLM_ADMIN_KEY = process.env.LITELLM_ADMIN_KEY || LITELLM_KEY;  // needs admin role for /global/spend
 
 async function fetchNetdata(path) {
   const res = await fetch(`${NETDATA_URL}${path}`);
@@ -826,11 +827,11 @@ app.get('/api/ops/fleet', optionalAuthMiddleware, async (req, res) => {
   try {
     const [healthRes, spendRes] = await Promise.all([
       fetch(`http://192.168.50.13:4000/health/readiness`, {
-        headers: { Authorization: `Bearer ${LITELLM_KEY}` },
+        headers: { Authorization: `Bearer ${LITELLM_ADMIN_KEY}` },
         signal: AbortSignal.timeout(3000),
       }),
       fetch(`http://192.168.50.13:4000/global/spend`, {
-        headers: { Authorization: `Bearer ${LITELLM_KEY}` },
+        headers: { Authorization: `Bearer ${LITELLM_ADMIN_KEY}` },
         signal: AbortSignal.timeout(3000),
       }),
     ]);
