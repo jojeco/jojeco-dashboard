@@ -57,6 +57,13 @@ export function authMiddleware(req, res, next) {
 export function optionalAuthMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
+    // Internal snapshot-tick self-fetches (loopback only) count as authenticated,
+    // so guest redaction in optionalAuth routes doesn't strip the auth snapshot.
+    if (authHeader.substring(7) === INTERNAL_TOKEN && isLoopback(req)) {
+      req.user = { internal: true };
+      req.isGuest = false;
+      return next();
+    }
     const decoded = verifyToken(authHeader.substring(7));
     if (decoded) {
       req.user = decoded;

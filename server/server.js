@@ -731,7 +731,8 @@ app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
   serviceMap.tailscale = tailscale.online;
 
   const safeMachines = req.isGuest ? machines.map(({ host, ...rest }) => rest) : machines;
-  res.json({ machines: safeMachines, status, issues, services: serviceMap, tailscale, lvmThinPool, claudeRunning });
+  const safeTailscale = req.isGuest ? { online: tailscale?.online ?? false } : tailscale;
+  res.json({ machines: safeMachines, status, issues, services: serviceMap, tailscale: safeTailscale, lvmThinPool, claudeRunning });
 });
 
 const LAB_PROCESS_HOSTS = {
@@ -747,6 +748,8 @@ const LAB_PROCESS_HOSTS = {
 app.get('/api/lab/processes/:machineId', optionalAuthMiddleware, async (req, res) => {
   const entry = LAB_PROCESS_HOSTS[req.params.machineId];
   if (!entry) return res.status(404).json({ error: 'unknown machine' });
+  // Guests don't get per-host process lists (reveals running software)
+  if (req.isGuest) return res.json({ machine_id: req.params.machineId, processes: [] });
 
   try {
     const base = `http://${entry.host}:61208/api/4`;
@@ -836,6 +839,10 @@ app.get('/api/ops/fleet', optionalAuthMiddleware, async (req, res) => {
     litellm = { online: health.status === 'connected' || health.status === 'healthy', spend: spend.spend ?? null };
   } catch {}
 
+  if (req.isGuest) {
+    // Guests: status + model names only — no LAN IPs, no spend figures
+    return res.json({ nodes: nodes.map(({ host, ...rest }) => rest), litellm: { online: litellm.online, spend: null } });
+  }
   res.json({ nodes, litellm });
 });
 
@@ -1621,6 +1628,8 @@ function startP1SPoller() {
 }
 
 app.get('/api/printer/p1s', optionalAuthMiddleware, (req, res) => {
+  // Guests see printer state but not the job/file name
+  if (req.isGuest) return res.json({ ...printerCache, job: printerCache.job ? 'Hidden' : null });
   res.json(printerCache);
 });
 
@@ -1655,7 +1664,20 @@ app.post('/api/filament/:id/update', authMiddleware, express.json(), (req, res) 
 
 // Webhook for Home Assistant to call on print completion
 // HA automation payload: { "rfid": "...", "weight_used_g": 12.5, "tray_id_name": "A00-Y4", "color_hex": "E4BD68FF" }
-app.post('/api/printer/webhook/print-finished', express.json(), (req, res) => {
+// Caller must send header `X-Webhook-Secret: <PRINTER_WEBHOOK_SECRET>` (server/.env).
+// Fails closed (503) if the secret isn't configured — this route is reachable
+// from the internet via /api/ and mutates filament inventory.
+const PRINTER_WEBHOOK_SECRET = process.env.PRINTER_WEBHOOK_SECRET || '';
+function printerWebhookAuth(req, res, next) {
+  if (!PRINTER_WEBHOOK_SECRET) return res.status(503).json({ error: 'Webhook not configured' });
+  const given = Buffer.from(String(req.headers['x-webhook-secret'] || ''));
+  const expected = Buffer.from(PRINTER_WEBHOOK_SECRET);
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+app.post('/api/printer/webhook/print-finished', printerWebhookAuth, express.json(), (req, res) => {
   const { rfid, weight_used_g, color_hex, tray_id_name } = req.body;
   
   if (!weight_used_g || weight_used_g <= 0) {
@@ -1733,6 +1755,9 @@ const SNAP_SECTIONS = {
   printer:          '/api/printer/p1s',
   labHostServices:  '/api/lab/host-services',
 };
+// Sections served to guests — must be optionalAuthMiddleware routes that shape
+// their output on req.isGuest. Everything else is null in the guest snapshot.
+const GUEST_SNAP_SECTIONS = new Set(['lab', 'servicesHealth', 'docker', 'fleet', 'ollama', 'printer']);
 const SNAP_TTL_MS = { automation: 60000, alerts: 30000, labHostServices: 30000, gaming: 20000, default: 15000 };
 
 // In-memory last-assembled snapshot per auth scope.
@@ -1746,6 +1771,9 @@ async function buildSnapshotPayload(authHeader) {
   const scope = auth ? 'auth' : 'guest';
   const out = {};
   await Promise.all(Object.entries(SNAP_SECTIONS).map(async ([s, path]) => {
+    // Guest build self-fetches over loopback, which lanOrAuth routes treat as
+    // LAN-trusted — only fetch sections whose routes do their own guest redaction.
+    if (scope === 'guest' && !GUEST_SNAP_SECTIONS.has(s)) { out[s] = null; return; }
     const ttl = SNAP_TTL_MS[s] || SNAP_TTL_MS.default;
     const key = `${s}:${scope}`;
     const hit = snapshotCache.get(key);
@@ -1862,8 +1890,9 @@ app.get('/api/stream', sseAuthMiddleware, (req, res) => {
 
 // ── /api/snapshot — polling fallback, now instant (<1 ms) ────────────────────
 app.get('/api/snapshot', optionalAuthMiddleware, (req, res) => {
-  const auth = req.headers.authorization || '';
-  const scope = auth ? 'auth' : 'guest';
+  // Scope from the verified token (optionalAuthMiddleware), never from mere
+  // header presence — an invalid/expired Bearer token must get the guest view.
+  const scope = req.isGuest ? 'guest' : 'auth';
   const snap = getInstantSnapshot(scope);
 
   // Filter to requested sections if ?sections=... is provided

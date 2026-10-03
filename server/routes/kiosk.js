@@ -18,6 +18,7 @@ const KIOSK_PI_AP_IP          = process.env.KIOSK_PI_AP_IP           || '192.168
 
 // LiteLLM spend — proxy through server to keep bearer token off the browser
 router.get('/api/kiosk/litellm-spend', optionalAuthMiddleware, async (req, res) => {
+  if (req.isGuest) return res.json({ spend: null });  // spend figures are auth-only
   try {
     const r = await fetch('http://192.168.50.13:4000/global/spend', {
       headers: { Authorization: `Bearer ${LITELLM_KEY}` },
@@ -81,7 +82,8 @@ router.get('/api/kiosk/grafana-alerts', optionalAuthMiddleware, async (req, res)
       name: a.name ?? a.title ?? a.labels?.alertname ?? 'Unknown alert',
       state: a.state ?? a.status?.state ?? 'unknown',
     })) : [];
-    res.json(alerts);
+    // Guests: alert states/count only — alert names reveal internal hosts/services
+    res.json(req.isGuest ? alerts.map((a, i) => ({ id: String(i), name: 'Alert', state: a.state })) : alerts);
   } catch (e) {
     res.json([]);
   }
@@ -92,7 +94,7 @@ router.get('/api/kiosk/pi-ap', optionalAuthMiddleware, async (req, res) => {
   try {
     // Try to reach the Pi on a known lightweight endpoint
     const r = await fetch(`http://${KIOSK_PI_AP_IP}`, { signal: AbortSignal.timeout(3000) });
-    res.json({ status: 'up', code: r.status });
+    res.json(req.isGuest ? { status: 'up' } : { status: 'up', code: r.status });
   } catch {
     // Not reachable — could be offline or just no HTTP server, try ping-style with a tiny fetch
     res.json({ status: 'down' });

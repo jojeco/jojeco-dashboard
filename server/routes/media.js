@@ -89,6 +89,8 @@ router.get('/api/bazarr/wanted', authMiddleware, async (req, res) => {
 });
 
 router.get('/api/media/upcoming', optionalAuthMiddleware, async (req, res) => {
+  // Guests don't see the Sonarr/Radarr library calendar
+  if (req.isGuest) return res.json({ episodes: [], movies: [] });
   try {
     const today = new Date();
     const end = new Date(today); end.setDate(today.getDate() + 45);

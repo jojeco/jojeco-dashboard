@@ -27,6 +27,14 @@ router.get('/api/docker/containers', optionalAuthMiddleware, async (req, res) =>
       created: c.Created,
       compose_project: c.Labels?.['com.docker.compose.project'] || null,
     }));
+    if (req.isGuest) {
+      // Guests: name + state only — strip pinned image tags/digests (vuln-targeting
+      // list) and published host ports
+      for (const c of containers) {
+        c.image = String(c.image || '').split('@')[0].replace(/:[^/:]*$/, '');
+        c.ports = [];
+      }
+    }
     res.json(containers.sort((a, b) => a.name.localeCompare(b.name)));
   } catch (e) { res.status(503).json({ error: 'Docker socket unavailable' }); }
 });
