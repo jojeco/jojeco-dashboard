@@ -7,7 +7,8 @@ import { lanOrAuth } from '../lib/middleware.js';
 const router = express.Router();
 
 const JARVIS_API_URL = 'http://192.168.50.13:8300';
-const JARVIS_KEY = 'jojeco-jarvis-2026';
+const JARVIS_KEY = process.env.JARVIS_KEY;
+if (!JARVIS_KEY) console.warn('[jarvis] JARVIS_KEY is not set; Jarvis proxy requests will be rejected');
 
 router.post('/api/jarvis/voice', authMiddleware, async (req, res) => {
   try {
