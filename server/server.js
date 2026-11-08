@@ -1209,7 +1209,7 @@ const LAB_HOST_SERVICES = [
       // game port while VS is stopped, so probing it silently restarts the
       // server (~30s after any manual stop). Use the keeper's status API.
       { id: 's1-vintagestory', label: 'Vintage Story',     port: 42420, checkUrl: null, stateUrl: 'http://192.168.50.10:8767/status' },
-      { id: 's1-mcmanager',    label: 'MC Manager',        port: 8765,  checkUrl: 'http://192.168.50.10:8765/status', quicklink: true, category: 'lab', externalUrl: null, icon: 'Gamepad2' },
+      { id: 's1-mcmanager',    label: 'MC Manager',        port: 8765,  tcp: true, /* /status takes 2-4s, flapped against the 4s timeout */ quicklink: true, category: 'lab', externalUrl: null, icon: 'Gamepad2' },
     ],
   },
   {
