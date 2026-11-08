@@ -32,6 +32,7 @@ import resilienceRoutes from './routes/resilience.js';
 import toolsRoutes from './routes/tools.js';
 import sabRoutes from './routes/sabnzbd.js';
 import jobsRoutes from './routes/jobs.js';
+import agentStatusRouter from './routes/agent-status.js';
 import { triggerJobs } from './lib/state.js';
 
 const execFileAsync = promisify(execFile);
@@ -665,11 +666,26 @@ async function fetchLabServer2Detailed() {
   return { ...glances, disks };
 }
 
+// Server 4 has no Glances; adapt the SSH-based fetchServer4() to the lab-machine shape
+async function fetchLabServer4Detailed() {
+  const r = await fetchServer4();
+  if (!r.online) return { online: false };
+  return {
+    online: true,
+    cpu: r.cpu,
+    mem: r.memory ? { used: r.memory.used * 1048576, total: r.memory.total * 1048576, percent: r.memory.percent } : null,
+    disks: r.disk ? [{ label: '/', used: r.disk.used * 1073741824, size: r.disk.total * 1073741824, percent: r.disk.percent }] : [],
+    gpu: null,
+    temp: r.temps?.[0]?.value ?? null,
+  };
+}
+
 app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
-  const [s1, s2, s3, mini, jopc, macbook, services, tailscale, lvmThinPool, claudeRunning] = await Promise.all([
+  const [s1, s2, s3, s4, mini, jopc, macbook, services, tailscale, lvmThinPool, claudeRunning] = await Promise.all([
     fetchLabServer1Detailed(),
     fetchLabServer2Detailed(),
     fetchLabGlancesDetailed('192.168.50.12').catch(() => ({ online: false })),
+    fetchLabServer4Detailed().catch(() => ({ online: false })),
     fetchLabGlancesDetailed('192.168.50.30').catch(() => ({ online: false })),
     fetchLabBurstMachine('192.168.50.20'),
     fetchLabBurstMachine('192.168.50.40'),
@@ -684,8 +700,10 @@ app.get('/api/lab/overview', optionalAuthMiddleware, async (req, res) => {
     fetchClaudeRunning(),
   ]);
 
-  const machineData = [s1, s3, s2, mini, jopc, macbook];
-  const machines = LAB_MACHINES.map((m, i) => ({ ...m, ...machineData[i] }));
+  // Keyed by id: positional matching broke when server4 was added to LAB_MACHINES
+  // (Mac Mini showed JoPc's data → "offline", Server 4 showed the Mac Mini's).
+  const machineData = { server1: s1, server2: s2, server3: s3, server4: s4, macmini: mini, jopc, macbook };
+  const machines = LAB_MACHINES.map(m => ({ ...m, ...(machineData[m.id] ?? { online: false }) }));
 
   // Compute health
   const issues = [];
@@ -1121,7 +1139,7 @@ const LAB_HOST_SERVICES = [
     hostIp: '192.168.50.13',
     services: [
       { id: 'nextcloud',      label: 'Nextcloud',        port: 8880, checkUrl: 'http://192.168.50.13:8880', quicklink: true, category: 'lab', externalUrl: 'https://cloud.jojeco.ca', icon: 'Cloud' },
-      { id: 'files',          label: 'Files',            port: 8085, checkUrl: 'http://192.168.50.100:8085', quicklink: true, category: 'lab', externalUrl: 'https://files.jojeco.ca', icon: 'FolderOpen' },
+      { id: 'files',          label: 'Files',            port: 8085, checkUrl: 'http://192.168.50.13:8085', quicklink: true, category: 'lab', externalUrl: 'https://files.jojeco.ca', icon: 'FolderOpen' },
       { id: 'paperless',      label: 'Paperless',        port: 8010, checkUrl: 'http://192.168.50.13:8010', quicklink: true, category: 'lab', externalUrl: null, icon: 'FileText' },
       { id: 'grafana',        label: 'Grafana',          port: 3002, checkUrl: 'http://192.168.50.13:3002', quicklink: true, category: 'lab', externalUrl: 'https://grafana.jojeco.ca', icon: 'BarChart2' },
       { id: 'portainer',      label: 'Portainer',        port: 9000, checkUrl: 'http://192.168.50.13:9000', quicklink: true, category: 'lab', externalUrl: 'https://portainer.jojeco.ca', icon: 'Box' },
@@ -1176,7 +1194,6 @@ const LAB_HOST_SERVICES = [
     hostIp: '192.168.50.12',
     services: [
       { id: 's3-speedtest',    label: 'Speedtest Tracker', port: 8765, checkUrl: 'http://192.168.50.12:8765', quicklink: true, category: 'lab', externalUrl: null, icon: 'Gauge' },
-      { id: 's3-comfyui',      label: 'ComfyUI',           port: 8188, checkUrl: 'http://192.168.50.12:8188', quicklink: true, category: 'lab', externalUrl: null, icon: 'Image' },
       { id: 's3-whisper',      label: 'faster-whisper',    port: 9000, checkUrl: 'http://192.168.50.12:9000', quicklink: true, category: 'lab', externalUrl: null, icon: 'Mic' },
       { id: 's3-piper',        label: 'piper-tts',         port: 8400, checkUrl: 'http://192.168.50.12:8400', quicklink: true, category: 'lab', externalUrl: null, icon: 'Volume2' },
       { id: 's3-openwebui',    label: 'Open WebUI',        port: 3000, checkUrl: 'http://192.168.50.12:3000', quicklink: true, category: 'lab', externalUrl: null, icon: 'MessageCircle' },
@@ -1888,6 +1905,9 @@ app.get('/api/stream', sseAuthMiddleware, (req, res) => {
     console.log(`[SSE] client disconnected (total: ${sseClients.size})`);
   });
 });
+
+// ── /api/agent/status — condensed snapshot for AI agents / health checks ─────
+app.use(agentStatusRouter(getInstantSnapshot));
 
 // ── /api/snapshot — polling fallback, now instant (<1 ms) ────────────────────
 app.get('/api/snapshot', optionalAuthMiddleware, (req, res) => {

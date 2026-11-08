@@ -20,7 +20,7 @@ const router = express.Router();
 
 const S2_HOST = '192.168.50.11';
 const S3_HOST = '192.168.50.12';
-const SYNC_LOG_PATH = '/var/log/s3-volume-sync.log';
+const SYNC_LOG_PATH = '/host/log/s3-volume-sync.log'; // host /var/log is mounted at /host/log
 const FAILOVER_ACTIVE_FILE = '/mnt/data/lab/failover/.active';
 
 // GET /api/failover/status
@@ -41,15 +41,16 @@ router.get('/api/failover/status', lanOrAuth, async (req, res) => {
       try {
         const { stdout: wdOut } = await execFileAsync('ssh', [
           '-i', SSH_KEY, ...SSH_OPTS, `jojeco@${S3_HOST}`,
-          'systemctl is-active jojeco-watchdog 2>/dev/null || echo inactive'
+          'systemctl is-active jojeco-watchdog 2>/dev/null; true'
         ], { timeout: 10000 });
-        watchdog_status = wdOut.trim();
+        watchdog_status = wdOut.trim().split('\n')[0] || 'inactive';
       } catch { watchdog_status = 'unreachable'; }
 
       try {
         const { stdout: foOut } = await execFileAsync('ssh', [
           '-i', SSH_KEY, ...SSH_OPTS, `jojeco@${S3_HOST}`,
-          `test -f ${FAILOVER_ACTIVE_FILE} && echo yes || docker ps 2>/dev/null | grep -q failover && echo yes || echo no`
+          // Marker file only: the always-on cloudflared-failover connector matched a docker-ps grep and faked "active"
+          `test -f ${FAILOVER_ACTIVE_FILE} && echo yes || echo no`
         ], { timeout: 10000 });
         failover_active = foOut.trim() === 'yes';
       } catch { failover_active = false; }
