@@ -20,6 +20,7 @@ const router = express.Router();
 
 const S2_HOST = '192.168.50.11';
 const S3_HOST = '192.168.50.12';
+const S4_HOST = '192.168.50.14';
 const SYNC_LOG_PATH = '/host/log/s3-volume-sync.log'; // host /var/log is mounted at /host/log
 const FAILOVER_ACTIVE_FILE = '/mnt/data/lab/failover/.active';
 
@@ -39,9 +40,10 @@ router.get('/api/failover/status', lanOrAuth, async (req, res) => {
     // SSH to S3 for watchdog + failover state (only if S3 is online)
     if (s3_online) {
       try {
+        // Watchdog moved to S4 2026-11-08 (always on, auto-boots; S3 doesn't)
         const { stdout: wdOut } = await execFileAsync('ssh', [
-          '-i', SSH_KEY, ...SSH_OPTS, `jojeco@${S3_HOST}`,
-          'systemctl is-active jojeco-watchdog 2>/dev/null; true'
+          '-i', SSH_KEY, ...SSH_OPTS, `root@${S4_HOST}`,
+          'systemctl is-active jojeco-failover-watchdog 2>/dev/null; true'
         ], { timeout: 10000 });
         watchdog_status = wdOut.trim().split('\n')[0] || 'inactive';
       } catch { watchdog_status = 'unreachable'; }
