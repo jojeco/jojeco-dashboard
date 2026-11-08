@@ -44,7 +44,7 @@ const PROTECTED_CONTAINERS = new Set([
   'nginx-proxy-manager', 'portainer', 'cloudflared', 'jojeco-dashboard-api',
 ]);
 
-const CONTROL_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api') as string;
+const CONTROL_BASE = (import.meta.env.VITE_API_URL || '/api') as string;
 
 async function containerAction(name: string, action: 'restart' | 'stop' | 'start'): Promise<{ ok: boolean; msg: string }> {
   const token = getToken();
@@ -741,7 +741,7 @@ function DockerContainersSection({ containers, loading, error }: DockerSectionPr
 // ── Docker fetch hook ─────────────────────────────────────────────────────────
 
 const DOCKER_POLL_MS = 15_000;
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 function useDockerContainers() {
   const [containers, setContainers] = useState<DockerContainer[]>([]);

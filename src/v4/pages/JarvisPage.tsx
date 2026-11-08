@@ -38,12 +38,14 @@ export default function JarvisPage() {
   async function startRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      // iOS Safari can't record webm; fall back to whatever the browser supports (mp4 on iPhone)
+      const mimeType = ['audio/webm', 'audio/mp4', 'audio/ogg'].find(t => MediaRecorder.isTypeSupported(t));
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       chunksRef.current = [];
       mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        await sendAudio(new Blob(chunksRef.current, { type: 'audio/webm' }));
+        await sendAudio(new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' }));
       };
       mr.start();
       mediaRef.current = mr;
@@ -71,7 +73,8 @@ export default function JarvisPage() {
   async function sendAudio(blob: Blob) {
     setLoading(true);
     const fd = new FormData();
-    fd.append('audio', blob, 'audio.webm');
+    const ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+    fd.append('audio', blob, `audio.${ext}`);
     fd.append('session_id', sessionId);
     try {
       const resp = await fetch(`${JARVIS_API}/voice`, {

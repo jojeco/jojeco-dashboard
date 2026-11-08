@@ -34,7 +34,7 @@ function useActiveTab() {
 }
 
 // ── AC temperature ───────────────────────────────────────────────────────────
-const AC_API = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api').replace('/api', '');
+const AC_API = (import.meta.env.VITE_API_URL || '/api').replace('/api', '');
 
 function AcTemps() {
   const [temps, setTemps] = useState<{ indoor: number | null; outdoor: number | null }>({ indoor: null, outdoor: null });

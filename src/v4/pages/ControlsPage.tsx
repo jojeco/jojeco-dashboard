@@ -48,7 +48,7 @@ import { fmtDate } from '../lib/utils';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 
-const BASE = (import.meta.env.VITE_API_URL || 'http://192.168.50.13:3001/api') as string;
+const BASE = (import.meta.env.VITE_API_URL || '/api') as string;
 
 async function authPost(path: string): Promise<{ ok: boolean; msg: string }> {
   const token = getToken();

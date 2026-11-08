@@ -11,7 +11,7 @@ import { getToken } from '../../services/api';
 import { DetailModal } from './DetailModal';
 import { Skeleton } from './Primitives';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api') as string;
+const API_BASE = (import.meta.env.VITE_API_URL || '/api') as string;
 
 interface TermResult { lines: string[]; unavailable: boolean }
 

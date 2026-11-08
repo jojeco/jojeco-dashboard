@@ -9,7 +9,7 @@ import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { getToken } from '../../services/api';
 import { Mono, Skeleton } from './Primitives';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api') as string;
+const API_BASE = (import.meta.env.VITE_API_URL || '/api') as string;
 
 export interface LogEntry {
   ts: number;

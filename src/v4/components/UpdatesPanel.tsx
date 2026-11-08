@@ -37,7 +37,7 @@ import { DetailModal } from './DetailModal';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const BASE = (import.meta.env.VITE_API_URL || 'http://192.168.50.13:3001/api') as string;
+const BASE = (import.meta.env.VITE_API_URL || '/api') as string;
 
 /** Containers excluded from self-selection: applying via the dashboard that manages them
  *  is a foot-gun (kills the API mid-apply). Listed by container name. */
@@ -180,15 +180,15 @@ export function UpdatesPanel() {
     }
   }, [applyJobId]);
 
+  // Poll with the callback bound to the current applyJobId (starting the interval in doApply
+  // captured a stale callback where applyJobId was still null, so the job was never tracked).
   useEffect(() => {
-    if (applyJobId && !pollRef.current) {
-      pollRef.current = setInterval(pollJobStatus, 3000);
-    }
+    if (!applyJobId) return;
+    const id = setInterval(pollJobStatus, 3000);
+    pollRef.current = id;
     return () => {
-      if (!applyJobId && pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      clearInterval(id);
+      if (pollRef.current === id) pollRef.current = null;
     };
   }, [applyJobId, pollJobStatus]);
 
@@ -269,9 +269,7 @@ export function UpdatesPanel() {
     setJobStatus(null);
     const { ok, data } = await authPost<{ jobId?: string; error?: string }>('/updates/apply', { containers: names });
     if (ok && data?.jobId) {
-      setApplyJobId(data.jobId);
-      // Start polling immediately
-      pollRef.current = setInterval(pollJobStatus, 3000);
+      setApplyJobId(data.jobId); // polling starts in the effect above
     } else {
       setApplying(false);
       setCheckError(data?.error ?? 'Apply request failed.');
@@ -285,7 +283,7 @@ export function UpdatesPanel() {
   const allSelected = selectable.length > 0 && selectable.every(r => selected.has(r.name));
   const selectedCount = Array.from(selected).filter(n => !SELF_UPDATE_EXCLUDED.has(n)).length;
 
-  const jobDone    = jobStatus?.finishedAt !== null;
+  const jobDone    = jobStatus != null && jobStatus.finishedAt !== null;
   const jobRunning = applyJobId !== null && !jobDone;
 
   // ── Header summary line ───────────────────────────────────────────────────

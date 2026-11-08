@@ -10,7 +10,7 @@ import { Mono, Skeleton, StatusDot } from './Primitives';
 import { getToken } from '../../services/api';
 import type { NtfyAlert } from '../../hooks/useSnapshot';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api') as string;
+const API_BASE = (import.meta.env.VITE_API_URL || '/api') as string;
 
 // ── Priority → status level mapping ──────────────────────────────────────────
 // ntfy priorities: 1=min, 2=low, 3=default, 4=high, 5=urgent

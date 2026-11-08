@@ -466,3 +466,23 @@
     gap: 16px;
   }
 }
+
+/* ── Keyboard focus (review 2026-11: no focus styles existed) ───────── */
+/* :where() keeps specificity low so utility classes (focus-visible:ring/outline-none) still win.
+   Negative offset keeps the ring visible inside overflow:hidden panels and full-bleed rows.
+   Modals portal to <body>, outside .v4-root, so they're listed explicitly. */
+:where(.v4-root, .v4-modal-content) :where(a, button, [role="button"], input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--v4-amber);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.v4-root, .v4-modal-overlay, .v4-modal-content),
+  :where(.v4-root, .v4-modal-overlay, .v4-modal-content) *,
+  :where(.v4-root, .v4-modal-overlay, .v4-modal-content) *::before,
+  :where(.v4-root, .v4-modal-overlay, .v4-modal-content) *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
