@@ -39,8 +39,6 @@ export default function HomePageV5() {
   const machines = useMemo(() => sortMachines(data?.machines ?? []), [data]);
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
 
-  const labMachines = machines.filter(m => !PERSONAL_IDS.some(p => m.id.toLowerCase().includes(p) || m.name.toLowerCase().includes(p)));
-
   return (
     <>
       {/* Alert strip — full width above the grid, auto-height, hidden when clear */}
@@ -56,7 +54,7 @@ export default function HomePageV5() {
               ? <HostTileDSkeleton />
               : (
                 <HostTileDPanel
-                  machines={labMachines}
+                  machines={machines}
                   onClickMachine={setSelectedMachine}
                   secondaryIds={PERSONAL_IDS}
                 />

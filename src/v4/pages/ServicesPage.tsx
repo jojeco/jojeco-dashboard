@@ -72,6 +72,8 @@ function containerStripe(state: string): string {
   return 'var(--v4-standby)';
 }
 
+const CT100_IP = '192.168.50.13';
+
 function uptimeSince(created: number): string {
   const diff = Math.floor((Date.now() / 1000) - created);
   if (diff < 60)    return `${diff}s`;
@@ -178,8 +180,8 @@ function ServiceDetailBody({ service, group, matchedContainer }: ServiceDetailPr
                 </div>
               )}
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[0.75rem]" style={{ color: 'var(--v4-readout)' }}>Uptime</span>
-                <Mono dim className="text-[0.75rem]">{uptimeSince(matchedContainer.created)}</Mono>
+                <span className="text-[0.75rem]" style={{ color: 'var(--v4-readout)' }}>{matchedContainer.state === 'running' ? 'Uptime' : 'Created'}</span>
+                <Mono dim className="text-[0.75rem]">{matchedContainer.state === 'running' ? uptimeSince(matchedContainer.created) : `${uptimeSince(matchedContainer.created)} ago`}</Mono>
               </div>
               {matchedContainer.image && (
                 <div className="flex items-center justify-between gap-2">
@@ -202,9 +204,11 @@ function ServiceDetailBody({ service, group, matchedContainer }: ServiceDetailPr
         </>
       )}
 
-      {/* Container logs via Loki (only when a matched container exists) */}
+      {/* Container controls + logs via Loki (only when a matched container exists) */}
       {matchedContainer && (
         <>
+          <Hairline />
+          <ContainerActions container={matchedContainer} />
           <Hairline />
           <div>
             <div
@@ -580,8 +584,8 @@ function ContainerDetailBody({ container: c }: { container: DockerContainer }) {
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[0.75rem]" style={{ color: 'var(--v4-readout)' }}>Uptime</span>
-          <Mono dim className="text-[0.75rem]">{uptimeSince(c.created)}</Mono>
+          <span className="text-[0.75rem]" style={{ color: 'var(--v4-readout)' }}>{c.state === 'running' ? 'Uptime' : 'Created'}</span>
+          <Mono dim className="text-[0.75rem]">{c.state === 'running' ? uptimeSince(c.created) : `${uptimeSince(c.created)} ago`}</Mono>
         </div>
         {c.compose_project && (
           <div className="flex items-center justify-between gap-2">
@@ -750,7 +754,7 @@ function useDockerContainers() {
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     try {
-      const r = await fetch(`${API_BASE}/docker/containers?all=0`, { headers });
+      const r = await fetch(`${API_BASE}/docker/containers?all=1`, { headers });
       if (r.ok) {
         const d: DockerContainer[] = await r.json();
         setContainers(d);
@@ -833,15 +837,18 @@ export default function ServicesPage() {
   const waiting     = hostsLoading || hostsData == null;
 
   // Match a service to a docker container by name similarity
-  function matchContainer(svc: LabHostService): DockerContainer | null {
-    if (!containers.length) return null;
+  // Only CT100's services can map to containers: the docker API and controls act on CT100's socket.
+  function matchContainer(svc: LabHostService, group: LabHostServicesGroup | null): DockerContainer | null {
+    if (!containers.length || group?.hostIp !== CT100_IP) return null;
     const needle = svc.id.replace(/^s\d+-/, '').toLowerCase();
-    return containers.find(c => {
-      const cname = c.name.replace(/^\//, '').toLowerCase();
-      return cname === needle
-        || cname.includes(needle)
-        || needle.includes(cname.replace(/-/g, ''));
-    }) ?? null;
+    const cname = (c: DockerContainer) => c.name.replace(/^\//, '').toLowerCase();
+    const sidecar = /-(db|redis|postgres|mariadb|mysql|broker|chrome|meilisearch|tika|gotenberg|worker|cron)(-\d+)?$/;
+    const fuzzy = (c: DockerContainer) => !sidecar.test(cname(c))
+      && (cname(c).includes(needle) || needle.includes(cname(c).replace(/-/g, '')));
+    return containers.find(c => cname(c) === needle)
+      ?? containers.find(c => c.state === 'running' && fuzzy(c))
+      ?? containers.find(fuzzy)
+      ?? null;
   }
 
   // Summary status level
@@ -954,7 +961,7 @@ export default function ServicesPage() {
           <ServiceDetailBody
             service={selectedService}
             group={selectedGroup}
-            matchedContainer={matchContainer(selectedService)}
+            matchedContainer={matchContainer(selectedService, selectedGroup)}
           />
         </DetailModal>
       )}

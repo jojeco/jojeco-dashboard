@@ -81,7 +81,7 @@ export function GamingGlance() {
         background: 'var(--v4-console)',
         boxShadow: '0 1px 0 rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)',
         cursor: 'pointer',
-        height: '100%',
+        minHeight: '100%',
       }}
       onClick={go}
       role="button"

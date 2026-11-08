@@ -558,7 +558,7 @@ export function HostTileDPanel({ machines, onClickMachine, secondaryIds }: Props
         }}
       >
         {/* Fleet summary header */}
-        <FleetHeader machines={machines} />
+        <FleetHeader machines={primary} />
 
         {/* Lab host rows */}
         {primary.map((m, idx) => (

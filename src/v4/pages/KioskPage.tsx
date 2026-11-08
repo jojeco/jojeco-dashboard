@@ -491,6 +491,7 @@ export default function KioskPage() {
   });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshing, setRefreshing]   = useState(false);
+  const [fetchedOnce, setFetchedOnce] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -503,7 +504,9 @@ export default function KioskPage() {
       fetchGrafanaAlerts(),
     ]);
     setData({ lab, docker, litellmSpend, uptimeKuma, grafanaAlerts, piAp });
-    setLastUpdated(new Date());
+    // Only stamp "updated" when at least one feed actually answered
+    setFetchedOnce(true);
+    if ([lab, docker, litellmSpend, uptimeKuma, grafanaAlerts].some(v => v !== null)) setLastUpdated(new Date());
     setRefreshing(false);
   }, []);
 
@@ -515,10 +518,21 @@ export default function KioskPage() {
   }, [refresh]);
 
   // Overall banner status
-  const overallStatus = data.lab?.status ?? 'healthy';
+  // Never default to healthy: no first fetch yet = loading, failed lab fetch = no telemetry
+  const firing = data.grafanaAlerts?.some(a => a.state === 'firing' || a.state === 'alerting') ?? false;
+  const containersDown = data.docker?.some(c => c.state !== 'running') ?? false;
+  const feedDown = data.docker === null || data.uptimeKuma === null || data.grafanaAlerts === null;
+  const labStatus = data.lab?.status ?? 'unknown';
+  const overallStatus: string =
+    !fetchedOnce ? 'loading'
+    : data.lab === null ? 'no telemetry'
+    : labStatus === 'healthy' && (firing || containersDown || (data.uptimeKuma?.down ?? 0) > 0) ? 'degraded'
+    : labStatus === 'healthy' && feedDown ? 'partial data'
+    : labStatus;
   const bannerColor =
+    overallStatus === 'healthy'  ? 'var(--k-green)' :
     overallStatus === 'critical' ? 'var(--k-red)'   :
-    overallStatus === 'degraded' ? 'var(--k-amber)'  : 'var(--k-green)';
+    overallStatus === 'loading'  ? 'var(--k-dim)'   : 'var(--k-amber)';
 
   return (
     <>
@@ -561,8 +575,8 @@ export default function KioskPage() {
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '12px 24px',
-          borderBottom: `2px solid ${bannerColor}33`,
-          background: `${bannerColor}08`,
+          borderBottom: `2px solid color-mix(in srgb, ${bannerColor} 20%, transparent)`,
+          background: `color-mix(in srgb, ${bannerColor} 3%, transparent)`,
           flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -577,7 +591,7 @@ export default function KioskPage() {
             </span>
             <span style={{
               fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
-              color: bannerColor, background: `${bannerColor}18`, padding: '3px 10px', borderRadius: 6,
+              color: bannerColor, background: `color-mix(in srgb, ${bannerColor} 10%, transparent)`, padding: '3px 10px', borderRadius: 6,
             }}>
               {overallStatus}
             </span>

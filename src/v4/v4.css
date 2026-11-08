@@ -387,12 +387,16 @@
 /* Desktop: 3-column fixed-height grid */
 @media (min-width: 1280px) {
   /* Make the main content area height-constrained so the grid fills it */
+  /* On desktop the mobile nav padding is wasted — zero it out on every page */
   .v5-root main {
+    padding-bottom: 1rem !important;
+  }
+
+  /* Viewport lock applies to Home only; other pages scroll normally */
+  .v5-root main:has(.v5-home-grid) {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    /* On desktop the mobile nav padding is wasted — zero it out */
-    padding-bottom: 1rem !important;
   }
 
   .v5-home-grid {
@@ -408,6 +412,7 @@
   }
 
   .v5-col {
+    display: grid;
     overflow: hidden;
     min-height: 0;
   }
@@ -427,12 +432,19 @@
     grid-template-rows: 42fr 58fr;
   }
 
-  /* Panels fill their rows */
+  /* Panels fill their grid rows; content scrolls inside the panel instead of being clipped */
   .v5-col .v5-panel {
-    flex: 1 1 0;
-    overflow: hidden;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
     display: flex;
     flex-direction: column;
+  }
+
+  /* Panel content keeps its natural height so the panel (not the child) scrolls */
+  .v5-col .v5-panel > * {
+    flex-shrink: 0;
   }
 
   .v5-panel-hosts,
